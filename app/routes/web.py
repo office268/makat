@@ -1,0 +1,221 @@
+"""מסכי ה-HTML של האפליקציה."""
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+
+from .. import services
+from ..models import Category, Manufacturer, Part, Supplier, db
+
+web_bp = Blueprint("web", __name__)
+
+
+def _filters_from_request():
+    return {
+        "q": request.args.get("q", "").strip() or None,
+        "category_id": request.args.get("category_id", type=int),
+        "manufacturer_id": request.args.get("manufacturer_id", type=int),
+        "make": request.args.get("make", "").strip() or None,
+        "model": request.args.get("model", "").strip() or None,
+        "year": request.args.get("year", type=int),
+        "engine": request.args.get("engine", "").strip() or None,
+        "in_stock": request.args.get("in_stock") == "1",
+        "low_stock": request.args.get("low_stock") == "1",
+        "active_only": request.args.get("show_inactive") != "1",
+        "sort": request.args.get("sort", "part_number"),
+    }
+
+
+@web_bp.app_context_processor
+def inject_globals():
+    return {
+        "all_categories": Category.query.order_by(Category.name).all(),
+        "all_manufacturers": Manufacturer.query.order_by(Manufacturer.name).all(),
+        "all_makes": services.vehicle_makes(),
+    }
+
+
+@web_bp.route("/")
+def index():
+    """דף הבית - סטטיסטיקות וחיפוש מהיר."""
+    recent = Part.query.order_by(Part.created_at.desc()).limit(8).all()
+    low = (
+        Part.query.filter(Part.stock_qty <= Part.min_stock, Part.is_active.is_(True))
+        .order_by(Part.stock_qty)
+        .limit(8)
+        .all()
+    )
+    return render_template(
+        "index.html", stats=services.stats(), recent=recent, low_stock=low
+    )
+
+
+@web_bp.route("/parts")
+def parts_list():
+    """רשימת מק"טים עם חיפוש, סינון ועימוד."""
+    filters = _filters_from_request()
+    page = request.args.get("page", 1, type=int)
+    per_page = current_app.config["PER_PAGE"]
+    query = services.search_parts(**filters)
+    pagination = db.paginate(query, page=page, per_page=per_page, error_out=False)
+    return render_template(
+        "parts/list.html", pagination=pagination, parts=pagination.items, filters=filters
+    )
+
+
+@web_bp.route("/parts/<int:part_id>")
+def part_detail(part_id):
+    """כרטיס מק"ט מלא."""
+    part = db.session.get(Part, part_id)
+    if part is None:
+        abort(404)
+    return render_template(
+        "parts/detail.html", part=part, equivalents=services.equivalent_parts(part)
+    )
+
+
+@web_bp.route("/parts/lookup")
+def part_lookup():
+    """חיפוש מהיר לפי מק"ט מדויק (כולל מק"טים מקבילים)."""
+    number = request.args.get("number", "").strip()
+    part = services.find_by_number(number)
+    if part:
+        return redirect(url_for("web.part_detail", part_id=part.id))
+    flash(f'לא נמצא מק"ט "{number}" בקטלוג', "warning")
+    return redirect(url_for("web.parts_list", q=number))
+
+
+@web_bp.route("/parts/new", methods=["GET", "POST"])
+def part_create():
+    """הוספת מק"ט חדש."""
+    if request.method == "POST":
+        number = request.form.get("part_number", "").strip()
+        if not number:
+            flash('חובה להזין מק"ט', "danger")
+        elif Part.query.filter_by(part_number=number).first():
+            flash(f'המק"ט {number} כבר קיים בקטלוג', "danger")
+        elif not request.form.get("name_he", "").strip():
+            flash("חובה להזין שם חלק", "danger")
+        else:
+            part = services.part_from_row(request.form.to_dict())
+            db.session.add(part)
+            db.session.commit()
+            flash(f'המק"ט {part.part_number} נוסף בהצלחה', "success")
+            return redirect(url_for("web.part_detail", part_id=part.id))
+    return render_template("parts/form.html", part=None, form=request.form)
+
+
+@web_bp.route("/parts/<int:part_id>/edit", methods=["GET", "POST"])
+def part_edit(part_id):
+    """עריכת מק"ט קיים."""
+    part = db.session.get(Part, part_id)
+    if part is None:
+        abort(404)
+    if request.method == "POST":
+        number = request.form.get("part_number", "").strip()
+        clash = Part.query.filter(
+            Part.part_number == number, Part.id != part.id
+        ).first()
+        if not number:
+            flash('חובה להזין מק"ט', "danger")
+        elif clash:
+            flash(f'המק"ט {number} כבר משויך לחלק אחר', "danger")
+        else:
+            services.part_from_row(request.form.to_dict(), part)
+            db.session.commit()
+            flash("השינויים נשמרו", "success")
+            return redirect(url_for("web.part_detail", part_id=part.id))
+    return render_template("parts/form.html", part=part, form=None)
+
+
+@web_bp.route("/parts/<int:part_id>/delete", methods=["POST"])
+def part_delete(part_id):
+    """מחיקת מק"ט."""
+    part = db.session.get(Part, part_id)
+    if part is None:
+        abort(404)
+    number = part.part_number
+    db.session.delete(part)
+    db.session.commit()
+    flash(f'המק"ט {number} נמחק', "info")
+    return redirect(url_for("web.parts_list"))
+
+
+@web_bp.route("/vehicles")
+def vehicles():
+    """חיפוש חלקים לפי רכב."""
+    make = request.args.get("make", "").strip() or None
+    model = request.args.get("model", "").strip() or None
+    year = request.args.get("year", type=int)
+    results = []
+    if make or model or year:
+        results = services.search_parts(make=make, model=model, year=year).all()
+    return render_template(
+        "vehicles.html",
+        results=results,
+        models=services.vehicle_models(make),
+        selected={"make": make, "model": model, "year": year},
+    )
+
+
+@web_bp.route("/manufacturers")
+def manufacturers():
+    return render_template(
+        "manufacturers.html",
+        manufacturers=Manufacturer.query.order_by(Manufacturer.name).all(),
+    )
+
+
+@web_bp.route("/categories")
+def categories():
+    roots = (
+        Category.query.filter(Category.parent_id.is_(None))
+        .order_by(Category.name)
+        .all()
+    )
+    return render_template("categories.html", roots=roots)
+
+
+@web_bp.route("/suppliers")
+def suppliers():
+    return render_template(
+        "suppliers.html", suppliers=Supplier.query.order_by(Supplier.name).all()
+    )
+
+
+@web_bp.route("/export.csv")
+def export_csv():
+    """ייצוא תוצאות החיפוש הנוכחיות ל-CSV."""
+    parts = services.search_parts(**_filters_from_request()).all()
+    return Response(
+        services.export_csv(parts),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=makat_export.csv"},
+    )
+
+
+@web_bp.route("/import", methods=["GET", "POST"])
+def import_csv():
+    """ייבוא מק"טים מקובץ CSV."""
+    result = None
+    if request.method == "POST":
+        file = request.files.get("file")
+        if not file or not file.filename:
+            flash("לא נבחר קובץ", "danger")
+        else:
+            created, updated, errors = services.import_csv(file.stream)
+            result = {"created": created, "updated": updated, "errors": errors}
+            flash(f"יובאו {created} מק\"טים חדשים, עודכנו {updated}", "success")
+    return render_template("import.html", result=result, columns=services.CSV_COLUMNS)
+
+
+@web_bp.app_errorhandler(404)
+def not_found(_error):
+    return render_template("404.html"), 404

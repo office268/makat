@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  {% set cards = [
+    ('סה"כ מק"טים', stats.parts, 'primary'),
+    ('פעילים', stats.active_parts, 'success'),
+    ('במלאי', stats.in_stock, 'info'),
+    ('מלאי נמוך', stats.low_stock, 'warning'),
+    ('יצרני חלקים', stats.manufacturers, 'secondary'),
+    ('יצרני רכב', stats.vehicle_makes, 'secondary'),
+    ('התאמות לרכב', stats.fitments, 'secondary'),
+    ('מק"טים מקבילים', stats.cross_refs, 'secondary')
+  ] %}
+  {% for label, value, color in cards %}
+  <div class="col-6 col-md-3">
+    <div class="card stat-card border-{{ color }}">
+      <div class="card-body py-3">
+        <div class="text-muted small">{{ label }}</div>
+        <div class="fs-3 fw-bold text-{{ color }}">{{ value }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">חיפוש בקטלוג</h5>
+    <form action="{{ url_for('web.parts_list') }}" method="get" class="row g-2">
+      <div class="col-md-5">
+        <input class="form-control" name="q" placeholder='מק"ט, שם חלק, ברקוד או מק"ט מקביל'>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select" name="make">
+          <option value="">כל יצרני הרכב</option>
+          {% for make in all_makes %}<option value="{{ make }}">{{ make }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select" name="category_id">
+          <option value="">כל הקטגוריות</option>
+          {% for cat in all_categories %}<option value="{{ cat.id }}">{{ cat.full_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <input class="form-control" name="year" type="number" placeholder="שנת ייצור">
+      </div>
+      <div class="col-md-1 d-grid">
+        <button class="btn btn-primary">חפש</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">מק"טים שנוספו לאחרונה</div>
+      <ul class="list-group list-group-flush">
+        {% for part in recent %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <span>
+            <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold">{{ part.part_number }}</a>
+            <span class="text-muted">{{ part.name_he }}</span>
+          </span>
+          <span class="badge bg-light text-dark">{{ part.price_with_vat | ils }}</span>
+        </li>
+        {% else %}
+        <li class="list-group-item text-muted">אין עדיין מק"טים. אפשר <a href="{{ url_for('web.import_csv') }}">לייבא CSV</a>.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header text-warning-emphasis">התראות מלאי נמוך</div>
+      <ul class="list-group list-group-flush">
+        {% for part in low_stock %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <span>
+            <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold">{{ part.part_number }}</a>
+            <span class="text-muted">{{ part.name_he }}</span>
+          </span>
+          <span class="badge bg-warning text-dark">במלאי: {{ part.stock_qty }} / מינ' {{ part.min_stock }}</span>
+        </li>
+        {% else %}
+        <li class="list-group-item text-muted">אין התראות מלאי.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
