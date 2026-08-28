@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}ספקים{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">ספקים</h1>
+<div class="card"><div class="table-responsive"><table class="table mb-0">
+<thead class="table-light"><tr><th>שם</th><th>איש קשר</th><th>טלפון</th><th>דוא"ל</th><th class="text-center">מק"טים</th></tr></thead>
+<tbody>
+{% for s in suppliers %}
+<tr><td>{{ s.name }}</td><td>{{ s.contact_name or '-' }}</td><td>{{ s.phone or '-' }}</td>
+<td class="small">{{ s.email or '-' }}</td><td class="text-center">{{ s.part_links | length }}</td></tr>
+{% else %}<tr><td colspan="5" class="text-muted text-center py-4">אין ספקים.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

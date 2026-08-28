@@ -13,6 +13,7 @@ from flask import (
 
 from .. import services
 from ..models import Category, Manufacturer, Part, Supplier, db
+from ..taxonomy import all_types
 
 web_bp = Blueprint("web", __name__)
 
@@ -39,6 +40,7 @@ def inject_globals():
         "all_categories": Category.query.order_by(Category.name).all(),
         "all_manufacturers": Manufacturer.query.order_by(Manufacturer.name).all(),
         "all_makes": services.vehicle_makes(),
+        "all_part_types": all_types(),
     }
 
 
@@ -64,7 +66,7 @@ def parts_list():
     page = request.args.get("page", 1, type=int)
     per_page = current_app.config["PER_PAGE"]
     query = services.search_parts(**filters)
-    pagination = db.paginate(query, page=page, per_page=per_page, error_out=False)
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     return render_template(
         "parts/list.html", pagination=pagination, parts=pagination.items, filters=filters
     )

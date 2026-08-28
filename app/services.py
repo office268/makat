@@ -32,6 +32,7 @@ CSV_COLUMNS = [
     "dimensions",
     "warranty_months",
     "side",
+    "part_type",
     "image_url",
     "notes",
     "is_active",
@@ -62,6 +63,7 @@ def _to_bool(value):
 
 def search_parts(
     q=None,
+    part_type=None,
     category_id=None,
     manufacturer_id=None,
     make=None,
@@ -93,6 +95,9 @@ def search_parts(
                 Part.id.in_(db.session.query(cross_subq.c.part_id)),
             )
         )
+
+    if part_type:
+        query = query.filter(Part.part_type == part_type)
 
     if category_id:
         # כולל תת-קטגוריות
@@ -317,7 +322,10 @@ def format_fitments(part):
 
 def part_from_row(row, part=None):
     """יוצר או מעדכן מק"ט משורת CSV / טופס."""
-    part = part or Part()
+    if part is None:
+        part = Part()
+        # מוסיפים ל-session לפני קישור היצרן/הקטגוריה, אחרת autoflush מזהיר
+        db.session.add(part)
     part.part_number = (row.get("part_number") or "").strip()
     part.name_he = (row.get("name_he") or "").strip()
     part.name_en = (row.get("name_en") or "").strip() or None
@@ -334,6 +342,7 @@ def part_from_row(row, part=None):
     part.dimensions = (row.get("dimensions") or "").strip() or None
     part.warranty_months = _to_int(row.get("warranty_months"))
     part.side = (row.get("side") or "").strip() or None
+    part.part_type = (row.get("part_type") or "").strip() or None
     part.image_url = (row.get("image_url") or "").strip() or None
     part.notes = (row.get("notes") or "").strip() or None
     if "is_active" in row and str(row.get("is_active")).strip() != "":
@@ -414,6 +423,7 @@ def export_csv(parts):
                 "dimensions": part.dimensions or "",
                 "warranty_months": part.warranty_months or "",
                 "side": part.side or "",
+                "part_type": part.part_type or "",
                 "image_url": part.image_url or "",
                 "notes": part.notes or "",
                 "is_active": int(bool(part.is_active)),
@@ -422,3 +432,30 @@ def export_csv(parts):
             }
         )
     return "﻿" + buffer.getvalue()
+
+
+def parts_for_vehicle(vehicle, part_type=None):
+    """ההצטלבות: רכב מזוהה × סוג חלק -> המק"טים המתאימים בלבד."""
+    if not vehicle:
+        return []
+    make = (vehicle.get("make") or "").strip().split()
+    return (
+        search_parts(
+            part_type=part_type,
+            make=make[0] if make else None,
+            model=vehicle.get("model"),
+            year=vehicle.get("year"),
+        ).all()
+        if make
+        else []
+    )
+
+
+def catalog_coverage(vehicle):
+    """אילו סוגי חלקים קיימים בקטלוג עבור הרכב הזה - לשקיפות בדמו."""
+    parts = parts_for_vehicle(vehicle)
+    seen = {}
+    for part in parts:
+        seen.setdefault(part.part_type, 0)
+        seen[part.part_type] += 1
+    return seen

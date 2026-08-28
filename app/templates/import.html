@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}ייבוא CSV{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">ייבוא מק"טים מקובץ CSV</h1>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <form class="card" method="post" enctype="multipart/form-data"><div class="card-body">
+      <label class="form-label">קובץ CSV (UTF-8)</label>
+      <input class="form-control mb-3" type="file" name="file" accept=".csv" required>
+      <button class="btn btn-primary">ייבוא</button>
+    </div></form>
+
+    {% if result %}
+    <div class="card mt-3"><div class="card-body">
+      <p class="mb-1">נוספו: <strong>{{ result.created }}</strong> · עודכנו: <strong>{{ result.updated }}</strong></p>
+      {% if result.errors %}
+      <div class="alert alert-warning mt-2 mb-0 small">
+        <strong>{{ result.errors | length }} שגיאות:</strong>
+        <ul class="mb-0">{% for e in result.errors[:20] %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+    </div></div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-7"><div class="card"><div class="card-header">עמודות נתמכות</div><div class="card-body">
+    <p class="small text-muted">חובה: <code>part_number</code>, <code>name_he</code>. כל השאר אופציונלי.</p>
+    <div class="d-flex flex-wrap gap-1">
+      {% for col in columns %}<code class="badge bg-light text-dark border">{{ col }}</code>{% endfor %}
+    </div>
+    <hr>
+    <p class="small mb-1 fw-bold">פורמטים מיוחדים</p>
+    <ul class="small text-muted mb-0">
+      <li><code>cross_refs</code>: <code>OEM:04152-YZZA1:Toyota; חלופי:W68/3</code></li>
+      <li><code>fitments</code>: <code>טויוטה:COROLLA:2013:2018:1ZR-FE</code></li>
+    </ul>
+  </div></div></div>
+</div>
+{% endblock %}

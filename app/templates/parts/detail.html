@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ part.part_number }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-1 font-monospace">{{ part.part_number }}</h1>
+    <p class="text-muted mb-0">{{ part.name_he }}{% if part.name_en %} · {{ part.name_en }}{% endif %}</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('web.part_edit', part_id=part.id) }}">עריכה</a>
+    <form method="post" action="{{ url_for('web.part_delete', part_id=part.id) }}"
+          onsubmit="return confirm('למחוק את המק&quot;ט {{ part.part_number }}?')">
+      <button class="btn btn-outline-danger">מחיקה</button>
+    </form>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card mb-3"><div class="card-header">פרטים</div><div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-5">יצרן</dt><dd class="col-7">{{ part.manufacturer.name if part.manufacturer else '-' }}</dd>
+        <dt class="col-5">קטגוריה</dt><dd class="col-7">{{ part.category.full_name if part.category else '-' }}</dd>
+        <dt class="col-5">סוג חלק</dt><dd class="col-7">{{ part.part_type | part_type_name if part.part_type else '-' }}</dd>
+        <dt class="col-5">ברקוד</dt><dd class="col-7 font-monospace">{{ part.barcode or '-' }}</dd>
+        <dt class="col-5">מיקום במחסן</dt><dd class="col-7">{{ part.location or '-' }}</dd>
+        <dt class="col-5">אחריות</dt><dd class="col-7">{{ part.warranty_months or '-' }} חודשים</dd>
+      </dl>
+    </div></div>
+
+    <div class="card"><div class="card-header">מחיר ומלאי</div><div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-5">עלות</dt><dd class="col-7">{{ part.cost | ils }}</dd>
+        <dt class="col-5">מחיר</dt><dd class="col-7">{{ part.price | ils }}</dd>
+        <dt class="col-5">כולל מע"מ</dt><dd class="col-7 fw-bold">{{ part.price_with_vat | ils }}</dd>
+        <dt class="col-5">רווח גולמי</dt><dd class="col-7">{{ part.margin_percent or '-' }}%</dd>
+        <dt class="col-5">מלאי</dt><dd class="col-7">
+          <span class="badge {% if part.low_stock %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ part.stock_qty }}</span>
+          <span class="text-muted small">מינימום {{ part.min_stock }}</span></dd>
+      </dl>
+    </div></div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card mb-3"><div class="card-header">מק"טים מקבילים</div>
+      <ul class="list-group list-group-flush">
+        {% for ref in part.cross_refs %}
+        <li class="list-group-item d-flex justify-content-between">
+          <span class="font-monospace">{{ ref.ref_number }}</span>
+          <span><span class="badge bg-light text-dark">{{ ref.ref_type }}</span> {{ ref.ref_brand or '' }}</span>
+        </li>
+        {% else %}<li class="list-group-item text-muted">אין מק"טים מקבילים.</li>{% endfor %}
+      </ul>
+    </div>
+
+    <div class="card mb-3"><div class="card-header">התאמה לרכב</div>
+      <ul class="list-group list-group-flush">
+        {% for fit in part.fitments %}
+        <li class="list-group-item">
+          <strong>{{ fit.make }} {{ fit.model }}</strong> · {{ fit.years }}
+          <span class="text-muted small">
+            {% if fit.engine_code %}מנוע {{ fit.engine_code }}{% endif %}
+            {% if fit.engine_volume %} · {{ fit.engine_volume }} ליטר{% endif %}
+            {% if fit.fuel %} · {{ fit.fuel }}{% endif %}
+          </span>
+        </li>
+        {% else %}<li class="list-group-item text-muted">לא הוגדרו התאמות.</li>{% endfor %}
+      </ul>
+    </div>
+
+    <div class="card"><div class="card-header">ספקים</div>
+      <ul class="list-group list-group-flush">
+        {% for link in part.supplier_links %}
+        <li class="list-group-item d-flex justify-content-between">
+          <span>{{ link.supplier.name }} {% if link.is_preferred %}<span class="badge bg-primary">מועדף</span>{% endif %}</span>
+          <span class="text-muted small">{{ link.cost | ils }} · אספקה {{ link.lead_time_days }} ימים</span>
+        </li>
+        {% else %}<li class="list-group-item text-muted">לא שויכו ספקים.</li>{% endfor %}
+      </ul>
+    </div>
+
+    {% if equivalents %}
+    <div class="card mt-3"><div class="card-header">מק"טים שקולים בקטלוג</div>
+      <ul class="list-group list-group-flush">
+        {% for eq in equivalents %}
+        <li class="list-group-item d-flex justify-content-between">
+          <a class="font-monospace" href="{{ url_for('web.part_detail', part_id=eq.id) }}">{{ eq.part_number }}</a>
+          <span>{{ eq.name_he }} · {{ eq.price_with_vat | ils }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

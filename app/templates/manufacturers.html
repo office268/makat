@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}יצרנים{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">יצרני חלפים</h1>
+<div class="card"><div class="table-responsive"><table class="table mb-0">
+<thead class="table-light"><tr><th>שם</th><th>מדינה</th><th class="text-center">מק"טים</th></tr></thead>
+<tbody>
+{% for m in manufacturers %}
+<tr>
+  <td><a href="{{ url_for('web.parts_list', manufacturer_id=m.id) }}">{{ m.name }}</a></td>
+  <td class="text-muted">{{ m.country or '-' }}</td>
+  <td class="text-center">{{ m.parts | length }}</td>
+</tr>
+{% else %}<tr><td colspan="3" class="text-muted text-center py-4">אין יצרנים.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

@@ -1,0 +1,42 @@
+[
+  {"_comment": "נתוני דמו בלבד - מבנה השדות זהה למאגר כלי הרכב של משרד התחבורה ב-data.gov.il, כדי שהמעבר לשאילתה חיה יהיה שקוף",
+   "mispar_rechev": "12345678", "tozeret_nm": "טויוטה יפן", "kinuy_mishari": "COROLLA", "degem_nm": "ZRE172L",
+   "ramat_gimur": "LUXURY", "shnat_yitzur": "2016", "degem_manoa": "1ZR-FE", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "לבן", "misgeret": "DEMO0000000000001", "tokef_dt": "2027-03-14"},
+
+  {"mispar_rechev": "23456789", "tozeret_nm": "מאזדה יפן", "kinuy_mishari": "MAZDA 3", "degem_nm": "BM",
+   "ramat_gimur": "EXECUTIVE", "shnat_yitzur": "2018", "degem_manoa": "PE-VPS", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "אדום", "misgeret": "DEMO0000000000002", "tokef_dt": "2027-01-22"},
+
+  {"mispar_rechev": "34567890", "tozeret_nm": "יונדאי קוריאה", "kinuy_mishari": "I20", "degem_nm": "GBC5S1",
+   "ramat_gimur": "INSPIRE", "shnat_yitzur": "2019", "degem_manoa": "G4LC", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "כסף מטלי", "misgeret": "DEMO0000000000003", "tokef_dt": "2026-11-05"},
+
+  {"mispar_rechev": "45678901", "tozeret_nm": "קיה קוריאה", "kinuy_mishari": "SPORTAGE", "degem_nm": "QLE",
+   "ramat_gimur": "GT-LINE", "shnat_yitzur": "2020", "degem_manoa": "G4FJ", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "שחור מטלי", "misgeret": "DEMO0000000000004", "tokef_dt": "2027-06-30"},
+
+  {"mispar_rechev": "56789012", "tozeret_nm": "סקודה צ'כיה", "kinuy_mishari": "OCTAVIA", "degem_nm": "5E",
+   "ramat_gimur": "AMBITION", "shnat_yitzur": "2017", "degem_manoa": "CZCA", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "אפור", "misgeret": "DEMO0000000000005", "tokef_dt": "2026-09-18"},
+
+  {"mispar_rechev": "67890123", "tozeret_nm": "ניסאן יפן", "kinuy_mishari": "QASHQAI", "degem_nm": "J11",
+   "ramat_gimur": "ACENTA", "shnat_yitzur": "2019", "degem_manoa": "HRA2DDT", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "כחול מטלי", "misgeret": "DEMO0000000000006", "tokef_dt": "2027-02-11"},
+
+  {"mispar_rechev": "78901234", "tozeret_nm": "הונדה יפן", "kinuy_mishari": "CIVIC", "degem_nm": "FC1",
+   "ramat_gimur": "SPORT", "shnat_yitzur": "2021", "degem_manoa": "L15B7", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "לבן פנינה", "misgeret": "DEMO0000000000007", "tokef_dt": "2027-08-09"},
+
+  {"mispar_rechev": "8901234", "tozeret_nm": "פולקסווגן גרמניה", "kinuy_mishari": "GOLF", "degem_nm": "AU",
+   "ramat_gimur": "COMFORTLINE", "shnat_yitzur": "2015", "degem_manoa": "CZDA", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "כסף", "misgeret": "DEMO0000000000008", "tokef_dt": "2026-12-01"},
+
+  {"mispar_rechev": "9012345", "tozeret_nm": "מיצובישי יפן", "kinuy_mishari": "OUTLANDER", "degem_nm": "GF",
+   "ramat_gimur": "INSTYLE", "shnat_yitzur": "2014", "degem_manoa": "4J12", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "חום מטלי", "misgeret": "DEMO0000000000009", "tokef_dt": "2026-10-27"},
+
+  {"mispar_rechev": "1234567", "tozeret_nm": "סוזוקי יפן", "kinuy_mishari": "SWIFT", "degem_nm": "AZG",
+   "ramat_gimur": "GL", "shnat_yitzur": "2013", "degem_manoa": "K12C", "sug_delek_nm": "בנזין",
+   "tzeva_rechev": "אדום", "misgeret": "DEMO0000000000010", "tokef_dt": "2026-08-15"}
+]

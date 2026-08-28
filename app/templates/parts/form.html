@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{% if part %}עריכת {{ part.part_number }}{% else %}מק"ט חדש{% endif %}{% endblock %}
+{% block content %}
+{% set v = part or form %}
+{% macro field(name, label, value='', type='text', col=3, ph='') %}
+<div class="col-md-{{ col }}">
+  <label class="form-label">{{ label }}</label>
+  <input class="form-control" type="{{ type }}" name="{{ name }}" value="{{ value if value is not none else '' }}" placeholder="{{ ph }}">
+</div>
+{% endmacro %}
+
+<h1 class="h4 mb-3">{% if part %}עריכת מק"ט{% else %}הוספת מק"ט חדש{% endif %}</h1>
+<form method="post" class="card"><div class="card-body row g-3">
+  {{ field('part_number', 'מק"ט *', part.part_number if part else form.get('part_number','')) }}
+  {{ field('name_he', 'שם בעברית *', part.name_he if part else form.get('name_he',''), col=5) }}
+  {{ field('name_en', 'שם באנגלית', part.name_en if part else form.get('name_en',''), col=4) }}
+
+  {{ field('manufacturer', 'יצרן', part.manufacturer.name if part and part.manufacturer else form.get('manufacturer','')) }}
+  {{ field('category', 'קטגוריה', part.category.full_name if part and part.category else form.get('category',''), ph='מנוע / סינון') }}
+  <div class="col-md-3">
+    <label class="form-label">סוג חלק</label>
+    <select class="form-select" name="part_type">
+      <option value="">—</option>
+      {% for pt in all_part_types %}
+      <option value="{{ pt.key }}" {% if part and part.part_type == pt.key %}selected{% endif %}>{{ pt.name_he }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {{ field('barcode', 'ברקוד', part.barcode if part else form.get('barcode','')) }}
+
+  {{ field('cost', 'עלות', part.cost if part else form.get('cost',''), type='number') }}
+  {{ field('price', 'מחיר', part.price if part else form.get('price',''), type='number') }}
+  {{ field('stock_qty', 'מלאי', part.stock_qty if part else form.get('stock_qty',''), type='number') }}
+  {{ field('min_stock', 'מלאי מינימלי', part.min_stock if part else form.get('min_stock',''), type='number') }}
+
+  {{ field('location', 'מיקום במחסן', part.location if part else form.get('location','')) }}
+  {{ field('warranty_months', 'אחריות (חודשים)', part.warranty_months if part else form.get('warranty_months',''), type='number') }}
+  {{ field('weight_kg', 'משקל (ק"ג)', part.weight_kg if part else form.get('weight_kg',''), type='number') }}
+  {{ field('side', 'צד', part.side if part else form.get('side',''), ph='ימין / שמאל') }}
+
+  <div class="col-12">
+    <label class="form-label">מק"טים מקבילים</label>
+    <input class="form-control font-monospace" name="cross_refs"
+           value="{{ part | cross_refs_str if part else form.get('cross_refs','') }}"
+           placeholder="OEM:04152-YZZA1:Toyota; חלופי:W68/3">
+    <div class="form-text">מופרד בנקודה-פסיק. פורמט: סוג:מספר:מותג</div>
+  </div>
+
+  <div class="col-12">
+    <label class="form-label">התאמות לרכב</label>
+    <input class="form-control font-monospace" name="fitments"
+           value="{{ part | fitments_str if part else form.get('fitments','') }}"
+           placeholder="טויוטה:COROLLA:2013:2018:1ZR-FE">
+    <div class="form-text">מופרד בנקודה-פסיק. פורמט: יצרן:דגם:משנה:עד:קוד מנוע</div>
+  </div>
+
+  <div class="col-12">
+    <label class="form-label">תיאור</label>
+    <textarea class="form-control" name="description" rows="2">{{ part.description if part else form.get('description','') }}</textarea>
+  </div>
+
+  <div class="col-12 d-flex gap-2">
+    <button class="btn btn-primary">שמירה</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('web.parts_list') }}">ביטול</a>
+  </div>
+</div></form>
+{% endblock %}
