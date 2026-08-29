@@ -106,6 +106,12 @@ healthcheckPath:   /healthz                      ← בודק גם חיבור ל
 `init_db.py` רץ **פעם אחת** לפני שה-workers עולים, ולכן שני workers לא
 מתנגשים ביצירת הטבלאות. הוא בטוח להרצה חוזרת.
 
+> **אל תוסיף שורת `release:` ל-`Procfile`.**
+> Nixpacks הופך אותה ל**שלב בנייה** בתוך ה-Dockerfile, ו-Railway לא מזריק את
+> משתני השירות לבנייה — כך שכל פקודה שם תרוץ בלי `DATABASE_URL` ובלי
+> `SECRET_KEY` ותפיל את הבילד. הכנת בסיס הנתונים שייכת ל-`preDeployCommand`
+> ב-`railway.json`, שרץ בזמן פריסה עם כל המשתנים.
+
 ### חלופה בלי Postgres
 
 מצרפים Volume, ממפים ל-`/data`, ומגדירים `DATA_DIR=/data`. פשוט יותר,
