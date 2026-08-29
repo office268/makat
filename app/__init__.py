@@ -72,10 +72,12 @@ def create_app(config_object=Config):
 
     from .routes.api import api_bp
     from .routes.demo import demo_bp
+    from .routes.team import team_bp
     from .routes.web import web_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(web_bp)
+    app.register_blueprint(team_bp)
     app.register_blueprint(demo_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
 

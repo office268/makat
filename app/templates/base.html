@@ -43,6 +43,9 @@
               {{ current_user.organization.name }} · {{ current_user.role_label }}
             </h6></li>
             <li><a class="dropdown-item" href="{{ url_for('auth.account') }}">החשבון שלי</a></li>
+            {% if current_user.can_manage_users %}
+            <li><a class="dropdown-item" href="{{ url_for('team.index') }}">ניהול משתמשים</a></li>
+            {% endif %}
             <li><hr class="dropdown-divider"></li>
             <li>
               <form method="post" action="{{ url_for('auth.logout') }}" class="px-3 py-1">

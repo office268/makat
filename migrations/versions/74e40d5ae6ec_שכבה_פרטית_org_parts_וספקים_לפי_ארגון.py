@@ -97,10 +97,17 @@ def upgrade():
         batch_op.create_index(batch_op.f("ix_org_parts_organization_id"), ["organization_id"])
         batch_op.create_index(batch_op.f("ix_org_parts_part_id"), ["part_id"])
 
-    # 2. העמודה על suppliers - nullable, כדי שהעברת הנתונים תוכל למלא אותה
+    # 2. העמודה על suppliers - nullable, כדי שהעברת הנתונים תוכל למלא אותה.
+    #    האינדקס על name היה ייחודי ונעשה רגיל, כי הייחודיות עברה לאילוץ
+    #    המשולב עם הארגון. בודקים שהוא קיים לפני שמוחקים - הסכימה בפרודקשן
+    #    נוצרה ב-create_all() ולא על ידי מיגרציה, ולכן אי אפשר להניח את מבנה.
+    existing_indexes = {
+        index["name"] for index in sa.inspect(op.get_bind()).get_indexes("suppliers")
+    }
     with op.batch_alter_table("suppliers", schema=None) as batch_op:
         batch_op.add_column(sa.Column("organization_id", sa.Integer(), nullable=True))
-        batch_op.drop_index(batch_op.f("ix_suppliers_name"))
+        if "ix_suppliers_name" in existing_indexes:
+            batch_op.drop_index(batch_op.f("ix_suppliers_name"))
         batch_op.create_index(batch_op.f("ix_suppliers_name"), ["name"], unique=False)
         batch_op.create_index(
             batch_op.f("ix_suppliers_organization_id"), ["organization_id"]

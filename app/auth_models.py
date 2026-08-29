@@ -35,6 +35,9 @@ class Organization(db.Model):
     users = db.relationship(
         "User", back_populates="organization", cascade="all, delete-orphan"
     )
+    invitations = db.relationship(
+        "Invitation", back_populates="organization", cascade="all, delete-orphan"
+    )
 
     def to_dict(self):
         return {
@@ -131,3 +134,44 @@ class User(UserMixin, db.Model):
 
     def __repr__(self):
         return f"<User {self.email} ({self.role})>"
+
+
+class Invitation(db.Model):
+    """הזמנה של עובד לארגון.
+
+    הטוקן הוא הסוד היחיד שמאפשר הצטרפות, ולכן הוא ארוך ואקראי ופג
+    אחרי שבועיים. הזמנה שנוצלה נשמרת עם accepted_at - היא כבר לא
+    תקפה, אבל היא מתעדת מי צורף ומתי.
+    """
+
+    __tablename__ = "invitations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(190), nullable=False, index=True)
+    role = db.Column(db.String(20), default="mechanic", nullable=False)
+    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    organization_id = db.Column(
+        db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    invited_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=_now)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    accepted_at = db.Column(db.DateTime)
+
+    organization = db.relationship("Organization", back_populates="invitations")
+    invited_by = db.relationship("User", foreign_keys=[invited_by_id])
+
+    @property
+    def is_expired(self):
+        expires = self.expires_at
+        # שורות שנכתבו ב-SQLite חוזרות בלי אזור זמן
+        if expires is not None and expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires is not None and expires < datetime.now(timezone.utc)
+
+    @property
+    def role_label(self):
+        return User.ROLE_LABELS.get(self.role, self.role)
+
+    def __repr__(self):
+        return f"<Invitation {self.email} -> org {self.organization_id}>"

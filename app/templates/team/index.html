@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}ניהול משתמשים{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">ניהול משתמשים</h1>
+<p class="text-muted small mb-4">{{ current_user.organization.name }}</p>
+
+<div class="card mb-4">
+  <div class="card-header">הזמנת עובד</div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('team.invite') }}" class="row g-2">
+      {{ csrf_field() }}
+      <div class="col-md-6">
+        <input class="form-control" type="email" name="email" dir="ltr"
+               placeholder='דוא"ל של העובד' required>
+      </div>
+      <div class="col-md-4">
+        <select class="form-select" name="role">
+          {% for role in roles %}
+          <option value="{{ role }}" {% if role == 'mechanic' %}selected{% endif %}>
+            {{ {'owner':'בעלים','manager':'מנהל','mechanic':'מכונאי'}[role] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-grid"><button class="btn btn-primary">הזמן</button></div>
+    </form>
+  </div>
+</div>
+
+{% if invitations %}
+<div class="card mb-4">
+  <div class="card-header">הזמנות ממתינות</div>
+  <div class="table-responsive"><table class="table mb-0 align-middle">
+    <thead class="table-light"><tr>
+      <th>דוא"ל</th><th>תפקיד</th><th>קישור ההזמנה</th><th>תוקף</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for inv in invitations %}
+      <tr class="{% if inv.is_expired %}text-muted{% endif %}">
+        <td dir="ltr">{{ inv.email }}</td>
+        <td>{{ inv.role_label }}</td>
+        <td>
+          {% if inv.is_expired %}<span class="text-muted small">פג תוקף</span>
+          {% else %}
+          <input class="form-control form-control-sm font-monospace" readonly dir="ltr"
+                 onclick="this.select()"
+                 value="{{ url_for('team.accept', token=inv.token, _external=True) }}">
+          {% endif %}
+        </td>
+        <td class="small">{{ inv.expires_at.strftime('%d/%m/%Y') }}</td>
+        <td>
+          <form method="post" action="{{ url_for('team.revoke', invitation_id=inv.id) }}">
+            {{ csrf_field() }}
+            <button class="btn btn-sm btn-outline-danger">ביטול</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="card-footer small text-muted">
+    שליחת דוא"ל עדיין לא מחוברת — העתק את הקישור ושלח אותו לעובד.
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">משתמשים ({{ users | length }})</div>
+  <div class="table-responsive"><table class="table mb-0 align-middle">
+    <thead class="table-light"><tr>
+      <th>שם</th><th>דוא"ל</th><th>תפקיד</th><th>כניסה אחרונה</th><th>סטטוס</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for user in users %}
+      <tr class="{% if not user.active %}table-secondary{% endif %}">
+        <td>
+          {{ user.full_name or '—' }}
+          {% if user.id == current_user.id %}<span class="badge bg-primary">אתה</span>{% endif %}
+        </td>
+        <td dir="ltr" class="small">{{ user.email }}</td>
+        <td>
+          <form method="post" action="{{ url_for('team.change_role', user_id=user.id) }}"
+                class="d-flex gap-1">
+            {{ csrf_field() }}
+            <select class="form-select form-select-sm" name="role"
+                    {% if user.id == current_user.id %}disabled{% endif %}>
+              {% for role in roles %}
+              <option value="{{ role }}" {% if user.role == role %}selected{% endif %}>
+                {{ {'owner':'בעלים','manager':'מנהל','mechanic':'מכונאי'}[role] }}
+              </option>
+              {% endfor %}
+            </select>
+            {% if user.id != current_user.id %}
+            <button class="btn btn-sm btn-outline-secondary">שמור</button>
+            {% endif %}
+          </form>
+        </td>
+        <td class="small">
+          {{ user.last_login_at.strftime('%d/%m/%Y') if user.last_login_at else 'טרם נכנס' }}
+        </td>
+        <td>
+          <span class="badge {% if user.active %}bg-success{% else %}bg-secondary{% endif %}">
+            {{ 'פעיל' if user.active else 'מושבת' }}
+          </span>
+        </td>
+        <td>
+          {% if user.id != current_user.id %}
+          <form method="post" action="{{ url_for('team.toggle_active', user_id=user.id) }}">
+            {{ csrf_field() }}
+            <button class="btn btn-sm btn-outline-{% if user.active %}danger{% else %}success{% endif %}">
+              {{ 'השבתה' if user.active else 'הפעלה' }}
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}
