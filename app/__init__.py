@@ -64,6 +64,7 @@ def create_app(config_object=Config):
     _check_secret_key(app)
 
     from . import auth_models  # noqa: F401 - נדרש כדי ש-Alembic יראה את הטבלאות
+    from . import vehicle_catalog  # noqa: F401
     from .auth import auth_bp, login_manager
 
     login_manager.init_app(app)

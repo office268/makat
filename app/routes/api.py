@@ -158,6 +158,27 @@ def list_models():
     return jsonify(services.vehicle_models(request.args.get("make")))
 
 
+@api_bp.get("/vehicle-models")
+def vehicle_models():
+    """דגמי רכב מקטלוג משרד התחבורה, לבורר בטופס ההזנה."""
+    from ..vehicle_catalog import VehicleModel, makes, models_for
+
+    make = request.args.get("make", "").strip()
+    if request.args.get("makes_only") == "1":
+        return jsonify(makes())
+    if request.args.get("models_only") == "1":
+        return jsonify(models_for(make or None))
+
+    query = VehicleModel.query
+    if make:
+        query = query.filter(VehicleModel.make == make)
+    model = request.args.get("model", "").strip()
+    if model:
+        query = query.filter(VehicleModel.model.ilike(f"%{model}%"))
+    rows = query.order_by(VehicleModel.make, VehicleModel.model).limit(200).all()
+    return jsonify([row.to_dict() for row in rows])
+
+
 @api_bp.get("/stats")
 def get_stats():
     return jsonify(services.stats(services.current_org_id()))

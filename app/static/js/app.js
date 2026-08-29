@@ -61,3 +61,27 @@ document.addEventListener("click", function (event) {
     button.classList.add("d-none");
   });
 })();
+
+// השלמת דגמים לפי היצרן שנבחר, מקטלוג משרד התחבורה
+document.addEventListener("input", async function (event) {
+  if (!event.target.matches('input[name="fit_make"]')) return;
+  const make = event.target.value.trim();
+  if (make.length < 2) return;
+  try {
+    const response = await fetch(
+      `/api/vehicle-models?models_only=1&make=${encodeURIComponent(make)}`
+    );
+    if (!response.ok) return;
+    const models = await response.json();
+    const list = document.getElementById("models");
+    if (!list) return;
+    list.innerHTML = "";
+    models.forEach(function (model) {
+      const option = document.createElement("option");
+      option.value = model;
+      list.appendChild(option);
+    });
+  } catch (error) {
+    // השלמה היא נוחות בלבד - כשל ברשת לא אמור להפריע להקלדה
+  }
+});

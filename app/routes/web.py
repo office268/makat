@@ -19,6 +19,13 @@ from ..taxonomy import all_types
 web_bp = Blueprint("web", __name__)
 
 
+def _known_makes():
+    """יצרני רכב לבחירה: מקטלוג משרד התחבורה, ובנפילה לאלה שכבר בקטלוג."""
+    from ..vehicle_catalog import makes
+
+    return makes() or services.vehicle_makes()
+
+
 def _filters_from_request():
     return {
         "q": request.args.get("q", "").strip() or None,
@@ -44,7 +51,7 @@ def inject_globals():
         "all_makes": services.vehicle_makes(),
         "all_part_types": all_types(),
         "org_id": services.current_org_id(),
-        "known_makes": services.vehicle_makes(),
+        "known_makes": _known_makes(),
     }
 
 

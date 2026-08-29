@@ -60,7 +60,7 @@
                  placeholder="יצרן רכב" value="{{ fit.make if fit else '' }}">
         </div>
         <div class="col-md-3">
-          <input class="form-control form-control-sm" name="fit_model"
+          <input class="form-control form-control-sm" name="fit_model" list="models"
                  placeholder="דגם" value="{{ fit.model or '' if fit else '' }}">
         </div>
         <div class="col-md-2">
@@ -82,6 +82,11 @@
       {% endfor %}
     </div>
     <datalist id="makes">{% for mk in known_makes %}<option value="{{ mk }}">{% endfor %}</datalist>
+    <datalist id="models"></datalist>
+    <div class="form-text">
+      היצרנים והדגמים מגיעים מקטלוג משרד התחבורה. בחירה מהרשימה שומרת על
+      ערכים אחידים — טקסט חופשי שובר את החיפוש לפי מספר רישוי.
+    </div>
   </div>
 
   <div class="col-12"><hr class="my-1">
