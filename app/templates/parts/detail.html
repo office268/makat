@@ -10,6 +10,7 @@
     <a class="btn btn-outline-primary" href="{{ url_for('web.part_edit', part_id=part.id) }}">עריכה</a>
     <form method="post" action="{{ url_for('web.part_delete', part_id=part.id) }}"
           onsubmit="return confirm('למחוק את המק&quot;ט {{ part.part_number }}?')">
+      {{ csrf_field() }}
       <button class="btn btn-outline-danger">מחיקה</button>
     </form>
   </div>
@@ -23,22 +24,39 @@
         <dt class="col-5">קטגוריה</dt><dd class="col-7">{{ part.category.full_name if part.category else '-' }}</dd>
         <dt class="col-5">סוג חלק</dt><dd class="col-7">{{ part.part_type | part_type_name if part.part_type else '-' }}</dd>
         <dt class="col-5">ברקוד</dt><dd class="col-7 font-monospace">{{ part.barcode or '-' }}</dd>
-        <dt class="col-5">מיקום במחסן</dt><dd class="col-7">{{ part.location or '-' }}</dd>
         <dt class="col-5">אחריות</dt><dd class="col-7">{{ part.warranty_months or '-' }} חודשים</dd>
       </dl>
     </div></div>
 
-    <div class="card"><div class="card-header">מחיר ומלאי</div><div class="card-body">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>מחיר ומלאי</span>
+        <span class="badge bg-light text-dark border">פרטי לארגון שלך</span>
+      </div>
+      <div class="card-body">
+      {% if org_part %}
       <dl class="row mb-0">
-        <dt class="col-5">עלות</dt><dd class="col-7">{{ part.cost | ils }}</dd>
-        <dt class="col-5">מחיר</dt><dd class="col-7">{{ part.price | ils }}</dd>
-        <dt class="col-5">כולל מע"מ</dt><dd class="col-7 fw-bold">{{ part.price_with_vat | ils }}</dd>
-        <dt class="col-5">רווח גולמי</dt><dd class="col-7">{{ part.margin_percent or '-' }}%</dd>
+        <dt class="col-5">עלות</dt><dd class="col-7">{{ org_part.cost | ils }}</dd>
+        <dt class="col-5">מחיר</dt><dd class="col-7">{{ org_part.price | ils }}</dd>
+        <dt class="col-5">כולל מע"מ</dt><dd class="col-7 fw-bold">{{ org_part.price_with_vat | ils }}</dd>
+        <dt class="col-5">רווח גולמי</dt><dd class="col-7">{{ org_part.margin_percent or '-' }}%</dd>
+        <dt class="col-5">מיקום במחסן</dt><dd class="col-7">{{ org_part.location or '-' }}</dd>
         <dt class="col-5">מלאי</dt><dd class="col-7">
-          <span class="badge {% if part.low_stock %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ part.stock_qty }}</span>
-          <span class="text-muted small">מינימום {{ part.min_stock }}</span></dd>
+          <span class="badge {% if org_part.low_stock %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ org_part.stock_qty }}</span>
+          <span class="text-muted small">מינימום {{ org_part.min_stock }}</span></dd>
       </dl>
-    </div></div>
+      {% elif org_id %}
+      <p class="text-muted mb-2">המק"ט הזה עדיין לא מתומחר בארגון שלך.</p>
+      {% if current_user.can_edit_catalog %}
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_edit', part_id=part.id) }}">
+        הוספת מחיר ומלאי
+      </a>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">מחירים ומלאי פרטיים לכל ארגון. <a href="{{ url_for('auth.login') }}">התחבר</a> כדי לראות את שלך.</p>
+      {% endif %}
+      </div>
+    </div>
   </div>
 
   <div class="col-lg-7">
@@ -70,12 +88,14 @@
 
     <div class="card"><div class="card-header">ספקים</div>
       <ul class="list-group list-group-flush">
-        {% for link in part.supplier_links %}
+        {% for link in part.supplier_links if link.supplier and link.supplier.organization_id == org_id %}
         <li class="list-group-item d-flex justify-content-between">
           <span>{{ link.supplier.name }} {% if link.is_preferred %}<span class="badge bg-primary">מועדף</span>{% endif %}</span>
           <span class="text-muted small">{{ link.cost | ils }} · אספקה {{ link.lead_time_days }} ימים</span>
         </li>
-        {% else %}<li class="list-group-item text-muted">לא שויכו ספקים.</li>{% endfor %}
+        {% else %}<li class="list-group-item text-muted">
+          {% if org_id %}לא שויכו ספקים.{% else %}התחבר כדי לראות ספקים.{% endif %}
+        </li>{% endfor %}
       </ul>
     </div>
 
@@ -85,7 +105,8 @@
         {% for eq in equivalents %}
         <li class="list-group-item d-flex justify-content-between">
           <a class="font-monospace" href="{{ url_for('web.part_detail', part_id=eq.id) }}">{{ eq.part_number }}</a>
-          <span>{{ eq.name_he }} · {{ eq.price_with_vat | ils }}</span>
+          {% set eop = eq.for_org(org_id) %}
+          <span>{{ eq.name_he }}{% if eop %} · {{ eop.price_with_vat | ils }}{% endif %}</span>
         </li>
         {% endfor %}
       </ul>

@@ -9,6 +9,7 @@ from .models import (
     CrossReference,
     Fitment,
     Manufacturer,
+    OrgPart,
     Part,
     db,
 )
@@ -39,6 +40,15 @@ CSV_COLUMNS = [
     "cross_refs",
     "fitments",
 ]
+
+
+def current_org_id():
+    """מזהה הארגון של המשתמש המחובר, או None למבקר אנונימי."""
+    from flask_login import current_user
+
+    if current_user.is_authenticated:
+        return current_user.organization_id
+    return None
 
 
 def _to_int(value):
@@ -74,8 +84,14 @@ def search_parts(
     low_stock=None,
     active_only=True,
     sort="part_number",
+    organization_id=None,
 ):
-    """בונה שאילתת חיפוש מק"טים לפי כל הפילטרים."""
+    """בונה שאילתת חיפוש מק"טים לפי כל הפילטרים.
+
+    מחיר ומלאי פרטיים לארגון, ולכן סינון או מיון לפיהם דורש
+    organization_id. בלעדיו הם מתעלמים בשקט - מבקר אנונימי רואה
+    את הקטלוג המשותף בלבד.
+    """
     query = Part.query
 
     if q:
@@ -134,19 +150,38 @@ def search_parts(
                 )
         query = query.filter(Part.id.in_(fit.subquery().select()))
 
-    if in_stock:
-        query = query.filter(Part.stock_qty > 0)
-    if low_stock:
-        query = query.filter(Part.stock_qty <= Part.min_stock)
+    if organization_id and (in_stock or low_stock):
+        stock_q = db.session.query(OrgPart.part_id).filter(
+            OrgPart.organization_id == organization_id
+        )
+        if in_stock:
+            stock_q = stock_q.filter(OrgPart.stock_qty > 0)
+        if low_stock:
+            stock_q = stock_q.filter(OrgPart.stock_qty <= OrgPart.min_stock)
+        query = query.filter(Part.id.in_(stock_q.subquery().select()))
+
     if active_only:
         query = query.filter(Part.is_active.is_(True))
+
+    org_sorts = {"price_asc", "price_desc", "stock"}
+    if sort in org_sorts and organization_id:
+        query = query.outerjoin(
+            OrgPart,
+            db.and_(
+                OrgPart.part_id == Part.id,
+                OrgPart.organization_id == organization_id,
+            ),
+        )
+        order = {
+            "price_asc": OrgPart.price.asc(),
+            "price_desc": OrgPart.price.desc(),
+            "stock": OrgPart.stock_qty.desc(),
+        }[sort]
+        return query.order_by(order)
 
     sorts = {
         "part_number": Part.part_number.asc(),
         "name": Part.name_he.asc(),
-        "price_asc": Part.price.asc(),
-        "price_desc": Part.price.desc(),
-        "stock": Part.stock_qty.desc(),
         "newest": Part.created_at.desc(),
     }
     return query.order_by(sorts.get(sort, Part.part_number.asc()))
@@ -228,17 +263,27 @@ def vehicle_models(make=None):
     return [row[0] for row in rows if row[0]]
 
 
-def stats():
-    """מספרי מפתח לדף הבית."""
+def stats(organization_id=None):
+    """מספרי מפתח לדף הבית.
+
+    מספרי הקטלוג משותפים; מלאי ושווי מלאי שייכים לארגון ומוחזרים
+    כאפס כשאין ארגון (מבקר אנונימי).
+    """
     total = Part.query.count()
     active = Part.query.filter(Part.is_active.is_(True)).count()
-    in_stock = Part.query.filter(Part.stock_qty > 0).count()
-    low = Part.query.filter(
-        Part.stock_qty <= Part.min_stock, Part.is_active.is_(True)
-    ).count()
-    stock_value = (
-        db.session.query(func.sum(Part.cost * Part.stock_qty)).scalar() or 0.0
-    )
+
+    in_stock = low = 0
+    stock_value = 0.0
+    if organization_id:
+        base = OrgPart.query.filter(OrgPart.organization_id == organization_id)
+        in_stock = base.filter(OrgPart.stock_qty > 0).count()
+        low = base.filter(OrgPart.stock_qty <= OrgPart.min_stock).count()
+        stock_value = (
+            db.session.query(func.sum(OrgPart.cost * OrgPart.stock_qty))
+            .filter(OrgPart.organization_id == organization_id)
+            .scalar()
+            or 0.0
+        )
     return {
         "parts": total,
         "active_parts": active,
@@ -250,6 +295,11 @@ def stats():
         "cross_refs": CrossReference.query.count(),
         "vehicle_makes": len(vehicle_makes()),
         "stock_value": round(stock_value, 2),
+        "org_parts": (
+            OrgPart.query.filter_by(organization_id=organization_id).count()
+            if organization_id
+            else 0
+        ),
     }
 
 
@@ -320,8 +370,61 @@ def format_fitments(part):
     )
 
 
-def part_from_row(row, part=None):
-    """יוצר או מעדכן מק"ט משורת CSV / טופס."""
+def cross_refs_from_rows(rows):
+    """בונה מק"טים מקבילים משדות מקבילים בטופס (רשימות באותו אורך)."""
+    numbers = rows.get("cross_ref_number") or []
+    types = rows.get("cross_ref_type") or []
+    brands = rows.get("cross_ref_brand") or []
+    refs = []
+    for index, number in enumerate(numbers):
+        number = (number or "").strip()
+        if not number:
+            continue
+        refs.append(
+            CrossReference(
+                ref_number=number,
+                ref_type=(types[index] if index < len(types) else "") or "OEM",
+                ref_brand=(brands[index] if index < len(brands) else "").strip() or None,
+            )
+        )
+    return refs
+
+
+def fitments_from_rows(rows):
+    """בונה התאמות לרכב משדות מקבילים בטופס."""
+    makes = rows.get("fit_make") or []
+    models = rows.get("fit_model") or []
+    years_from = rows.get("fit_year_from") or []
+    years_to = rows.get("fit_year_to") or []
+    engines = rows.get("fit_engine") or []
+
+    def at(source, index):
+        return (source[index] if index < len(source) else "") or ""
+
+    fitments = []
+    for index, make in enumerate(makes):
+        make = (make or "").strip()
+        if not make:
+            continue
+        fitments.append(
+            Fitment(
+                make=make,
+                model=at(models, index).strip() or None,
+                year_from=_to_int(at(years_from, index)),
+                year_to=_to_int(at(years_to, index)),
+                engine_code=at(engines, index).strip() or None,
+            )
+        )
+    return fitments
+
+
+def part_from_row(row, part=None, organization_id=None, rows=None):
+    """יוצר או מעדכן מק"ט משורת CSV / טופס.
+
+    שדות הקטלוג נכתבים על Part המשותף. שדות מסחריים - מחיר, עלות,
+    מלאי ומיקום - נכתבים על השכבה הפרטית של הארגון, ורק אם נמסר
+    organization_id. בלעדיו הם מתעלמים, כדי שלא ייכתב מחיר לקטלוג הגלובלי.
+    """
     if part is None:
         part = Part()
         # מוסיפים ל-session לפני קישור היצרן/הקטגוריה, אחרת autoflush מזהיר
@@ -331,13 +434,6 @@ def part_from_row(row, part=None):
     part.name_en = (row.get("name_en") or "").strip() or None
     part.description = (row.get("description") or "").strip() or None
     part.barcode = (row.get("barcode") or "").strip() or None
-    part.price = _to_float(row.get("price")) or 0.0
-    part.cost = _to_float(row.get("cost")) or 0.0
-    part.currency = (row.get("currency") or "ILS").strip() or "ILS"
-    part.vat_included = _to_bool(row.get("vat_included"))
-    part.stock_qty = _to_int(row.get("stock_qty")) or 0
-    part.min_stock = _to_int(row.get("min_stock")) or 0
-    part.location = (row.get("location") or "").strip() or None
     part.weight_kg = _to_float(row.get("weight_kg"))
     part.dimensions = (row.get("dimensions") or "").strip() or None
     part.warranty_months = _to_int(row.get("warranty_months"))
@@ -357,15 +453,71 @@ def part_from_row(row, part=None):
     if category:
         part.category = category
 
-    if "cross_refs" in row:
-        part.cross_refs = parse_cross_refs(row.get("cross_refs"))
-    if "fitments" in row:
-        part.fitments = parse_fitments(row.get("fitments"))
+    # החלפת אוסף בהשמה ישירה מייצרת INSERT לפני ה-DELETE, ואז עדכון
+    # שמשאיר את אותם ערכים נופל על אילוץ הייחודיות. מוחקים ומרוקנים קודם.
+    #
+    # שני פורמטי קלט: הטופס שולח שורות נפרדות (rows), ו-CSV שולח מחרוזת
+    # אחת מופרדת בנקודה-פסיק. השורות מנצחות כשהן קיימות.
+    if rows is not None and "cross_ref_number" in rows:
+        _replace_collection(part.cross_refs, cross_refs_from_rows(rows))
+    elif "cross_refs" in row:
+        _replace_collection(part.cross_refs, parse_cross_refs(row.get("cross_refs")))
+
+    if rows is not None and "fit_make" in rows:
+        _replace_collection(part.fitments, fitments_from_rows(rows))
+    elif "fitments" in row:
+        _replace_collection(part.fitments, parse_fitments(row.get("fitments")))
+
+    if organization_id:
+        db.session.flush()  # דרוש כדי שיהיה part.id לקישור
+        set_org_part(part, organization_id, row)
     return part
 
 
-def import_csv(stream):
-    """מייבא CSV. מחזיר (נוספו, עודכנו, שגיאות)."""
+def _replace_collection(collection, new_items):
+    """מחליף אוסף ילדים, ומוודא שהמחיקה מגיעה לבסיס הנתונים לפני ההוספה."""
+    if collection:
+        collection.clear()
+        db.session.flush()
+    collection.extend(new_items)
+
+
+def get_org_part(part, organization_id, create=False):
+    """השכבה הפרטית של ארגון על מק"ט. יוצר אותה לפי בקשה."""
+    if not organization_id or part is None:
+        return None
+    link = OrgPart.query.filter_by(
+        organization_id=organization_id, part_id=part.id
+    ).first()
+    if link is None and create:
+        link = OrgPart(organization_id=organization_id, part=part)
+        db.session.add(link)
+    return link
+
+
+def set_org_part(part, organization_id, row):
+    """כותב את השדות המסחריים לשכבה הפרטית של הארגון."""
+    commercial = {"price", "cost", "currency", "vat_included",
+                  "stock_qty", "min_stock", "location"}
+    if not commercial & set(row):
+        return None
+
+    link = get_org_part(part, organization_id, create=True)
+    link.price = _to_float(row.get("price")) or 0.0
+    link.cost = _to_float(row.get("cost")) or 0.0
+    link.currency = (row.get("currency") or "ILS").strip() or "ILS"
+    link.vat_included = _to_bool(row.get("vat_included"))
+    link.stock_qty = _to_int(row.get("stock_qty")) or 0
+    link.min_stock = _to_int(row.get("min_stock")) or 0
+    link.location = (row.get("location") or "").strip() or None
+    return link
+
+
+def import_csv(stream, organization_id=None):
+    """מייבא CSV. מחזיר (נוספו, עודכנו, שגיאות).
+
+    המחירים והמלאי שבקובץ נכתבים לשכבה הפרטית של הארגון המייבא.
+    """
     text = stream.read()
     if isinstance(text, bytes):
         text = text.decode("utf-8-sig")
@@ -383,7 +535,7 @@ def import_csv(stream):
             continue
         existing = Part.query.filter_by(part_number=number).first()
         try:
-            part = part_from_row(row, existing)
+            part = part_from_row(row, existing, organization_id=organization_id)
             if existing:
                 updated += 1
             else:
@@ -397,12 +549,17 @@ def import_csv(stream):
     return created, updated, errors
 
 
-def export_csv(parts):
-    """מייצא רשימת מק"טים ל-CSV (עם BOM כדי שאקסל יציג עברית נכון)."""
+def export_csv(parts, organization_id=None):
+    """מייצא רשימת מק"טים ל-CSV (עם BOM כדי שאקסל יציג עברית נכון).
+
+    עמודות המחיר והמלאי מתמלאות מהשכבה הפרטית של הארגון; בלי ארגון
+    הן יוצאות ריקות, כדי שייצוא אנונימי לא ידלוף מחירים.
+    """
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=CSV_COLUMNS)
     writer.writeheader()
     for part in parts:
+        org_part = part.for_org(organization_id)
         writer.writerow(
             {
                 "part_number": part.part_number,
@@ -412,13 +569,13 @@ def export_csv(parts):
                 "manufacturer": part.manufacturer.name if part.manufacturer else "",
                 "category": part.category.full_name if part.category else "",
                 "barcode": part.barcode or "",
-                "price": part.price or 0,
-                "cost": part.cost or 0,
-                "currency": part.currency or "ILS",
-                "vat_included": int(bool(part.vat_included)),
-                "stock_qty": part.stock_qty or 0,
-                "min_stock": part.min_stock or 0,
-                "location": part.location or "",
+                "price": (org_part.price or 0) if org_part else "",
+                "cost": (org_part.cost or 0) if org_part else "",
+                "currency": (org_part.currency or "ILS") if org_part else "",
+                "vat_included": int(bool(org_part.vat_included)) if org_part else "",
+                "stock_qty": (org_part.stock_qty or 0) if org_part else "",
+                "min_stock": (org_part.min_stock or 0) if org_part else "",
+                "location": (org_part.location or "") if org_part else "",
                 "weight_kg": part.weight_kg or "",
                 "dimensions": part.dimensions or "",
                 "warranty_months": part.warranty_months or "",
@@ -459,3 +616,18 @@ def catalog_coverage(vehicle):
         seen.setdefault(part.part_type, 0)
         seen[part.part_type] += 1
     return seen
+
+
+def low_stock_parts(organization_id, limit=8):
+    """מק"טים שהמלאי שלהם מתחת למינימום, בארגון נתון."""
+    if not organization_id:
+        return []
+    return (
+        OrgPart.query.filter(
+            OrgPart.organization_id == organization_id,
+            OrgPart.stock_qty <= OrgPart.min_stock,
+        )
+        .order_by(OrgPart.stock_qty)
+        .limit(limit)
+        .all()
+    )

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}הזמנה לא תקפה{% endblock %}
+{% block content %}
+<div class="text-center py-5">
+  <h1 class="h3">ההזמנה אינה תקפה</h1>
+  <p class="text-muted">
+    הקישור פג תוקף, בוטל, או שכבר נעשה בו שימוש.<br>
+    בקש מהמנהל בארגון לשלוח הזמנה חדשה.
+  </p>
+  <a class="btn btn-outline-primary" href="{{ url_for('auth.login') }}">למסך ההתחברות</a>
+</div>
+{% endblock %}

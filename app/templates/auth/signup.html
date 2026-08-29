@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}רישום ארגון{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7">
+    <div class="card mt-4">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-1">רישום ארגון חדש</h1>
+        <p class="text-muted small mb-4">
+          הנרשם הופך לבעלים של הארגון ויוכל להזמין אליו משתמשים נוספים.
+        </p>
+        <form method="post" class="row g-3">
+          {{ csrf_field() }}
+          <div class="col-md-8">
+            <label class="form-label">שם הארגון *</label>
+            <input class="form-control" name="organization_name"
+                   value="{{ form.get('organization_name','') }}" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">סוג</label>
+            <select class="form-select" name="kind">
+              {% for kind in kinds %}
+              <option value="{{ kind }}" {% if form.get('kind')==kind %}selected{% endif %}>{{ kind }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">שם מלא</label>
+            <input class="form-control" name="full_name" value="{{ form.get('full_name','') }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">טלפון</label>
+            <input class="form-control" name="phone" dir="ltr" value="{{ form.get('phone','') }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">דוא"ל *</label>
+            <input class="form-control" type="email" name="email" dir="ltr"
+                   value="{{ form.get('email','') }}" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">סיסמה *</label>
+            <input class="form-control" type="password" name="password" required minlength="8">
+            <div class="form-text">לפחות 8 תווים</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">אימות סיסמה *</label>
+            <input class="form-control" type="password" name="password_confirm" required>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary">יצירת חשבון</button>
+            <a class="btn btn-link" href="{{ url_for('auth.login') }}">כבר יש לי חשבון</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

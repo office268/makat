@@ -33,6 +33,16 @@ def _database_uri():
     return f"sqlite:///{BASE_DIR / 'instance' / 'makat.db'}"
 
 
+def _superadmin_emails():
+    """כתובות בעלות הרשאת-על, ממשתנה הסביבה SUPERADMIN_EMAILS.
+
+    ההרשאה הזו חוצה ארגונים ולכן היא נשלטת מהסביבה בלבד - אין דרך להעניק
+    אותה מתוך היישום, וכל מי שיכול לשנות אותה כבר שולט בשרת ממילא.
+    """
+    raw = os.environ.get("SUPERADMIN_EMAILS", "")
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
 def _is_managed_platform():
     """האם אנחנו רצים על פלטפורמה מנוהלת (Railway) ולא על מחשב מקומי."""
     return bool(
@@ -48,9 +58,37 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
     SQLALCHEMY_DATABASE_URI = _database_uri()
     IS_MANAGED_PLATFORM = _is_managed_platform()
-    # יצירת טבלאות בעליית האפליקציה מתאימה ל-SQLite מקומי בלבד.
-    # מול Postgres זה רץ פעם אחת ב-preDeployCommand.
-    AUTO_CREATE_TABLES = SQLALCHEMY_DATABASE_URI.startswith("sqlite")
+    SUPERADMIN_EMAILS = _superadmin_emails()
+    # כמה עמודים (1000 רשומות כל אחד) לייבא בבקשת HTTP אחת, ותקציב הזמן
+    # שלה. gunicorn הורג בקשה אחרי 60 שניות, ולכן המנה חייבת לעצור הרבה לפניו.
+    VEHICLE_IMPORT_PAGES_PER_CHUNK = int(
+        os.environ.get("VEHICLE_IMPORT_PAGES_PER_CHUNK", 3)
+    )
+    VEHICLE_IMPORT_TIME_BUDGET = float(
+        os.environ.get("VEHICLE_IMPORT_TIME_BUDGET", 25)
+    )
+    # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
+    # מקומי, נעול כברירת מחדל בפרודקשן.
+    # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
+    # מחדש את הנכסים במטמון. מוגדר אוטומטית מהקומיט בפריסה.
+    SW_VERSION = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12] or "dev"
+
+    CSRF_ENABLED = True
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    # הקוקי נשלח רק על HTTPS כשאנחנו על פלטפורמה מנוהלת
+    SESSION_COOKIE_SECURE = _is_managed_platform()
+    REMEMBER_COOKIE_SECURE = _is_managed_platform()
+
+    READ_ONLY = os.environ.get(
+        "READ_ONLY", "1" if _is_managed_platform() else "0"
+    ).strip().lower() in {"1", "true", "yes"}
+    # מרגע שיש Alembic, המיגרציות הן הבעלים היחיד של הסכימה.
+    # create_all() לא יודע לשנות טבלה קיימת, ולכן הוא כבוי כברירת מחדל -
+    # אחרת שתי מערכות היו מנהלות את אותה סכימה וסותרות זו את זו.
+    AUTO_CREATE_TABLES = os.environ.get("AUTO_CREATE_TABLES", "0").strip() == "1"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     JSON_AS_ASCII = False
@@ -63,6 +101,11 @@ class TestConfig(Config):
 
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SUPERADMIN_EMAILS = frozenset()
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
+    READ_ONLY = False
+    CSRF_ENABLED = False
     WTF_CSRF_ENABLED = False
+    SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False

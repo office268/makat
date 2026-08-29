@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}זיהוי מק"ט - דמו{% endblock %}
+{% block title %}זיהוי מק"ט{% endblock %}
 {% block content %}
 
 <div class="demo-hero mb-4">
@@ -10,9 +10,34 @@
   </p>
 </div>
 
+{% if catalog_empty %}
+<div class="alert alert-info d-flex align-items-start gap-3">
+  <span class="fs-4">📥</span>
+  <div>
+    <strong>הקטלוג ריק, ולכן החיפוש לא יחזיר מק"טים.</strong>
+    <div class="small mt-1">
+      זיהוי הרכב לפי מספר רישוי כבר עובד. מה שחסר הוא הקטלוג —
+      <strong>מק"ט יימצא בחיפוש הזה רק אם הוזנו לו התאמות לרכב.</strong>
+      {% if current_user.is_authenticated and current_user.can_edit_catalog %}
+      <div class="mt-2 d-flex gap-2">
+        <a class="btn btn-sm btn-primary" href="{{ url_for('web.part_create') }}">הזנת מק"ט ראשון</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.import_csv') }}">ייבוא מקובץ CSV</a>
+      </div>
+      {% elif not current_user.is_authenticated %}
+      <div class="mt-2">
+        <a class="btn btn-sm btn-primary" href="{{ url_for('auth.login') }}">התחברות</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('auth.signup') }}">רישום ארגון</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="card mb-4">
+  {{ csrf_field() }}
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4">
@@ -138,11 +163,15 @@
               <td class="font-monospace small text-muted">
                 {% for ref in part.cross_refs %}{{ ref.ref_number }}{% if not loop.last %}, {% endif %}{% endfor %}
               </td>
-              <td class="text-end fw-bold">{{ part.price_with_vat | ils }}</td>
+              {% set op = part.for_org(org_id) %}
+              <td class="text-end fw-bold">
+                {% if op %}{{ op.price_with_vat | ils }}
+                {% else %}<span class="text-muted fw-normal small">התחבר לצפייה</span>{% endif %}
+              </td>
               <td class="text-center">
-                <span class="badge {% if part.stock_qty > 0 %}bg-success{% else %}bg-secondary{% endif %}">
-                  {{ part.stock_qty }}
-                </span>
+                {% if op %}
+                <span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
+                {% else %}<span class="text-muted">—</span>{% endif %}
               </td>
               <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_detail', part_id=part.id) }}">כרטיס</a></td>
             </tr>

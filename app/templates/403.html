@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}אין הרשאה{% endblock %}
+{% block content %}
+<div class="text-center py-5">
+  <h1 class="display-5">403</h1>
+  <p class="lead">אין לך הרשאה לפעולה הזו.</p>
+  {% if current_user.is_authenticated %}
+  <p class="text-muted">
+    התפקיד שלך הוא <strong>{{ current_user.role_label }}</strong>.
+    פעולה זו דורשת הרשאת מנהל. פנה לבעלים של {{ current_user.organization.name }}.
+  </p>
+  {% endif %}
+  <a class="btn btn-primary" href="{{ url_for('web.parts_list') }}">חזרה לקטלוג</a>
+</div>
+{% endblock %}

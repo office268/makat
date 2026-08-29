@@ -9,9 +9,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.auth_models import Organization, User  # noqa: E402
 from app.models import (  # noqa: E402
     CrossReference,
     Fitment,
+    OrgPart,
     PartSupplier,
     Supplier,
     db,
@@ -181,11 +183,18 @@ def seed(app, reset=True):
     with app.app_context():
         if reset:
             db.drop_all()
-        db.create_all()
+            db.create_all()
 
         if not reset and Part.query.first() is not None:
             print("הקטלוג כבר מכיל מק\"טים - מדלגים על הזריעה.")
             return 0
+
+        # ארגון הדגמה - המחירים והמלאי נתלים עליו, לא על הקטלוג המשותף
+        demo_org = Organization.query.filter_by(slug="demo").first()
+        if demo_org is None:
+            demo_org = Organization(name="מוסך הדגמה", slug="demo", kind="מוסך")
+            db.session.add(demo_org)
+            db.session.flush()
 
         for brand, (country, _tpl) in BRANDS.items():
             manufacturer = get_or_create_manufacturer(brand)
@@ -193,7 +202,10 @@ def seed(app, reset=True):
 
         suppliers = []
         for name, contact, phone, email in SUPPLIERS:
-            supplier = Supplier(name=name, contact_name=contact, phone=phone, email=email)
+            supplier = Supplier(
+                name=name, contact_name=contact, phone=phone, email=email,
+                organization=demo_org,
+            )
             db.session.add(supplier)
             suppliers.append(supplier)
         db.session.flush()
@@ -222,16 +234,21 @@ def seed(app, reset=True):
                     part_type=part_type,
                     manufacturer=get_or_create_manufacturer(brand),
                     category=get_or_create_category(category),
-                    cost=cost,
-                    price=round(cost * 1.42 / 5) * 5,
-                    currency="ILS",
-                    stock_qty=int(_rand(seed_key + "stock", 1)),
-                    min_stock=2,
-                    location=f"{_rand(seed_key + 'loc', 1, alpha=True)}-{_rand(seed_key + 'loc2', 2)}",
                     warranty_months=warranty,
                     barcode=f"729{_rand(seed_key + 'bc', 10)}",
                     is_active=True,
                 )
+                part.org_links = [
+                    OrgPart(
+                        organization=demo_org,
+                        cost=cost,
+                        price=round(cost * 1.42 / 5) * 5,
+                        currency="ILS",
+                        stock_qty=int(_rand(seed_key + "stock", 1)),
+                        min_stock=2,
+                        location=f"{_rand(seed_key + 'loc', 1, alpha=True)}-{_rand(seed_key + 'loc2', 2)}",
+                    )
+                ]
                 part.cross_refs = [
                     CrossReference(
                         ref_number=_fill(oem_template, seed_key + "oem"),
@@ -264,7 +281,10 @@ def seed(app, reset=True):
                 created += 1
 
         db.session.commit()
-        print(f'נטענו {created} מק"טים, {len(BRANDS)} יצרנים, {len(VEHICLES)} דגמי רכב.')
+        print(
+            f'נטענו {created} מק"טים, {len(BRANDS)} יצרנים, '
+            f'{len(VEHICLES)} דגמי רכב, ותומחרו עבור "{demo_org.name}".'
+        )
         return created
 
 

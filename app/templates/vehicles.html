@@ -27,8 +27,12 @@
     <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
     <td>{{ part.name_he }}</td>
     <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
-    <td class="text-end">{{ part.price_with_vat | ils }}</td>
-    <td class="text-center"><span class="badge {% if part.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ part.stock_qty }}</span></td>
+    {% set op = part.for_org(org_id) %}
+    <td class="text-end">{{ op.price_with_vat | ils if op else '—' }}</td>
+    <td class="text-center">
+      {% if op %}<span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
+      {% else %}<span class="text-muted">—</span>{% endif %}
+    </td>
   </tr>
   {% endfor %}
   </tbody>

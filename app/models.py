@@ -89,14 +89,6 @@ class Part(db.Model):
     part_type = db.Column(db.String(60), index=True)
 
     barcode = db.Column(db.String(64), index=True)
-    price = db.Column(db.Float, default=0.0)
-    cost = db.Column(db.Float, default=0.0)
-    currency = db.Column(db.String(3), default="ILS")
-    vat_included = db.Column(db.Boolean, default=False)
-
-    stock_qty = db.Column(db.Integer, default=0)
-    min_stock = db.Column(db.Integer, default=0)
-    location = db.Column(db.String(80))  # מיקום במחסן
 
     weight_kg = db.Column(db.Float)
     dimensions = db.Column(db.String(80))  # אורך x רוחב x גובה בס"מ
@@ -118,32 +110,20 @@ class Part(db.Model):
     supplier_links = db.relationship(
         "PartSupplier", back_populates="part", cascade="all, delete-orphan"
     )
+    org_links = db.relationship(
+        "OrgPart", back_populates="part", cascade="all, delete-orphan"
+    )
 
-    @property
-    def in_stock(self):
-        return (self.stock_qty or 0) > 0
-
-    @property
-    def low_stock(self):
-        return (self.stock_qty or 0) <= (self.min_stock or 0)
-
-    @property
-    def price_with_vat(self):
-        """מחיר כולל מע"מ (18%)."""
-        if self.price is None:
+    def for_org(self, organization_id):
+        """השכבה הפרטית של ארגון מסוים על המק"ט הזה, אם קיימת."""
+        if not organization_id:
             return None
-        if self.vat_included:
-            return round(self.price, 2)
-        return round(self.price * 1.18, 2)
+        return next(
+            (link for link in self.org_links if link.organization_id == organization_id),
+            None,
+        )
 
-    @property
-    def margin_percent(self):
-        """אחוז רווח גולמי מול מחיר העלות."""
-        if not self.price or not self.cost:
-            return None
-        return round((self.price - self.cost) / self.price * 100, 1)
-
-    def to_dict(self, full=False):
+    def to_dict(self, full=False, organization_id=None):
         data = {
             "id": self.id,
             "part_number": self.part_number,
@@ -152,24 +132,25 @@ class Part(db.Model):
             "manufacturer": self.manufacturer.name if self.manufacturer else None,
             "category": self.category.full_name if self.category else None,
             "part_type": self.part_type,
-            "price": self.price,
-            "price_with_vat": self.price_with_vat,
-            "currency": self.currency,
-            "stock_qty": self.stock_qty,
-            "in_stock": self.in_stock,
             "is_active": self.is_active,
         }
+        # מחיר ומלאי פרטיים לארגון - נחשפים רק למי ששייך אליו
+        org_part = self.for_org(organization_id)
+        if org_part:
+            data.update(
+                {
+                    "price": org_part.price,
+                    "price_with_vat": org_part.price_with_vat,
+                    "currency": org_part.currency,
+                    "stock_qty": org_part.stock_qty,
+                    "in_stock": org_part.in_stock,
+                }
+            )
         if full:
             data.update(
                 {
                     "description": self.description,
                     "barcode": self.barcode,
-                    "cost": self.cost,
-                    "margin_percent": self.margin_percent,
-                    "vat_included": self.vat_included,
-                    "min_stock": self.min_stock,
-                    "low_stock": self.low_stock,
-                    "location": self.location,
                     "weight_kg": self.weight_kg,
                     "dimensions": self.dimensions,
                     "warranty_months": self.warranty_months,
@@ -178,11 +159,27 @@ class Part(db.Model):
                     "notes": self.notes,
                     "cross_refs": [ref.to_dict() for ref in self.cross_refs],
                     "fitments": [fit.to_dict() for fit in self.fitments],
-                    "suppliers": [link.to_dict() for link in self.supplier_links],
                     "created_at": self.created_at.isoformat() if self.created_at else None,
                     "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 }
             )
+            if org_part:
+                data.update(
+                    {
+                        "cost": org_part.cost,
+                        "margin_percent": org_part.margin_percent,
+                        "vat_included": org_part.vat_included,
+                        "min_stock": org_part.min_stock,
+                        "low_stock": org_part.low_stock,
+                        "location": org_part.location,
+                        "suppliers": [
+                            link.to_dict()
+                            for link in self.supplier_links
+                            if link.supplier
+                            and link.supplier.organization_id == organization_id
+                        ],
+                    }
+                )
         return data
 
     def __repr__(self):
@@ -285,7 +282,10 @@ class Supplier(db.Model):
     __tablename__ = "suppliers"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    organization_id = db.Column(
+        db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    name = db.Column(db.String(120), nullable=False, index=True)
     contact_name = db.Column(db.String(120))
     phone = db.Column(db.String(40))
     email = db.Column(db.String(120))
@@ -294,6 +294,11 @@ class Supplier(db.Model):
 
     part_links = db.relationship(
         "PartSupplier", back_populates="supplier", cascade="all, delete-orphan"
+    )
+    organization = db.relationship("Organization")
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_supplier_org_name"),
     )
 
     def to_dict(self):
@@ -304,6 +309,7 @@ class Supplier(db.Model):
             "phone": self.phone,
             "email": self.email,
             "address": self.address,
+            "organization_id": self.organization_id,
             "parts_count": len(self.part_links),
         }
 
@@ -342,3 +348,85 @@ class PartSupplier(db.Model):
 
     def __repr__(self):
         return f"<PartSupplier part={self.part_id} supplier={self.supplier_id}>"
+
+
+class OrgPart(db.Model):
+    """השכבה הפרטית: מה שארגון מסוים יודע על מק"ט מהקטלוג המשותף.
+
+    הקטלוג (Part) משותף לכולם - מספר, שם, יצרן, התאמות לרכב. מה שמסחרי
+    ורגיש - מחיר, עלות, מלאי ומיקום במדף - יושב כאן, ונחשף רק לארגון שלו.
+    """
+
+    __tablename__ = "org_parts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(
+        db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    part_id = db.Column(db.Integer, db.ForeignKey("parts.id"), nullable=False, index=True)
+
+    price = db.Column(db.Float, default=0.0)
+    cost = db.Column(db.Float, default=0.0)
+    currency = db.Column(db.String(3), default="ILS")
+    vat_included = db.Column(db.Boolean, default=False)
+
+    stock_qty = db.Column(db.Integer, default=0)
+    min_stock = db.Column(db.Integer, default=0)
+    location = db.Column(db.String(80))  # מיקום במחסן
+    notes = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=_now)
+    updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
+
+    part = db.relationship("Part", back_populates="org_links")
+    organization = db.relationship("Organization")
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "part_id", name="uq_org_part"),
+    )
+
+    @property
+    def in_stock(self):
+        return (self.stock_qty or 0) > 0
+
+    @property
+    def low_stock(self):
+        return (self.stock_qty or 0) <= (self.min_stock or 0)
+
+    @property
+    def price_with_vat(self):
+        """מחיר כולל מע"מ (18%)."""
+        if self.price is None:
+            return None
+        if self.vat_included:
+            return round(self.price, 2)
+        return round(self.price * 1.18, 2)
+
+    @property
+    def margin_percent(self):
+        """אחוז רווח גולמי מול מחיר העלות."""
+        if not self.price or not self.cost:
+            return None
+        return round((self.price - self.cost) / self.price * 100, 1)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "part_id": self.part_id,
+            "organization_id": self.organization_id,
+            "price": self.price,
+            "price_with_vat": self.price_with_vat,
+            "cost": self.cost,
+            "margin_percent": self.margin_percent,
+            "currency": self.currency,
+            "vat_included": self.vat_included,
+            "stock_qty": self.stock_qty,
+            "min_stock": self.min_stock,
+            "in_stock": self.in_stock,
+            "low_stock": self.low_stock,
+            "location": self.location,
+            "notes": self.notes,
+        }
+
+    def __repr__(self):
+        return f"<OrgPart org={self.organization_id} part={self.part_id}>"
