@@ -4,13 +4,18 @@ import os
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
+from flask_migrate import Migrate
+from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .config import Config
 from .guards import register_read_only_guard
 from .models import db
+
+migrate = Migrate()
+csrf = CSRFProtect()
 
 
 def _configure_logging(app):
@@ -55,17 +60,43 @@ def create_app(config_object=Config):
         app.logger.debug("לא ניתן ליצור את תיקיית instance - ממשיכים.")
 
     db.init_app(app)
+    migrate.init_app(app, db)
     _check_secret_key(app)
+
+    from . import auth_models  # noqa: F401 - נדרש כדי ש-Alembic יראה את הטבלאות
+    from .auth import auth_bp, login_manager
+
+    login_manager.init_app(app)
+    if app.config["CSRF_ENABLED"]:
+        csrf.init_app(app)
 
     from .routes.api import api_bp
     from .routes.demo import demo_bp
     from .routes.web import web_bp
 
+    app.register_blueprint(auth_bp)
     app.register_blueprint(web_bp)
     app.register_blueprint(demo_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
 
+    # ה-API עובד עם מפתחות, לא עם קוקיז - CSRF לא רלוונטי שם
+    if app.config["CSRF_ENABLED"]:
+        csrf.exempt(api_bp)
+
     register_read_only_guard(app)
+
+    @app.template_global("csrf_field")
+    def csrf_field():
+        """שדה ה-CSRF המוסתר. מחזיר מחרוזת ריקה כשההגנה כבויה."""
+        from markupsafe import Markup
+
+        if not app.config["CSRF_ENABLED"]:
+            return Markup("")
+        from flask_wtf.csrf import generate_csrf
+
+        return Markup(
+            f'<input type="hidden" name="csrf_token" value="{generate_csrf()}">'
+        )
 
     @app.template_filter("cross_refs_str")
     def cross_refs_str(part):
@@ -92,6 +123,10 @@ def create_app(config_object=Config):
         if value is None:
             return "-"
         return f"₪{value:,.2f}"
+
+    @app.errorhandler(403)
+    def forbidden(_error):
+        return render_template("403.html"), 403
 
     @app.get("/healthz")
     def healthz():

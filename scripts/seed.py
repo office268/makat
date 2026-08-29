@@ -181,7 +181,7 @@ def seed(app, reset=True):
     with app.app_context():
         if reset:
             db.drop_all()
-        db.create_all()
+            db.create_all()
 
         if not reset and Part.query.first() is not None:
             print("הקטלוג כבר מכיל מק\"טים - מדלגים על הזריעה.")

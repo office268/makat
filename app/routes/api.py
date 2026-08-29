@@ -2,6 +2,7 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from .. import services
+from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 
 api_bp = Blueprint("api", __name__)
@@ -63,6 +64,7 @@ def get_part_by_number(number):
 
 
 @api_bp.post("/parts")
+@role_required("manager")
 def create_part():
     payload = request.get_json(silent=True) or {}
     number = (payload.get("part_number") or "").strip()
@@ -80,6 +82,7 @@ def create_part():
 
 @api_bp.put("/parts/<int:part_id>")
 @api_bp.patch("/parts/<int:part_id>")
+@role_required("manager")
 def update_part(part_id):
     part = db.session.get(Part, part_id)
     if part is None:
@@ -101,6 +104,7 @@ def update_part(part_id):
 
 
 @api_bp.delete("/parts/<int:part_id>")
+@role_required("manager")
 def delete_part(part_id):
     part = db.session.get(Part, part_id)
     if part is None:

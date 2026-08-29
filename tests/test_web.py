@@ -1,10 +1,18 @@
 """מסלולי HTTP ו-API."""
 
 
-def test_pages_render(client):
+def test_public_pages_render(client):
     for route in ["/", "/demo", "/parts", "/vehicles", "/categories",
-                  "/manufacturers", "/suppliers", "/import"]:
+                  "/manufacturers", "/suppliers", "/login", "/signup"]:
         assert client.get(route).status_code == 200, route
+
+
+def test_editing_pages_require_login(client):
+    """מסכי העריכה מפנים לדף התחברות במקום להיפתח."""
+    for route in ["/import", "/parts/new"]:
+        response = client.get(route)
+        assert response.status_code == 302, route
+        assert "/login" in response.headers["Location"], route
 
 
 def test_demo_flow_crosses_vehicle_and_part_type(client):

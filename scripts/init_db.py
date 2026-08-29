@@ -12,6 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from flask_migrate import upgrade  # noqa: E402
+
 from app import create_app  # noqa: E402
 from app.models import Part, db  # noqa: E402
 
@@ -19,10 +21,9 @@ from app.models import Part, db  # noqa: E402
 def main():
     app = create_app()
     with app.app_context():
-        engine = db.engine
-        print(f"בסיס נתונים: {engine.dialect.name}")
-        db.create_all()
-        print("הטבלאות מעודכנות.")
+        print(f"בסיס נתונים: {db.engine.dialect.name}")
+        upgrade()
+        print("המיגרציות הורצו.")
 
         count = Part.query.count()
         print(f'בקטלוג {count} מק"טים.')

@@ -10,6 +10,7 @@
     <a class="btn btn-outline-primary" href="{{ url_for('web.part_edit', part_id=part.id) }}">עריכה</a>
     <form method="post" action="{{ url_for('web.part_delete', part_id=part.id) }}"
           onsubmit="return confirm('למחוק את המק&quot;ט {{ part.part_number }}?')">
+      {{ csrf_field() }}
       <button class="btn btn-outline-danger">מחיקה</button>
     </form>
   </div>

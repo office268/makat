@@ -50,12 +50,22 @@ class Config:
     IS_MANAGED_PLATFORM = _is_managed_platform()
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
+    CSRF_ENABLED = True
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    # הקוקי נשלח רק על HTTPS כשאנחנו על פלטפורמה מנוהלת
+    SESSION_COOKIE_SECURE = _is_managed_platform()
+    REMEMBER_COOKIE_SECURE = _is_managed_platform()
+
     READ_ONLY = os.environ.get(
         "READ_ONLY", "1" if _is_managed_platform() else "0"
     ).strip().lower() in {"1", "true", "yes"}
-    # יצירת טבלאות בעליית האפליקציה מתאימה ל-SQLite מקומי בלבד.
-    # מול Postgres זה רץ פעם אחת ב-preDeployCommand.
-    AUTO_CREATE_TABLES = SQLALCHEMY_DATABASE_URI.startswith("sqlite")
+    # מרגע שיש Alembic, המיגרציות הן הבעלים היחיד של הסכימה.
+    # create_all() לא יודע לשנות טבלה קיימת, ולכן הוא כבוי כברירת מחדל -
+    # אחרת שתי מערכות היו מנהלות את אותה סכימה וסותרות זו את זו.
+    AUTO_CREATE_TABLES = os.environ.get("AUTO_CREATE_TABLES", "0").strip() == "1"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     JSON_AS_ASCII = False
@@ -71,4 +81,7 @@ class TestConfig(Config):
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
     READ_ONLY = False
+    CSRF_ENABLED = False
     WTF_CSRF_ENABLED = False
+    SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False

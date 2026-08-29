@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}החשבון שלי{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">החשבון שלי</h1>
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card h-100"><div class="card-header">משתמש</div><div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-4">שם</dt><dd class="col-8">{{ current_user.full_name or '-' }}</dd>
+        <dt class="col-4">דוא"ל</dt><dd class="col-8" dir="ltr">{{ current_user.email }}</dd>
+        <dt class="col-4">תפקיד</dt><dd class="col-8">
+          <span class="badge bg-primary">{{ current_user.role_label }}</span></dd>
+        <dt class="col-4">כניסה אחרונה</dt>
+        <dd class="col-8">{{ current_user.last_login_at.strftime('%d/%m/%Y %H:%M') if current_user.last_login_at else '-' }}</dd>
+      </dl>
+    </div></div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100"><div class="card-header">ארגון</div><div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-4">שם</dt><dd class="col-8">{{ current_user.organization.name }}</dd>
+        <dt class="col-4">סוג</dt><dd class="col-8">{{ current_user.organization.kind }}</dd>
+        <dt class="col-4">מזהה</dt><dd class="col-8" dir="ltr">{{ current_user.organization.slug }}</dd>
+        <dt class="col-4">משתמשים</dt><dd class="col-8">{{ current_user.organization.users | length }}</dd>
+      </dl>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

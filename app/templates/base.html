@@ -29,7 +29,33 @@
                placeholder='מק"ט מדויק...' aria-label="חיפוש מק״ט" required>
         <button class="btn btn-sm btn-outline-light" type="submit">אתר</button>
       </form>
-      <a class="btn btn-sm btn-success ms-2" href="{{ url_for('web.part_create') }}">+ מק"ט חדש</a>
+
+      {% if current_user.is_authenticated %}
+        {% if current_user.can_edit_catalog %}
+        <a class="btn btn-sm btn-success ms-2" href="{{ url_for('web.part_create') }}">+ מק"ט חדש</a>
+        {% endif %}
+        <div class="dropdown ms-2">
+          <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown">
+            {{ current_user.full_name or current_user.email }}
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header">
+              {{ current_user.organization.name }} · {{ current_user.role_label }}
+            </h6></li>
+            <li><a class="dropdown-item" href="{{ url_for('auth.account') }}">החשבון שלי</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li>
+              <form method="post" action="{{ url_for('auth.logout') }}" class="px-3 py-1">
+                {{ csrf_field() }}
+                <button class="btn btn-sm btn-outline-danger w-100">התנתקות</button>
+              </form>
+            </li>
+          </ul>
+        </div>
+      {% else %}
+        <a class="btn btn-sm btn-outline-light ms-2" href="{{ url_for('auth.login') }}">התחברות</a>
+        <a class="btn btn-sm btn-light ms-2" href="{{ url_for('auth.signup') }}">רישום</a>
+      {% endif %}
     </div>
   </div>
 </nav>

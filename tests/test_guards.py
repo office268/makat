@@ -1,7 +1,12 @@
-"""נעילת הכתיבה - עד שמנגנון ההרשאות ייכנס."""
+"""נעילת הכתיבה - מתג חירום שחוסם שינוי נתונים גם למשתמש מורשה.
+
+מאז שנכנסו ההרשאות זו שכבה שנייה: משתמש עם תפקיד מנהל עובר את
+בדיקת ההרשאות, ועדיין נחסם כשהמערכת במצב קריאה בלבד.
+"""
 import pytest
 
 from app import create_app
+from app.auth_models import Organization, User
 from app.config import TestConfig
 from app.models import Part, db
 
@@ -17,9 +22,19 @@ def ro_client():
         db.drop_all()
         db.create_all()
         db.session.add(Part(part_number="RO-1", name_he="חלק"))
+        organization = Organization(name="מוסך", slug="ro-garage")
+        db.session.add(organization)
+        db.session.flush()
+        manager = User(email="mgr@ro.test", role="manager", organization=organization)
+        manager.set_password("password123")
+        db.session.add(manager)
         db.session.commit()
         part_id = Part.query.first().id
-        yield app.test_client(), part_id
+
+        client = app.test_client()
+        # מתחברים כמנהל - כך שכל חסימה שנראה מגיעה מהנעילה, לא מההרשאות
+        client.post("/login", data={"email": "mgr@ro.test", "password": "password123"})
+        yield client, part_id
         db.session.remove()
         db.drop_all()
 
@@ -54,8 +69,17 @@ def test_demo_search_still_works(ro_client):
     assert "COROLLA" in response.get_data(as_text=True)
 
 
-def test_writes_work_when_guard_is_off(client):
-    """בפיתוח מקומי הנעילה כבויה והכל פתוח."""
+def test_writes_work_when_guard_is_off(client, app):
+    """כשהנעילה כבויה, מנהל מחובר יכול לכתוב כרגיל."""
+    with app.app_context():
+        organization = Organization(name="מוסך", slug="open-garage")
+        db.session.add(organization)
+        db.session.flush()
+        manager = User(email="mgr@open.test", role="manager", organization=organization)
+        manager.set_password("password123")
+        db.session.add(manager)
+        db.session.commit()
+    client.post("/login", data={"email": "mgr@open.test", "password": "password123"})
     assert client.post(
         "/api/parts", json={"part_number": "OPEN-1", "name_he": "חלק"}
     ).status_code == 201

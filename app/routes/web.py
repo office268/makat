@@ -12,6 +12,7 @@ from flask import (
 )
 
 from .. import services
+from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 from ..taxonomy import all_types
 
@@ -95,6 +96,7 @@ def part_lookup():
 
 
 @web_bp.route("/parts/new", methods=["GET", "POST"])
+@role_required("manager")
 def part_create():
     """הוספת מק"ט חדש."""
     if request.method == "POST":
@@ -115,6 +117,7 @@ def part_create():
 
 
 @web_bp.route("/parts/<int:part_id>/edit", methods=["GET", "POST"])
+@role_required("manager")
 def part_edit(part_id):
     """עריכת מק"ט קיים."""
     part = db.session.get(Part, part_id)
@@ -138,6 +141,7 @@ def part_edit(part_id):
 
 
 @web_bp.route("/parts/<int:part_id>/delete", methods=["POST"])
+@role_required("manager")
 def part_delete(part_id):
     """מחיקת מק"ט."""
     part = db.session.get(Part, part_id)
@@ -204,6 +208,7 @@ def export_csv():
 
 
 @web_bp.route("/import", methods=["GET", "POST"])
+@role_required("manager")
 def import_csv():
     """ייבוא מק"טים מקובץ CSV."""
     result = None

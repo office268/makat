@@ -5,6 +5,7 @@
 <div class="row g-3">
   <div class="col-lg-5">
     <form class="card" method="post" enctype="multipart/form-data"><div class="card-body">
+      {{ csrf_field() }}
       <label class="form-label">קובץ CSV (UTF-8)</label>
       <input class="form-control mb-3" type="file" name="file" accept=".csv" required>
       <button class="btn btn-primary">ייבוא</button>

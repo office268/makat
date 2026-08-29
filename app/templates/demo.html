@@ -13,6 +13,7 @@
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="card mb-4">
+  {{ csrf_field() }}
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4">

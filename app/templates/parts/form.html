@@ -11,6 +11,7 @@
 
 <h1 class="h4 mb-3">{% if part %}עריכת מק"ט{% else %}הוספת מק"ט חדש{% endif %}</h1>
 <form method="post" class="card"><div class="card-body row g-3">
+  {{ csrf_field() }}
   {{ field('part_number', 'מק"ט *', part.part_number if part else form.get('part_number','')) }}
   {{ field('name_he', 'שם בעברית *', part.name_he if part else form.get('name_he',''), col=5) }}
   {{ field('name_en', 'שם באנגלית', part.name_en if part else form.get('name_en',''), col=4) }}
