@@ -29,12 +29,16 @@
   </div>
   {{ field('barcode', 'ברקוד', part.barcode if part else form.get('barcode','')) }}
 
-  {{ field('cost', 'עלות', part.cost if part else form.get('cost',''), type='number') }}
-  {{ field('price', 'מחיר', part.price if part else form.get('price',''), type='number') }}
-  {{ field('stock_qty', 'מלאי', part.stock_qty if part else form.get('stock_qty',''), type='number') }}
-  {{ field('min_stock', 'מלאי מינימלי', part.min_stock if part else form.get('min_stock',''), type='number') }}
+  <div class="col-12"><hr class="my-1">
+    <span class="badge bg-light text-dark border">פרטי לארגון שלך</span>
+    <span class="text-muted small">מחיר, מלאי ומיקום אינם משותפים עם ארגונים אחרים.</span>
+  </div>
+  {{ field('cost', 'עלות', org_part.cost if org_part else form.get('cost',''), type='number') }}
+  {{ field('price', 'מחיר', org_part.price if org_part else form.get('price',''), type='number') }}
+  {{ field('stock_qty', 'מלאי', org_part.stock_qty if org_part else form.get('stock_qty',''), type='number') }}
+  {{ field('min_stock', 'מלאי מינימלי', org_part.min_stock if org_part else form.get('min_stock',''), type='number') }}
 
-  {{ field('location', 'מיקום במחסן', part.location if part else form.get('location','')) }}
+  {{ field('location', 'מיקום במחסן', org_part.location if org_part else form.get('location','')) }}
   {{ field('warranty_months', 'אחריות (חודשים)', part.warranty_months if part else form.get('warranty_months',''), type='number') }}
   {{ field('weight_kg', 'משקל (ק"ג)', part.weight_kg if part else form.get('weight_kg',''), type='number') }}
   {{ field('side', 'צד', part.side if part else form.get('side',''), ph='ימין / שמאל') }}

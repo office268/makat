@@ -8,6 +8,8 @@
 {% for s in suppliers %}
 <tr><td>{{ s.name }}</td><td>{{ s.contact_name or '-' }}</td><td>{{ s.phone or '-' }}</td>
 <td class="small">{{ s.email or '-' }}</td><td class="text-center">{{ s.part_links | length }}</td></tr>
-{% else %}<tr><td colspan="5" class="text-muted text-center py-4">אין ספקים.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="5" class="text-muted text-center py-4">
+  {% if org_id %}אין ספקים.{% else %}ספקים פרטיים לכל ארגון — התחבר כדי לראות את שלך.{% endif %}
+</td></tr>{% endfor %}
 </tbody></table></div></div>
 {% endblock %}

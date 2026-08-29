@@ -63,7 +63,8 @@
             <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold">{{ part.part_number }}</a>
             <span class="text-muted">{{ part.name_he }}</span>
           </span>
-          <span class="badge bg-light text-dark">{{ part.price_with_vat | ils }}</span>
+          {% set op = part.for_org(org_id) %}
+          <span class="badge bg-light text-dark">{{ op.price_with_vat | ils if op else '—' }}</span>
         </li>
         {% else %}
         <li class="list-group-item text-muted">אין עדיין מק"טים. אפשר <a href="{{ url_for('web.import_csv') }}">לייבא CSV</a>.</li>
@@ -75,16 +76,18 @@
     <div class="card h-100">
       <div class="card-header text-warning-emphasis">התראות מלאי נמוך</div>
       <ul class="list-group list-group-flush">
-        {% for part in low_stock %}
+        {% for link in low_stock %}
         <li class="list-group-item d-flex justify-content-between align-items-center">
           <span>
-            <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold">{{ part.part_number }}</a>
-            <span class="text-muted">{{ part.name_he }}</span>
+            <a href="{{ url_for('web.part_detail', part_id=link.part.id) }}" class="fw-bold">{{ link.part.part_number }}</a>
+            <span class="text-muted">{{ link.part.name_he }}</span>
           </span>
-          <span class="badge bg-warning text-dark">במלאי: {{ part.stock_qty }} / מינ' {{ part.min_stock }}</span>
+          <span class="badge bg-warning text-dark">במלאי: {{ link.stock_qty }} / מינ' {{ link.min_stock }}</span>
         </li>
         {% else %}
-        <li class="list-group-item text-muted">אין התראות מלאי.</li>
+        <li class="list-group-item text-muted">
+          {% if org_id %}אין התראות מלאי.{% else %}התחבר כדי לראות את המלאי שלך.{% endif %}
+        </li>
         {% endfor %}
       </ul>
     </div>

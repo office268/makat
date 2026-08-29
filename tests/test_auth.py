@@ -50,10 +50,10 @@ def test_role_capabilities(app, org, role, can_edit, can_manage_users):
 
 def test_disabled_organization_deactivates_its_users(app, org):
     with app.app_context():
-        organization = Organization.query.first()
+        organization = Organization.query.filter_by(slug="test-garage").first()
         organization.is_active = False
         db.session.commit()
-        assert User.query.filter_by(role="owner").first().is_active is False
+        assert User.query.filter_by(email="owner@t.test").first().is_active is False
 
 
 # ---------- אכיפה על נקודות הקצה ----------

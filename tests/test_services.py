@@ -1,7 +1,8 @@
 """חיפוש, ייבוא וסטטיסטיקות."""
 import io
 
-from app.models import Part
+from app.auth_models import Organization
+from app.models import OrgPart, Part
 from app.services import (
     export_csv,
     find_by_number,
@@ -35,26 +36,32 @@ def test_parts_for_vehicle_requires_matching_type(app):
     assert len(parts_for_vehicle(vehicle, "oil_filter")) == 0
 
 
-def test_price_with_vat_and_margin(app):
-    part = Part.query.first()
-    assert part.price_with_vat == 236.0        # 200 * 1.18
-    assert part.margin_percent == 30.0         # (200-140)/200
+def test_price_with_vat_and_margin(app, org_id):
+    """המחיר נמצא בשכבה הפרטית, לא בקטלוג המשותף."""
+    link = OrgPart.query.filter_by(organization_id=org_id).first()
+    assert link.price_with_vat == 236.0        # 200 * 1.18
+    assert link.margin_percent == 30.0         # (200-140)/200
+    assert not hasattr(Part.query.first(), "price")
 
 
-def test_import_creates_then_updates(app):
+def test_import_creates_then_updates(app, org_id):
+    """הקטלוג נכתב משותף; המחיר נכתב לשכבה של הארגון המייבא."""
     csv_text = (
         "part_number,name_he,manufacturer,category,price,stock_qty,part_type,fitments\n"
         "IMP-1,מסנן שמן,Mahle,מנוע / סינון,45,10,oil_filter,מאזדה:MAZDA 3:2014:2019:PE-VPS\n"
     )
-    created, updated, errors = import_csv(io.StringIO(csv_text))
+    created, updated, errors = import_csv(io.StringIO(csv_text), organization_id=org_id)
     assert (created, updated, errors) == (1, 0, [])
     part = Part.query.filter_by(part_number="IMP-1").first()
     assert part.part_type == "oil_filter"
     assert part.fitments[0].make == "מאזדה"
+    assert part.for_org(org_id).price == 45
 
-    created, updated, errors = import_csv(io.StringIO(csv_text.replace(",45,", ",99,")))
+    created, updated, errors = import_csv(
+        io.StringIO(csv_text.replace(",45,", ",99,")), organization_id=org_id
+    )
     assert (created, updated) == (0, 1)
-    assert Part.query.filter_by(part_number="IMP-1").first().price == 99
+    assert Part.query.filter_by(part_number="IMP-1").first().for_org(org_id).price == 99
 
 
 def test_import_reports_missing_required_fields(app):
@@ -64,15 +71,19 @@ def test_import_reports_missing_required_fields(app):
     assert len(errors) == 2
 
 
-def test_export_round_trips_through_import(app):
-    text = export_csv(Part.query.all())
+def test_export_round_trips_through_import(app, org_id):
+    text = export_csv(Part.query.all(), organization_id=org_id)
     assert "TEST-001" in text
     assert "04465-02220" in text          # מק"ט מקביל נשמר
     assert "טויוטה:COROLLA:2013:2018" in text
 
 
-def test_stats_counts(app):
-    result = stats()
+def test_stats_counts(app, org_id):
+    result = stats(org_id)
     assert result["parts"] == 1
-    assert result["in_stock"] == 1
+    assert result["in_stock"] == 1      # מלאי שייך לארגון
     assert result["cross_refs"] == 1
+
+    anonymous = stats(None)
+    assert anonymous["parts"] == 1      # הקטלוג משותף
+    assert anonymous["in_stock"] == 0   # המלאי לא נחשף

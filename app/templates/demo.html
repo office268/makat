@@ -139,11 +139,15 @@
               <td class="font-monospace small text-muted">
                 {% for ref in part.cross_refs %}{{ ref.ref_number }}{% if not loop.last %}, {% endif %}{% endfor %}
               </td>
-              <td class="text-end fw-bold">{{ part.price_with_vat | ils }}</td>
+              {% set op = part.for_org(org_id) %}
+              <td class="text-end fw-bold">
+                {% if op %}{{ op.price_with_vat | ils }}
+                {% else %}<span class="text-muted fw-normal small">התחבר לצפייה</span>{% endif %}
+              </td>
               <td class="text-center">
-                <span class="badge {% if part.stock_qty > 0 %}bg-success{% else %}bg-secondary{% endif %}">
-                  {{ part.stock_qty }}
-                </span>
+                {% if op %}
+                <span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
+                {% else %}<span class="text-muted">—</span>{% endif %}
               </td>
               <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_detail', part_id=part.id) }}">כרטיס</a></td>
             </tr>

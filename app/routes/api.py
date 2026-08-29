@@ -21,6 +21,7 @@ def _filters():
         "low_stock": request.args.get("low_stock") == "1",
         "active_only": request.args.get("show_inactive") != "1",
         "sort": request.args.get("sort", "part_number"),
+        "organization_id": services.current_org_id(),
     }
 
 
@@ -34,7 +35,10 @@ def list_parts():
     )
     return jsonify(
         {
-            "items": [p.to_dict() for p in pagination.items],
+            "items": [
+                p.to_dict(organization_id=services.current_org_id())
+                for p in pagination.items
+            ],
             "page": pagination.page,
             "pages": pagination.pages,
             "per_page": pagination.per_page,
@@ -48,7 +52,7 @@ def get_part(part_id):
     part = db.session.get(Part, part_id)
     if part is None:
         return jsonify({"error": 'מק"ט לא נמצא'}), 404
-    return jsonify(part.to_dict(full=True))
+    return jsonify(part.to_dict(full=True, organization_id=services.current_org_id()))
 
 
 @api_bp.get("/parts/number/<path:number>")
@@ -57,9 +61,12 @@ def get_part_by_number(number):
     part = services.find_by_number(number)
     if part is None:
         return jsonify({"error": f'מק"ט {number} לא נמצא'}), 404
-    data = part.to_dict(full=True)
+    org_id = services.current_org_id()
+    data = part.to_dict(full=True, organization_id=org_id)
     data["matched_number"] = number
-    data["equivalents"] = [p.to_dict() for p in services.equivalent_parts(part)]
+    data["equivalents"] = [
+        p.to_dict(organization_id=org_id) for p in services.equivalent_parts(part)
+    ]
     return jsonify(data)
 
 
@@ -74,10 +81,11 @@ def create_part():
         return jsonify({"error": "שדה name_he הוא חובה"}), 400
     if Part.query.filter_by(part_number=number).first():
         return jsonify({"error": f'המק"ט {number} כבר קיים'}), 409
-    part = services.part_from_row(payload)
+    org_id = services.current_org_id()
+    part = services.part_from_row(payload, organization_id=org_id)
     db.session.add(part)
     db.session.commit()
-    return jsonify(part.to_dict(full=True)), 201
+    return jsonify(part.to_dict(full=True, organization_id=org_id)), 201
 
 
 @api_bp.put("/parts/<int:part_id>")
@@ -87,8 +95,9 @@ def update_part(part_id):
     part = db.session.get(Part, part_id)
     if part is None:
         return jsonify({"error": 'מק"ט לא נמצא'}), 404
+    org_id = services.current_org_id()
     payload = request.get_json(silent=True) or {}
-    merged = part.to_dict(full=True)
+    merged = part.to_dict(full=True, organization_id=org_id)
     merged["manufacturer"] = part.manufacturer.name if part.manufacturer else ""
     merged["category"] = part.category.full_name if part.category else ""
     merged["cross_refs"] = services.format_cross_refs(part)
@@ -98,9 +107,9 @@ def update_part(part_id):
     clash = Part.query.filter(Part.part_number == number, Part.id != part.id).first()
     if clash:
         return jsonify({"error": f'המק"ט {number} כבר משויך לחלק אחר'}), 409
-    services.part_from_row(merged, part)
+    services.part_from_row(merged, part, organization_id=org_id)
     db.session.commit()
-    return jsonify(part.to_dict(full=True))
+    return jsonify(part.to_dict(full=True, organization_id=org_id))
 
 
 @api_bp.delete("/parts/<int:part_id>")
@@ -130,7 +139,13 @@ def list_manufacturers():
 
 @api_bp.get("/suppliers")
 def list_suppliers():
-    return jsonify([s.to_dict() for s in Supplier.query.order_by(Supplier.name).all()])
+    org_id = services.current_org_id()
+    if not org_id:
+        return jsonify([])
+    suppliers = (
+        Supplier.query.filter_by(organization_id=org_id).order_by(Supplier.name).all()
+    )
+    return jsonify([s.to_dict() for s in suppliers])
 
 
 @api_bp.get("/vehicles/makes")
@@ -145,4 +160,4 @@ def list_models():
 
 @api_bp.get("/stats")
 def get_stats():
-    return jsonify(services.stats())
+    return jsonify(services.stats(services.current_org_id()))

@@ -32,6 +32,7 @@ def _filters_from_request():
         "low_stock": request.args.get("low_stock") == "1",
         "active_only": request.args.get("show_inactive") != "1",
         "sort": request.args.get("sort", "part_number"),
+        "organization_id": services.current_org_id(),
     }
 
 
@@ -42,21 +43,22 @@ def inject_globals():
         "all_manufacturers": Manufacturer.query.order_by(Manufacturer.name).all(),
         "all_makes": services.vehicle_makes(),
         "all_part_types": all_types(),
+        "org_id": services.current_org_id(),
     }
 
 
 @web_bp.route("/")
 def index():
     """דף הבית - סטטיסטיקות וחיפוש מהיר."""
+    org_id = services.current_org_id()
     recent = Part.query.order_by(Part.created_at.desc()).limit(8).all()
-    low = (
-        Part.query.filter(Part.stock_qty <= Part.min_stock, Part.is_active.is_(True))
-        .order_by(Part.stock_qty)
-        .limit(8)
-        .all()
-    )
+    low = services.low_stock_parts(org_id, limit=8)
     return render_template(
-        "index.html", stats=services.stats(), recent=recent, low_stock=low
+        "index.html",
+        stats=services.stats(org_id),
+        recent=recent,
+        low_stock=low,
+        org_id=org_id,
     )
 
 
@@ -79,8 +81,13 @@ def part_detail(part_id):
     part = db.session.get(Part, part_id)
     if part is None:
         abort(404)
+    org_id = services.current_org_id()
     return render_template(
-        "parts/detail.html", part=part, equivalents=services.equivalent_parts(part)
+        "parts/detail.html",
+        part=part,
+        org_part=part.for_org(org_id),
+        org_id=org_id,
+        equivalents=services.equivalent_parts(part),
     )
 
 
@@ -108,12 +115,16 @@ def part_create():
         elif not request.form.get("name_he", "").strip():
             flash("חובה להזין שם חלק", "danger")
         else:
-            part = services.part_from_row(request.form.to_dict())
+            part = services.part_from_row(
+                request.form.to_dict(), organization_id=services.current_org_id()
+            )
             db.session.add(part)
             db.session.commit()
             flash(f'המק"ט {part.part_number} נוסף בהצלחה', "success")
             return redirect(url_for("web.part_detail", part_id=part.id))
-    return render_template("parts/form.html", part=None, form=request.form)
+    return render_template(
+        "parts/form.html", part=None, org_part=None, form=request.form
+    )
 
 
 @web_bp.route("/parts/<int:part_id>/edit", methods=["GET", "POST"])
@@ -133,11 +144,19 @@ def part_edit(part_id):
         elif clash:
             flash(f'המק"ט {number} כבר משויך לחלק אחר', "danger")
         else:
-            services.part_from_row(request.form.to_dict(), part)
+            services.part_from_row(
+                request.form.to_dict(), part,
+                organization_id=services.current_org_id(),
+            )
             db.session.commit()
             flash("השינויים נשמרו", "success")
             return redirect(url_for("web.part_detail", part_id=part.id))
-    return render_template("parts/form.html", part=part, form=None)
+    return render_template(
+        "parts/form.html",
+        part=part,
+        org_part=part.for_org(services.current_org_id()),
+        form=None,
+    )
 
 
 @web_bp.route("/parts/<int:part_id>/delete", methods=["POST"])
@@ -191,17 +210,22 @@ def categories():
 
 @web_bp.route("/suppliers")
 def suppliers():
-    return render_template(
-        "suppliers.html", suppliers=Supplier.query.order_by(Supplier.name).all()
+    org_id = services.current_org_id()
+    rows = (
+        Supplier.query.filter_by(organization_id=org_id).order_by(Supplier.name).all()
+        if org_id
+        else []
     )
+    return render_template("suppliers.html", suppliers=rows)
 
 
 @web_bp.route("/export.csv")
 def export_csv():
     """ייצוא תוצאות החיפוש הנוכחיות ל-CSV."""
+    org_id = services.current_org_id()
     parts = services.search_parts(**_filters_from_request()).all()
     return Response(
-        services.export_csv(parts),
+        services.export_csv(parts, organization_id=org_id),
         mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=makat_export.csv"},
     )
@@ -217,7 +241,9 @@ def import_csv():
         if not file or not file.filename:
             flash("לא נבחר קובץ", "danger")
         else:
-            created, updated, errors = services.import_csv(file.stream)
+            created, updated, errors = services.import_csv(
+                file.stream, organization_id=services.current_org_id()
+            )
             result = {"created": created, "updated": updated, "errors": errors}
             flash(f"יובאו {created} מק\"טים חדשים, עודכנו {updated}", "success")
     return render_template("import.html", result=result, columns=services.CSV_COLUMNS)

@@ -23,6 +23,7 @@ def demo():
         "selected_type": None,
         "matches": [],
         "coverage": {},
+        "org_id": services.current_org_id(),
         "error": None,
     }
     if request.method != "POST":
@@ -82,6 +83,7 @@ def demo():
     selected = candidates[0]["part_type"]
     context["selected_type"] = selected
     context["matches"] = services.parts_for_vehicle(vehicle, selected)
+    context["org_id"] = services.current_org_id()
     return render_template("demo.html", **context)
 
 
@@ -120,7 +122,7 @@ def api_identify():
         payload["vehicle"] = vehicle
         if vehicle and candidates and candidates[0].get("part_type"):
             payload["matches"] = [
-                part.to_dict(full=True)
+                part.to_dict(full=True, organization_id=services.current_org_id())
                 for part in services.parts_for_vehicle(
                     vehicle, candidates[0]["part_type"]
                 )
