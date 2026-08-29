@@ -122,10 +122,18 @@
   async function loop() {
     // כל מנה היא בקשה נפרדת וקצרה - כך היא לא נתקלת ב-timeout של השרת,
     // וההתקדמות נשמרת בבסיס הנתונים אחרי כל אחת מהן
+    let lastOffset = -1;
     while (!stopRequested) {
       const data = await post(URLS.step);
       render(data);
       if (!data.job || !data.job.is_running) return;
+
+      // רשת ביטחון: אם המנה לא הזיזה את נקודת ההמשך והשרת עדיין מדווח
+      // "בתהליך", עוצרים. בלי זה הלולאה מנסה שוב לנצח ומציפה את המאגר.
+      if (data.job.offset === lastOffset) {
+        throw new Error(data.job.error || "הייבוא לא מתקדם. אפשר לנסות שוב מאוחר יותר.");
+      }
+      lastOffset = data.job.offset;
     }
   }
 

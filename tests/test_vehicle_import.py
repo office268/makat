@@ -114,13 +114,14 @@ def test_job_resumes_from_saved_offset(app):
 
 
 def test_network_error_keeps_offset_and_job_open(app):
+    """מנה שכל הניסיונות שלה נכשלו לא מזיזה את נקודת ההמשך."""
     pages = [[record("טויוטה", "COROLLA", 2015)], [record("מאזדה", "3", 2019)]]
     good = pager(pages)
     calls = {"n": 0}
 
     def flaky(offset, page_size=None, timeout=None):
         calls["n"] += 1
-        if calls["n"] == 1:
+        if calls["n"] <= app.config["VEHICLE_IMPORT_FETCH_ATTEMPTS"]:
             raise urllib.error.URLError("connection refused")
         return good(offset, page_size, timeout)
 
@@ -139,6 +140,109 @@ def test_network_error_keeps_offset_and_job_open(app):
         assert VehicleModel.query.count() == 2
 
 
+def test_page_is_retried_before_giving_up(app):
+    """כשל בודד לא מפיל עמוד תקין - המאגר הממשלתי מגמגם תחת עומס."""
+    pages = [[record("טויוטה", "COROLLA", 2015)]]
+    good = pager(pages)
+    calls = {"n": 0}
+
+    def stutters(offset, page_size=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+        return good(offset, page_size, timeout)
+
+    with app.app_context():
+        job = vehicle_import.start_job()
+        vehicle_import.run_chunk(job, pages=1, fetch=stutters)
+        assert calls["n"] == 2
+        assert job.status == VehicleImportJob.DONE
+        assert job.error is None
+
+
+def test_repeated_failures_stop_the_job(app):
+    """בלי זה הדפדפן מנסה שוב לנצח: ה-offset לא זז והסטטוס נשאר 'בתהליך'."""
+    def always_404(offset, page_size=None, timeout=None):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+
+    with app.app_context():
+        job = vehicle_import.start_job()
+        limit = app.config["VEHICLE_IMPORT_MAX_FAILURES"]
+        for expected in range(1, limit + 1):
+            vehicle_import.run_chunk(job, pages=1, fetch=always_404)
+            assert job.failures == expected
+        assert job.status == VehicleImportJob.FAILED
+        assert job.offset == 0
+        assert "404" in job.error
+
+        # מנה נוספת על עבודה שנכשלה לא עושה כלום
+        vehicle_import.run_chunk(job, pages=1, fetch=always_404)
+        assert job.failures == limit
+
+
+def test_progress_resets_the_failure_counter(app):
+    pages = [[record("טויוטה", "COROLLA", 2015)], [record("מאזדה", "3", 2019)]]
+    good = pager(pages)
+    calls = {"n": 0}
+
+    def fails_then_works(offset, page_size=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] <= app.config["VEHICLE_IMPORT_FETCH_ATTEMPTS"]:
+            raise urllib.error.URLError("down")
+        return good(offset, page_size, timeout)
+
+    with app.app_context():
+        job = vehicle_import.start_job()
+        vehicle_import.run_chunk(job, pages=1, fetch=fails_then_works)
+        assert job.failures == 1
+        vehicle_import.run_chunk(job, pages=1, fetch=fails_then_works)
+        assert job.failures == 0
+        assert job.offset == 1
+
+
+def test_http_error_message_carries_the_status_code(app):
+    exc = urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    assert vehicle_import.describe_error(exc) == "HTTP 404 Not Found"
+
+
+def test_failed_job_resumes_instead_of_restarting(app):
+    """הבאג שנצפה בייצור: 'המשך' פתח עבודה חדשה מ-offset 0."""
+    with app.app_context():
+        job = vehicle_import.start_job()
+        job.offset, job.created, job.total = 93000, 25616, 101228
+        vehicle_import._finish(job, VehicleImportJob.FAILED)
+
+        resumed = vehicle_import.start_job()
+        assert resumed.id == job.id
+        assert resumed.offset == 93000
+        assert resumed.created == 25616
+        assert resumed.status == VehicleImportJob.RUNNING
+        assert resumed.error is None
+        assert resumed.finished_at is None
+
+
+def test_cancelled_job_resumes_too(app):
+    with app.app_context():
+        job = vehicle_import.start_job()
+        job.offset = 5000
+        vehicle_import.cancel_job(job)
+        resumed = vehicle_import.start_job()
+        assert resumed.id == job.id
+        assert resumed.offset == 5000
+
+
+def test_finished_job_starts_a_fresh_one(app):
+    """אחרי סיום מלא מתחילים מאפס, למשיכת עדכוני המאגר."""
+    with app.app_context():
+        job = vehicle_import.start_job()
+        job.offset = 101228
+        vehicle_import._finish(job, VehicleImportJob.DONE)
+
+        fresh = vehicle_import.start_job()
+        assert fresh.id != job.id
+        assert fresh.offset == 0
+
+
 def test_start_job_returns_the_open_one(app):
     with app.app_context():
         first = vehicle_import.start_job()
@@ -146,7 +250,6 @@ def test_start_job_returns_the_open_one(app):
         vehicle_import.cancel_job(first)
         assert first.status == VehicleImportJob.CANCELLED
         assert active_job() is None
-        assert vehicle_import.start_job().id != first.id
 
 
 def test_cancelled_job_does_not_run(app):
