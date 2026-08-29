@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user
 
+from .. import mailer
 from ..auth import EMAIL_RE, MIN_PASSWORD, role_required
 from ..auth_models import Invitation, User
 from ..models import db
@@ -40,7 +41,8 @@ def index():
         .all()
     )
     return render_template(
-        "team/index.html", users=users, invitations=invitations, roles=User.ROLES
+        "team/index.html", users=users, invitations=invitations,
+        roles=User.ROLES, mail_configured=mailer.is_configured(),
     )
 
 
@@ -67,7 +69,16 @@ def invite():
         )
         db.session.add(invitation)
         db.session.commit()
-        flash(f"נוצרה הזמנה עבור {email}. העתק את הקישור ושלח אליו.", "success")
+
+        accept_url = url_for("team.accept", token=invitation.token, _external=True)
+        if mailer.send_invitation(invitation, accept_url, current_user):
+            flash(f"נשלחה הזמנה אל {email}.", "success")
+        else:
+            flash(
+                f"נוצרה הזמנה עבור {email}, אך שליחת הדוא\"ל אינה מוגדרת — "
+                "העתק את הקישור מהטבלה ושלח אותו ידנית.",
+                "warning",
+            )
     return redirect(url_for("team.index"))
 
 
