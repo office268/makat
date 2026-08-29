@@ -171,11 +171,21 @@ def _price(seed, low, high):
     return round((low + offset) / 5) * 5
 
 
-def seed(app):
-    """בונה את הקטלוג מאפס. מוחק נתונים קיימים."""
+def seed(app, reset=True):
+    """בונה את קטלוג הדמו.
+
+    reset=True  - מוחק הכל ובונה מחדש (ברירת מחדל, לשימוש מקומי).
+    reset=False - בונה רק אם הקטלוג ריק, ולא נוגע בנתונים קיימים.
+                  זה המצב שרץ בפריסה, כדי לא למחוק דאטה אמיתי.
+    """
     with app.app_context():
-        db.drop_all()
+        if reset:
+            db.drop_all()
         db.create_all()
+
+        if not reset and Part.query.first() is not None:
+            print("הקטלוג כבר מכיל מק\"טים - מדלגים על הזריעה.")
+            return 0
 
         for brand, (country, _tpl) in BRANDS.items():
             manufacturer = get_or_create_manufacturer(brand)
@@ -259,6 +269,15 @@ def seed(app):
 
 
 if __name__ == "__main__":
+    import argparse
+
     from app import create_app
 
-    seed(create_app())
+    parser = argparse.ArgumentParser(description="טעינת קטלוג דמו")
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="אל תמחק נתונים קיימים - זרע רק אם הקטלוג ריק",
+    )
+    args = parser.parse_args()
+    seed(create_app(), reset=not args.keep)

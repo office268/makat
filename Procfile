@@ -1,1 +1,2 @@
-web: gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+web: gunicorn --config gunicorn.conf.py "app:create_app()"
+release: python scripts/init_db.py

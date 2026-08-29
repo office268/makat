@@ -74,16 +74,55 @@ GET    /api/stats                                    מספרי מפתח
 
 ## פריסה ל-Railway
 
-**חשוב:** SQLite על הדיסק הרגיל של Railway נמחק בכל deploy — כל דיפלוי מקבל
-מערכת קבצים נקייה. שתי אפשרויות לפרודקשן:
+### למה זה לא סתם "לחבר ריפו"
 
-1. **Postgres (מומלץ):** מוסיפים שירות Postgres בפרויקט. Railway מזריק
-   `DATABASE_URL` אוטומטית, והאפליקציה מזהה ומתרגמת אותו לבד — אין מה להגדיר.
-2. **ווליום קבוע:** מצרפים Volume, ממפים אותו ל-`/data` ומגדירים `DATA_DIR=/data`.
-   פשוט יותר, אבל מוגבל למכונה אחת.
+SQLite על הדיסק הרגיל של Railway **נמחק בכל deploy** — כל דיפלוי בונה קונטיינר
+חדש עם מערכת קבצים נקייה. לכן פרודקשן דורש Postgres (מומלץ) או ווליום קבוע.
 
-הפריסה עצמה מוגדרת ב-`railway.json` ו-`Procfile` (gunicorn).
-משתני הסביבה מתועדים ב-`.env.example`.
+### שלבים
+
+1. **צור פרויקט** ב-Railway וחבר אליו את הריפו הזה.
+2. **הוסף שירות Postgres** לאותו פרויקט (`+ New → Database → PostgreSQL`).
+   Railway מזריק `DATABASE_URL` אוטומטית, והאפליקציה מתרגמת אותו לבד
+   לסכמה ש-SQLAlchemy 2 דורש (`postgresql+psycopg://`).
+3. **הגדר `SECRET_KEY`** במשתני הסביבה של השירות:
+   ```bash
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+   האפליקציה **מסרבת לעלות** על Railway בלי ערך אמיתי — `SECRET_KEY` חותם את
+   קוקי הסשן, וערך ברירת המחדל גלוי לכל מי שרואה את הריפו.
+4. **לקטלוג דמו:** הגדר `SEED_DEMO=1`. הזריעה תרוץ רק אם הקטלוג ריק, ולא
+   תדרוס נתונים קיימים בדיפלויים הבאים.
+5. **Generate Domain** בהגדרות השירות — וזהו.
+
+### מה קורה בכל דיפלוי
+
+```
+preDeployCommand:  python scripts/init_db.py     ← יוצר טבלאות חסרות, זורע אם ריק
+startCommand:      gunicorn --config gunicorn.conf.py "app:create_app()"
+healthcheckPath:   /healthz                      ← בודק גם חיבור לבסיס הנתונים
+```
+
+`init_db.py` רץ **פעם אחת** לפני שה-workers עולים, ולכן שני workers לא
+מתנגשים ביצירת הטבלאות. הוא בטוח להרצה חוזרת.
+
+### חלופה בלי Postgres
+
+מצרפים Volume, ממפים ל-`/data`, ומגדירים `DATA_DIR=/data`. פשוט יותר,
+אבל מוגבל למכונה אחת — בלי scaling אופקי.
+
+### משתני סביבה
+
+| משתנה | חובה | תפקיד |
+|---|---|---|
+| `SECRET_KEY` | ✅ בפרודקשן | חתימת קוקי הסשן |
+| `DATABASE_URL` | מוזרק ע"י Railway | חיבור ל-Postgres |
+| `DATA_DIR` | חלופה | נתיב לווליום עבור SQLite |
+| `SEED_DEMO` | לא | `1` = טעינת קטלוג דמו אם ריק |
+| `ANTHROPIC_API_KEY` | לא | מפעיל זיהוי חלק מתמונה |
+| `WEB_CONCURRENCY` | לא | מספר workers (ברירת מחדל 2) |
+
+הרשימה המלאה ב-`.env.example`.
 
 ## בדיקות
 
@@ -104,7 +143,9 @@ app/
   models.py        מודלי בסיס הנתונים
   services.py      חיפוש, הצלבה, ייבוא/ייצוא CSV
   routes/          demo.py · web.py · api.py
-scripts/seed.py    בניית קטלוג הדמו
+scripts/
+  seed.py          בניית קטלוג הדמו
+  init_db.py       הכנת בסיס הנתונים (רץ כ-preDeployCommand)
 data/              רכבי דוגמה
 tests/             35 בדיקות
 ```

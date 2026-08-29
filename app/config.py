@@ -33,11 +33,24 @@ def _database_uri():
     return f"sqlite:///{BASE_DIR / 'instance' / 'makat.db'}"
 
 
+def _is_managed_platform():
+    """האם אנחנו רצים על פלטפורמה מנוהלת (Railway) ולא על מחשב מקומי."""
+    return bool(
+        os.environ.get("RAILWAY_ENVIRONMENT_NAME")
+        or os.environ.get("RAILWAY_SERVICE_ID")
+        or os.environ.get("RAILWAY_PROJECT_ID")
+    )
+
+
 class Config:
     """הגדרות בסיס."""
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
     SQLALCHEMY_DATABASE_URI = _database_uri()
+    IS_MANAGED_PLATFORM = _is_managed_platform()
+    # יצירת טבלאות בעליית האפליקציה מתאימה ל-SQLite מקומי בלבד.
+    # מול Postgres זה רץ פעם אחת ב-preDeployCommand.
+    AUTO_CREATE_TABLES = SQLALCHEMY_DATABASE_URI.startswith("sqlite")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     JSON_AS_ASCII = False
@@ -50,4 +63,6 @@ class TestConfig(Config):
 
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    AUTO_CREATE_TABLES = True
+    IS_MANAGED_PLATFORM = False
     WTF_CSRF_ENABLED = False
