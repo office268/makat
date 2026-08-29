@@ -6,6 +6,12 @@
   SEED_DEMO=force   בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
 
 
+משתני סביבה:
+  RESET_CATALOG=1   מוחק את תוכן הקטלוג (הרסני; ארגונים ומשתמשים נשארים)
+  SEED_DEMO=1       טוען קטלוג דמו אם הקטלוג ריק
+  SEED_DEMO=force   בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
+
+
 רץ כ-preDeployCommand ב-Railway: פעם אחת לכל דיפלוי, לפני שה-workers עולים.
 בטוח להרצה חוזרת - יוצר רק טבלאות שחסרות, ולא מוחק שום דבר.
 
@@ -71,7 +77,20 @@ def main():
         count = Part.query.count()
         print(f'בקטלוג {count} מק"טים.')
 
-        if os.environ.get("SEED_DEMO") == "1" and count == 0:
+        if os.environ.get("RESET_CATALOG") == "1":
+            from scripts.clear_catalog import clear_catalog
+
+            print("RESET_CATALOG=1 - מוחק את תוכן הקטלוג...")
+            clear_catalog(app)
+            count = 0
+
+        seed_mode = os.environ.get("SEED_DEMO", "")
+        if seed_mode == "force":
+            from scripts.seed import seed
+
+            print("SEED_DEMO=force - בונה מחדש את קטלוג הדמו...")
+            seed(app, reset=True)
+        elif seed_mode == "1" and count == 0:
             from scripts.seed import seed
 
             print("הקטלוג ריק ו-SEED_DEMO=1 - טוען קטלוג דמו...")
