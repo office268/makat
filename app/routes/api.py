@@ -28,8 +28,8 @@ def list_parts():
     """רשימת מק"טים עם חיפוש ועימוד."""
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", current_app.config["PER_PAGE"], type=int), 200)
-    pagination = db.paginate(
-        services.search_parts(**_filters()), page=page, per_page=per_page, error_out=False
+    pagination = services.search_parts(**_filters()).paginate(
+        page=page, per_page=per_page, error_out=False
     )
     return jsonify(
         {

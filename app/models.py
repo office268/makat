@@ -85,6 +85,8 @@ class Part(db.Model):
 
     manufacturer_id = db.Column(db.Integer, db.ForeignKey("manufacturers.id"), index=True)
     category_id = db.Column(db.Integer, db.ForeignKey("categories.id"), index=True)
+    # מפתח מתוך app.taxonomy - מקשר בין תוצאת הזיהוי לבין המק"ט
+    part_type = db.Column(db.String(60), index=True)
 
     barcode = db.Column(db.String(64), index=True)
     price = db.Column(db.Float, default=0.0)
@@ -149,6 +151,7 @@ class Part(db.Model):
             "name_en": self.name_en,
             "manufacturer": self.manufacturer.name if self.manufacturer else None,
             "category": self.category.full_name if self.category else None,
+            "part_type": self.part_type,
             "price": self.price,
             "price_with_vat": self.price_with_vat,
             "currency": self.currency,

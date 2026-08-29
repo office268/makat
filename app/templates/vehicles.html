@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}חיפוש לפי רכב{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">חיפוש חלפים לפי רכב</h1>
+<form class="card mb-4" method="get"><div class="card-body row g-2">
+  <div class="col-md-4">
+    <select class="form-select" name="make">
+      <option value="">בחר יצרן רכב</option>
+      {% for mk in all_makes %}<option value="{{ mk }}" {% if selected.make == mk %}selected{% endif %}>{{ mk }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <input class="form-control" name="model" value="{{ selected.model or '' }}" placeholder="דגם" list="models">
+    <datalist id="models">{% for m in models %}<option value="{{ m }}">{% endfor %}</datalist>
+  </div>
+  <div class="col-md-2"><input class="form-control" type="number" name="year" value="{{ selected.year or '' }}" placeholder="שנת ייצור"></div>
+  <div class="col-md-2 d-grid"><button class="btn btn-primary">חפש</button></div>
+</div></form>
+
+{% if results %}
+<div class="card"><div class="card-header">{{ results | length }} מק"טים מתאימים</div>
+<div class="table-responsive"><table class="table table-hover mb-0">
+  <thead class="table-light"><tr><th>מק"ט</th><th>שם</th><th>יצרן</th><th class="text-end">מחיר</th><th class="text-center">מלאי</th></tr></thead>
+  <tbody>
+  {% for part in results %}
+  <tr>
+    <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
+    <td>{{ part.name_he }}</td>
+    <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
+    <td class="text-end">{{ part.price_with_vat | ils }}</td>
+    <td class="text-center"><span class="badge {% if part.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ part.stock_qty }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+{% elif selected.make or selected.model or selected.year %}
+<div class="alert alert-secondary">לא נמצאו מק"טים מתאימים.</div>
+{% endif %}
+{% endblock %}

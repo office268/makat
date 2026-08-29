@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}קטגוריות{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">קטגוריות</h1>
+<div class="row g-3">
+{% for root in roots %}
+<div class="col-md-4"><div class="card h-100">
+  <div class="card-header"><a href="{{ url_for('web.parts_list', category_id=root.id) }}">{{ root.name }}</a></div>
+  <ul class="list-group list-group-flush">
+    {% for child in root.children %}
+    <li class="list-group-item d-flex justify-content-between">
+      <a href="{{ url_for('web.parts_list', category_id=child.id) }}">{{ child.name }}</a>
+      <span class="badge bg-light text-dark">{{ child.parts | length }}</span>
+    </li>
+    {% else %}<li class="list-group-item text-muted small">{{ root.parts | length }} מק"טים</li>{% endfor %}
+  </ul>
+</div></div>
+{% else %}<div class="col-12 text-muted">אין קטגוריות.</div>{% endfor %}
+</div>
+{% endblock %}

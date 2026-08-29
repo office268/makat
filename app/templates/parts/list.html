@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}קטלוג מק"טים{% endblock %}
+{% block content %}
+<form class="card mb-3" method="get">
+  <div class="card-body row g-2">
+    <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q or '' }}" placeholder='מק"ט, שם, ברקוד או מק"ט מקביל'></div>
+    <div class="col-md-2">
+      <select class="form-select" name="category_id">
+        <option value="">כל הקטגוריות</option>
+        {% for c in all_categories %}<option value="{{ c.id }}" {% if filters.category_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select class="form-select" name="manufacturer_id">
+        <option value="">כל היצרנים</option>
+        {% for m in all_manufacturers %}<option value="{{ m.id }}" {% if filters.manufacturer_id == m.id %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select class="form-select" name="make">
+        <option value="">כל יצרני הרכב</option>
+        {% for mk in all_makes %}<option value="{{ mk }}" {% if filters.make == mk %}selected{% endif %}>{{ mk }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-1"><input class="form-control" type="number" name="year" value="{{ filters.year or '' }}" placeholder="שנה"></div>
+    <div class="col-md-1 d-grid"><button class="btn btn-primary">סנן</button></div>
+    <div class="col-12 d-flex gap-3 align-items-center pt-1">
+      <div class="form-check"><input class="form-check-input" type="checkbox" name="in_stock" value="1" id="s1" {% if filters.in_stock %}checked{% endif %}><label class="form-check-label small" for="s1">במלאי בלבד</label></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" name="low_stock" value="1" id="s2" {% if filters.low_stock %}checked{% endif %}><label class="form-check-label small" for="s2">מלאי נמוך</label></div>
+      <a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ url_for('web.export_csv', **request.args) }}">ייצוא CSV</a>
+    </div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light"><tr>
+        <th>מק"ט</th><th>שם</th><th>יצרן</th><th>קטגוריה</th>
+        <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th>
+      </tr></thead>
+      <tbody>
+        {% for part in parts %}
+        <tr>
+          <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
+          <td>{{ part.name_he }}</td>
+          <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
+          <td class="small text-muted">{{ part.category.full_name if part.category else '-' }}</td>
+          <td class="text-end">{{ part.price_with_vat | ils }}</td>
+          <td class="text-center"><span class="badge {% if part.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ part.stock_qty }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-muted text-center py-4">לא נמצאו מק"טים.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  {% for page_num in pagination.iter_pages() %}
+    {% if page_num %}
+      <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('web.parts_list', **dict(request.args, page=page_num)) }}">{{ page_num }}</a></li>
+    {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+  {% endfor %}
+</ul></nav>
+{% endif %}
+{% endblock %}
