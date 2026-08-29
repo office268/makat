@@ -9,6 +9,7 @@ from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .config import Config
+from .guards import register_read_only_guard
 from .models import db
 
 
@@ -63,6 +64,8 @@ def create_app(config_object=Config):
     app.register_blueprint(web_bp)
     app.register_blueprint(demo_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
+
+    register_read_only_guard(app)
 
     @app.template_filter("cross_refs_str")
     def cross_refs_str(part):

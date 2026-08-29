@@ -48,6 +48,11 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
     SQLALCHEMY_DATABASE_URI = _database_uri()
     IS_MANAGED_PLATFORM = _is_managed_platform()
+    # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
+    # מקומי, נעול כברירת מחדל בפרודקשן.
+    READ_ONLY = os.environ.get(
+        "READ_ONLY", "1" if _is_managed_platform() else "0"
+    ).strip().lower() in {"1", "true", "yes"}
     # יצירת טבלאות בעליית האפליקציה מתאימה ל-SQLite מקומי בלבד.
     # מול Postgres זה רץ פעם אחת ב-preDeployCommand.
     AUTO_CREATE_TABLES = SQLALCHEMY_DATABASE_URI.startswith("sqlite")
@@ -65,4 +70,5 @@ class TestConfig(Config):
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
+    READ_ONLY = False
     WTF_CSRF_ENABLED = False
