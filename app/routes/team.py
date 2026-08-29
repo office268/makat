@@ -142,7 +142,7 @@ def accept(token):
     """קבלת הזמנה - המוזמן קובע סיסמה ונכנס לארגון."""
     if current_user.is_authenticated:
         flash("יש להתנתק לפני קבלת הזמנה.", "warning")
-        return redirect(url_for("web.index"))
+        return redirect(url_for("identify.index"))
 
     invitation = Invitation.query.filter_by(token=token, accepted_at=None).first()
     if invitation is None or invitation.is_expired:
@@ -169,6 +169,6 @@ def accept(token):
             db.session.commit()
             login_user(user)
             flash(f"ברוך הבא ל{user.organization.name}!", "success")
-            return redirect(url_for("web.index"))
+            return redirect(url_for("identify.index"))
 
     return render_template("team/accept.html", invitation=invitation)

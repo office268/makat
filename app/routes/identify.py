@@ -1,18 +1,24 @@
-"""מסך הדמו: מספר רישוי + זיהוי חלק -> מק"ט ומחיר."""
-from flask import Blueprint, jsonify, render_template, request
+"""המסך הראשי: מספר רישוי + זיהוי חלק -> מק"ט ומחיר.
+
+זו הזרימה שמייחדת את המוצר, ולכן היא יושבת על השורש. הכתובות הישנות
+/demo ו-/identify מפנות לכאן, כדי שקישורים שכבר נשלחו לא יישברו.
+"""
+from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 
 from .. import identify as identifier
 from .. import services, vehicles
+from ..models import Part
 from ..taxonomy import all_types, type_name
 
-demo_bp = Blueprint("demo", __name__)
+identify_bp = Blueprint("identify", __name__)
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
-@demo_bp.route("/demo", methods=["GET", "POST"])
-def demo():
+@identify_bp.route("/", methods=["GET", "POST"])
+def index():
     context = {
+        "catalog_empty": Part.query.count() == 0,
         "sample_plates": vehicles.sample_plates(),
         "part_types": all_types(),
         "vision_on": identifier.vision_available(),
@@ -27,7 +33,7 @@ def demo():
         "error": None,
     }
     if request.method != "POST":
-        return render_template("demo.html", **context)
+        return render_template("identify.html", **context)
 
     plate = request.form.get("plate", "").strip()
     query = request.form.get("query", "").strip()
@@ -41,7 +47,7 @@ def demo():
             f'לא נמצא רכב עבור מספר רישוי "{plate}". '
             "בסביבת הדמו זמינים מספרי הרישוי שמופיעים למטה."
         )
-        return render_template("demo.html", **context)
+        return render_template("identify.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)
 
@@ -53,7 +59,7 @@ def demo():
         image_bytes = upload.read(MAX_IMAGE_BYTES + 1)
         if len(image_bytes) > MAX_IMAGE_BYTES:
             context["error"] = "הקובץ גדול מ-5MB."
-            return render_template("demo.html", **context)
+            return render_template("identify.html", **context)
         media_type = upload.mimetype or "image/jpeg"
 
     if chosen_type:
@@ -77,17 +83,24 @@ def demo():
         context["error"] = context["error"] or (
             "לא זוהה סוג חלק. אפשר לתאר אותו במילים אחרות או לבחור מהרשימה."
         )
-        return render_template("demo.html", **context)
+        return render_template("identify.html", **context)
 
     # שלב 3 - ההצטלבות
     selected = candidates[0]["part_type"]
     context["selected_type"] = selected
     context["matches"] = services.parts_for_vehicle(vehicle, selected)
     context["org_id"] = services.current_org_id()
-    return render_template("demo.html", **context)
+    return render_template("identify.html", **context)
 
 
-@demo_bp.get("/api/vehicle/<plate>")
+@identify_bp.get("/demo")
+@identify_bp.get("/identify")
+def legacy_urls():
+    """כתובות קודמות - שומר על קישורים שכבר נשלחו."""
+    return redirect(url_for("identify.index"))
+
+
+@identify_bp.get("/api/vehicle/<plate>")
 def api_vehicle(plate):
     """שליפת רכב לפי מספר רישוי."""
     vehicle = vehicles.lookup(plate)
@@ -96,7 +109,7 @@ def api_vehicle(plate):
     return jsonify(vehicle)
 
 
-@demo_bp.post("/api/identify")
+@identify_bp.post("/api/identify")
 def api_identify():
     """זיהוי סוג חלק מטקסט או מתמונה, והצלבה מול רכב אם נמסר מספר רישוי."""
     payload_json = request.get_json(silent=True) or {}

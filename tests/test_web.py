@@ -2,7 +2,7 @@
 
 
 def test_public_pages_render(client):
-    for route in ["/", "/demo", "/parts", "/vehicles", "/categories",
+    for route in ["/", "/dashboard", "/parts", "/vehicles", "/categories",
                   "/manufacturers", "/suppliers", "/login", "/signup"]:
         assert client.get(route).status_code == 200, route
 
@@ -16,7 +16,7 @@ def test_editing_pages_require_login(client):
 
 
 def test_demo_flow_crosses_vehicle_and_part_type(client):
-    response = client.post("/demo", data={"plate": "12345678", "query": "רפידות קדמיות"})
+    response = client.post("/", data={"plate": "12345678", "query": "רפידות קדמיות"})
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     assert "COROLLA" in html          # הרכב זוהה
@@ -25,7 +25,7 @@ def test_demo_flow_crosses_vehicle_and_part_type(client):
 
 
 def test_demo_rejects_unknown_plate(client):
-    response = client.post("/demo", data={"plate": "00000000", "query": "רפידות"})
+    response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)
 
 
@@ -121,3 +121,38 @@ def test_save_and_add_another_returns_to_the_form(auth_client):
         "part_number": "ROW-3", "name_he": "חלק", "save_and_new": "1"})
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/parts/new")
+
+
+def test_home_is_the_identify_flow(client):
+    """השורש הוא זיהוי לפי מספר רישוי, לא לוח מחוונים."""
+    html = client.get("/").get_data(as_text=True)
+    assert "זיהוי מק\"ט לפי רכב וחלק" in html
+    assert "מספר רישוי" in html
+
+
+def test_legacy_urls_redirect_home(client):
+    """קישורים שכבר נשלחו לא נשברים."""
+    for path in ["/demo", "/identify"]:
+        response = client.get(path)
+        assert response.status_code == 302, path
+        assert response.headers["Location"].endswith("/"), path
+
+
+def test_dashboard_moved_and_still_works(client):
+    html = client.get("/dashboard").get_data(as_text=True)
+    assert "לוח מחוונים" in html
+    assert "יצרני חלקים" in html      # אחד הכרטיסים בלוח
+
+
+def test_empty_catalog_explains_itself_on_home(app, client):
+    """קטלוג ריק צריך להסביר מה חסר, לא להחזיר מסך שקט."""
+    from scripts.clear_catalog import clear_catalog
+
+    clear_catalog(app)
+    html = client.get("/").get_data(as_text=True)
+    assert "הקטלוג ריק" in html
+    assert "התאמות לרכב" in html      # מסביר מה מפעיל את החיפוש
+
+
+def test_full_catalog_hides_the_empty_notice(client):
+    assert "הקטלוג ריק" not in client.get("/").get_data(as_text=True)

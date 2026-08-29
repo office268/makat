@@ -66,7 +66,7 @@ def test_anonymous_cannot_write(client, org):
 
 
 def test_anonymous_can_still_read(client, org):
-    for path in ["/", "/parts", "/demo", "/api/parts", "/api/stats", "/export.csv"]:
+    for path in ["/", "/parts", "/dashboard", "/api/parts", "/api/stats", "/export.csv"]:
         assert client.get(path).status_code == 200, path
 
 

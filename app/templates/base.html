@@ -10,13 +10,14 @@
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark-blue">
   <div class="container-fluid">
-    <a class="navbar-brand fw-bold" href="{{ url_for('web.index') }}">🔧 קטלוג מק"טים</a>
+    <a class="navbar-brand fw-bold" href="{{ url_for('identify.index') }}">🔧 קטלוג מק"טים</a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
       <span class="navbar-toggler-icon"></span>
     </button>
     <div class="collapse navbar-collapse" id="nav">
       <ul class="navbar-nav me-auto">
-        <li class="nav-item"><a class="nav-link fw-bold" href="{{ url_for('demo.demo') }}">🔍 זיהוי מק"ט</a></li>
+        <li class="nav-item"><a class="nav-link fw-bold" href="{{ url_for('identify.index') }}">🔍 זיהוי מק"ט</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('web.dashboard') }}">לוח מחוונים</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('web.parts_list') }}">מק"טים</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('web.vehicles') }}">חיפוש לפי רכב</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('web.categories') }}">קטגוריות</a></li>

@@ -101,7 +101,7 @@ def _validate_signup(form):
 def signup():
     """הרשמת ארגון חדש. הנרשם הופך לבעלים שלו."""
     if current_user.is_authenticated:
-        return redirect(url_for("web.index"))
+        return redirect(url_for("identify.index"))
 
     if request.method == "POST":
         errors = _validate_signup(request.form)
@@ -131,7 +131,7 @@ def signup():
 
             login_user(user)
             flash(f"ברוך הבא, {organization.name}!", "success")
-            return redirect(url_for("web.index"))
+            return redirect(url_for("identify.index"))
 
     return render_template("auth/signup.html", form=request.form, kinds=Organization.KINDS)
 
@@ -139,7 +139,7 @@ def signup():
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("web.index"))
+        return redirect(url_for("identify.index"))
 
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
@@ -156,7 +156,7 @@ def login():
             target = request.args.get("next")
             # מונע הפניה לאתר חיצוני דרך הפרמטר next
             if not target or not target.startswith("/") or target.startswith("//"):
-                target = url_for("web.index")
+                target = url_for("identify.index")
             return redirect(target)
 
     return render_template("auth/login.html", form=request.form)

@@ -48,14 +48,14 @@ def inject_globals():
     }
 
 
-@web_bp.route("/")
-def index():
-    """דף הבית - סטטיסטיקות וחיפוש מהיר."""
+@web_bp.route("/dashboard")
+def dashboard():
+    """לוח מחוונים - סטטיסטיקות הקטלוג והתראות מלאי."""
     org_id = services.current_org_id()
     recent = Part.query.order_by(Part.created_at.desc()).limit(8).all()
     low = services.low_stock_parts(org_id, limit=8)
     return render_template(
-        "index.html",
+        "dashboard.html",
         stats=services.stats(org_id),
         recent=recent,
         low_stock=low,

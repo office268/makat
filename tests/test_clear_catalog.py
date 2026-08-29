@@ -35,7 +35,7 @@ def test_keeps_organizations_and_users(app, org_id):
 def test_app_still_works_on_an_empty_catalog(app, client, org_id):
     """הכי חשוב: מסכים לא נשברים כשאין שום מק"ט."""
     clear_catalog(app)
-    for path in ["/", "/parts", "/demo", "/api/parts", "/api/stats", "/export.csv"]:
+    for path in ["/", "/parts", "/dashboard", "/api/parts", "/api/stats", "/export.csv"]:
         assert client.get(path).status_code == 200, path
     assert client.get("/api/stats").get_json()["parts"] == 0
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}זיהוי מק"ט - דמו{% endblock %}
+{% block title %}זיהוי מק"ט{% endblock %}
 {% block content %}
 
 <div class="demo-hero mb-4">
@@ -9,6 +9,30 @@
     ההצטלבות מייצרת מק"ט יחיד ומחיר.
   </p>
 </div>
+
+{% if catalog_empty %}
+<div class="alert alert-info d-flex align-items-start gap-3">
+  <span class="fs-4">📥</span>
+  <div>
+    <strong>הקטלוג ריק, ולכן החיפוש לא יחזיר מק"טים.</strong>
+    <div class="small mt-1">
+      זיהוי הרכב לפי מספר רישוי כבר עובד. מה שחסר הוא הקטלוג —
+      <strong>מק"ט יימצא בחיפוש הזה רק אם הוזנו לו התאמות לרכב.</strong>
+      {% if current_user.is_authenticated and current_user.can_edit_catalog %}
+      <div class="mt-2 d-flex gap-2">
+        <a class="btn btn-sm btn-primary" href="{{ url_for('web.part_create') }}">הזנת מק"ט ראשון</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.import_csv') }}">ייבוא מקובץ CSV</a>
+      </div>
+      {% elif not current_user.is_authenticated %}
+      <div class="mt-2">
+        <a class="btn btn-sm btn-primary" href="{{ url_for('auth.login') }}">התחברות</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('auth.signup') }}">רישום ארגון</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 

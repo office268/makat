@@ -56,7 +56,7 @@ def test_web_writes_are_blocked(ro_client):
 
 def test_reads_still_work(ro_client):
     client, part_id = ro_client
-    for path in ["/", "/parts", "/demo", "/api/parts", "/api/stats", "/export.csv",
+    for path in ["/", "/parts", "/dashboard", "/api/parts", "/api/stats", "/export.csv",
                  f"/parts/{part_id}", "/parts/new"]:
         assert client.get(path).status_code == 200, path
 
@@ -64,7 +64,7 @@ def test_reads_still_work(ro_client):
 def test_demo_search_still_works(ro_client):
     """POST /demo הוא חיפוש, לא שינוי - חייב להמשיך לעבוד."""
     client, _ = ro_client
-    response = client.post("/demo", data={"plate": "12345678", "query": "רפידות קדמיות"})
+    response = client.post("/", data={"plate": "12345678", "query": "רפידות קדמיות"})
     assert response.status_code == 200
     assert "COROLLA" in response.get_data(as_text=True)
 
