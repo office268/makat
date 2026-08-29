@@ -50,6 +50,10 @@ class Config:
     IS_MANAGED_PLATFORM = _is_managed_platform()
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
+    # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
+    # מחדש את הנכסים במטמון. מוגדר אוטומטית מהקומיט בפריסה.
+    SW_VERSION = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12] or "dev"
+
     CSRF_ENABLED = True
     REMEMBER_COOKIE_HTTPONLY = True
     REMEMBER_COOKIE_SAMESITE = "Lax"

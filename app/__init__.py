@@ -72,6 +72,7 @@ def create_app(config_object=Config):
 
     from .routes.api import api_bp
     from .routes.identify import identify_bp
+    from .routes.pwa import pwa_bp
     from .routes.team import team_bp
     from .routes.web import web_bp
 
@@ -79,6 +80,7 @@ def create_app(config_object=Config):
     app.register_blueprint(web_bp)
     app.register_blueprint(team_bp)
     app.register_blueprint(identify_bp)
+    app.register_blueprint(pwa_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
 
     # ה-API עובד עם מפתחות, לא עם קוקיז - CSRF לא רלוונטי שם

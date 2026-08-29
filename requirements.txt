@@ -14,5 +14,8 @@ psycopg[binary]==3.2.3
 # זיהוי חלק מתמונה (אופציונלי - עובד גם בלעדיו)
 anthropic>=0.40
 
+# יצירת אייקוני PWA (scripts/make_icons.py)
+Pillow==12.3.0
+
 # בדיקות
 pytest==9.1.1
