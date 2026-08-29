@@ -132,7 +132,7 @@ VEHICLES = [
 SUPPLIERS = [
     ("חלפים ישיר בע\"מ", "רועי מזרחי", "03-5551200", "roei@halafim-yashir.example"),
     ("מ.א. יבוא חלפים", "אורית לוי", "04-8887340", "orit@ma-import.example"),
-    ("שוקי חלפים", "שוקי בן דוד", "08-9331384", "shuki@shuki-parts.example"),
+    ("דרום חלפים בע\"מ", "עידן שרעבי", "08-9330000", "idan@darom-parts.example"),
 ]
 
 ALPHABET = "ABCDEFGHJKLMNPRSTUVWXYZ"
