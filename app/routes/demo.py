@@ -23,8 +23,6 @@ def demo():
         "selected_type": None,
         "matches": [],
         "coverage": {},
-        "catalog_vehicles": services.catalog_vehicles(),
-        "covered": None,
         "error": None,
     }
     if request.method != "POST":
@@ -45,9 +43,6 @@ def demo():
         return render_template("demo.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)
-    # האם לרכב הזה יש בכלל מק"טים בקטלוג? מבדיל בין "אין חלק כזה"
-    # לבין "הדגם הזה מחוץ לכיסוי הדמו" - שתי הודעות שונות לגמרי למשתמש.
-    context["covered"] = bool(context["coverage"])
 
     # שלב 2 - סוג החלק
     image_bytes = None

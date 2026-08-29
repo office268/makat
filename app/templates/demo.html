@@ -10,17 +10,6 @@
   </p>
 </div>
 
-<div class="alert alert-secondary d-flex align-items-start gap-2 py-2">
-  <span class="fs-5">🧪</span>
-  <div class="small">
-    <strong>נתוני הדגמה.</strong>
-    המק"טים, המחירים והמלאי במסך הזה <strong>נוצרו לצורך ההדגמה ואינם אמיתיים</strong> —
-    הם מדגימים את המנגנון, לא קטלוג שאפשר להזמין לפיו.
-    סוגי החלקים, דגמי הרכב וקודי המנוע כן אמיתיים.
-    הקטלוג מכסה {{ catalog_vehicles | length }} דגמי רכב.
-  </div>
-</div>
-
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="card mb-4">
@@ -160,32 +149,6 @@
             {% endfor %}
           </tbody>
         </table>
-      </div>
-      {% elif not covered %}
-      <div class="card-body">
-        <div class="d-flex align-items-start gap-3">
-          <span class="fs-3">✅</span>
-          <div>
-            <h6 class="mb-1">הרכב זוהה במלואו — אבל הוא מחוץ לכיסוי הקטלוג בדמו</h6>
-            <p class="text-muted mb-2">
-              שלב הזיהוי עבד: מספר הרישוי החזיר
-              <strong>{{ vehicle.make }} {{ vehicle.model }}{% if vehicle.year %}, {{ vehicle.year }}{% endif %}</strong>{% if vehicle.engine_code %},
-              מנוע {{ vehicle.engine_code }}{% endif %}.
-              מה שחסר הוא <strong>הקטלוג</strong> — בדמו הזה יש 113 מק"טים שנוצרו
-              ידנית ל-{{ catalog_vehicles | length }} דגמים בלבד. מול קטלוג מלא,
-              אותה הצטלבות בדיוק הייתה מחזירה מק"ט לרכב הזה.
-            </p>
-            <div class="small fw-bold mb-2">הדגמים שהקטלוג מכסה:</div>
-            <div class="d-flex flex-wrap gap-1">
-              {% for cv in catalog_vehicles %}
-              <span class="badge bg-light text-dark border">
-                {{ cv.make }} {{ cv.model }}
-                {%- if cv.year_from %} {{ cv.year_from }}-{{ cv.year_to or '' }}{% endif %}
-              </span>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
       </div>
       {% else %}
       <div class="card-body text-muted">

@@ -46,32 +46,3 @@ def test_export_csv_has_bom_and_header(client):
     assert text.startswith("﻿")       # BOM כדי שאקסל יציג עברית
     assert "part_number" in text
     assert "TEST-001" in text
-
-
-def test_demo_page_labels_data_as_synthetic(client):
-    """הבאנר חייב להופיע - אסור שמישהו יטעה לחשוב שהמק"טים אמיתיים."""
-    html = client.get("/demo").get_data(as_text=True)
-    assert "נתוני הדגמה" in html
-    assert "אינם אמיתיים" in html
-
-
-def test_real_vehicle_outside_catalog_explains_the_gap(client, monkeypatch):
-    """רכב שזוהה אך אין לו כיסוי - הודעה שמפרידה בין הזיהוי לבין הקטלוג."""
-    from app.routes import demo as demo_module
-
-    monkeypatch.setattr(
-        demo_module.vehicles,
-        "lookup",
-        lambda plate, allow_offline=True: {
-            "plate": "9998887", "plate_display": "99-988-87",
-            "make": "ב.מ.וו גרמניה", "model": "X3", "trim": "", "year": 2021,
-            "engine_code": "B48B20", "fuel": "בנזין", "color": "", "vin": "",
-            "test_valid_until": "", "source": "data.gov.il",
-        },
-    )
-    html = client.post(
-        "/demo", data={"plate": "9998887", "query": "רפידות קדמיות"}
-    ).get_data(as_text=True)
-    assert "הרכב זוהה במלואו" in html      # הזיהוי הצליח
-    assert "מחוץ לכיסוי הקטלוג" in html    # והמגבלה מוסברת במפורש
-    assert "B48B20" in html                # פרטי הרכב האמיתיים מוצגים

@@ -459,26 +459,3 @@ def catalog_coverage(vehicle):
         seen.setdefault(part.part_type, 0)
         seen[part.part_type] += 1
     return seen
-
-
-def catalog_vehicles():
-    """רשימת הרכבים שהקטלוג מכסה בפועל - להצגת גבולות הדמו למשתמש."""
-    rows = (
-        db.session.query(
-            Fitment.make, Fitment.model, Fitment.year_from, Fitment.year_to
-        )
-        .distinct()
-        .order_by(Fitment.make, Fitment.model)
-        .all()
-    )
-    seen = {}
-    for make, model, year_from, year_to in rows:
-        key = (make, model)
-        if key not in seen:
-            seen[key] = {
-                "make": make,
-                "model": model,
-                "year_from": year_from,
-                "year_to": year_to,
-            }
-    return list(seen.values())
