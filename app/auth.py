@@ -65,6 +65,19 @@ def role_required(minimum):
     return decorator
 
 
+def superadmin_required(view):
+    """חוסם גישה לכל מי שאינו מנהל מערכת (ראה User.is_superadmin)."""
+
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not current_user.is_superadmin:
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def slugify(name):
     slug = re.sub(r"[^\w֐-׿-]+", "-", (name or "").strip().lower()).strip("-")
     return slug or "org"

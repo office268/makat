@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}ייבוא קטלוג דגמי רכב{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">ייבוא קטלוג דגמי רכב</h1>
+<p class="text-muted small mb-3">
+  מאגר "תוצרים ודגמים של כלי רכב פרטי ומסחרי" של משרד התחבורה, מ-data.gov.il.
+  נתון פתוח, מתעדכן יומית, למעלה מ-100 אלף רשומות. הקטלוג משותף לכל הארגונים במערכת.
+</p>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">התקדמות</span>
+        <span class="badge bg-secondary" id="job-status">
+          {{ job.status_label if job else "לא הופעל" }}
+        </span>
+      </div>
+
+      <div class="progress mb-2" style="height: 1.4rem">
+        <div class="progress-bar" id="progress-bar" role="progressbar"
+             style="width: {{ job.progress_pct if job else 0 }}%">
+          {{ job.progress_pct if job else 0 }}%
+        </div>
+      </div>
+
+      <p class="small text-muted mb-3" id="job-counters">
+        {% if job %}
+          נמשכו {{ "{:,}".format(job.offset) }}{% if job.total %} מתוך {{ "{:,}".format(job.total) }}{% endif %}
+          · נוספו {{ "{:,}".format(job.created) }} · עודכנו {{ "{:,}".format(job.updated) }}
+        {% else %}עדיין לא הופעל ייבוא.{% endif %}
+      </p>
+
+      <div class="alert alert-warning small d-none" id="job-error"></div>
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" id="btn-run">
+          {% if job and job.is_running %}המשך ייבוא{% else %}התחל ייבוא{% endif %}
+        </button>
+        <button class="btn btn-outline-secondary d-none" id="btn-stop">עצור</button>
+      </div>
+
+      <p class="small text-muted mt-3 mb-0">
+        הייבוא רץ במנות. אפשר לעצור באמצע ולהמשיך מאוחר יותר מאותה נקודה -
+        גם אחרי סגירת הדפדפן או פריסה מחדש.
+      </p>
+    </div></div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <p class="mb-1">דגמים בקטלוג כרגע</p>
+      <p class="h3 mb-0" id="models-count">{{ "{:,}".format(models_in_catalog) }}</p>
+    </div></div>
+    <div class="card mt-3"><div class="card-body small text-muted">
+      <p class="fw-bold text-body mb-1">למה זה חשוב</p>
+      <p class="mb-0">
+        התאמת מק"ט לרכב היא מה שמפעיל את החיפוש לפי מספר רישוי. כשהיצרן והדגם
+        מוקלדים כטקסט חופשי, "טויוטה" ו-"טויוטה יפן" הם שני ערכים שונים
+        וההצטלבות נכשלת. הקטלוג הזה נותן רשימה סגורה ואמיתית לבחור ממנה.
+      </p>
+    </div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const bar = document.getElementById("progress-bar");
+  const status = document.getElementById("job-status");
+  const counters = document.getElementById("job-counters");
+  const errorBox = document.getElementById("job-error");
+  const modelsCount = document.getElementById("models-count");
+  const runBtn = document.getElementById("btn-run");
+  const stopBtn = document.getElementById("btn-stop");
+  const token = document.querySelector('meta[name="csrf-token"]');
+
+  const URLS = {
+    start: "{{ url_for('admin.vehicle_import_start') }}",
+    step: "{{ url_for('admin.vehicle_import_step') }}",
+    cancel: "{{ url_for('admin.vehicle_import_cancel') }}",
+  };
+  const LABELS = {running: "בתהליך", done: "הושלם", failed: "נכשל", cancelled: "בוטל"};
+  let stopRequested = false;
+
+  const num = (n) => (n || 0).toLocaleString("he-IL");
+
+  async function post(url) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  function render(data) {
+    const job = data.job;
+    modelsCount.textContent = num(data.models_in_catalog);
+    if (!job) return;
+
+    bar.style.width = job.progress_pct + "%";
+    bar.textContent = job.progress_pct + "%";
+    status.textContent = job.status_label || LABELS[job.status] || job.status;
+    status.className = "badge " + (job.status === "done" ? "bg-success"
+      : job.status === "running" ? "bg-primary" : "bg-secondary");
+
+    counters.textContent = "נמשכו " + num(job.offset)
+      + (job.total ? " מתוך " + num(job.total) : "")
+      + " · נוספו " + num(job.created) + " · עודכנו " + num(job.updated);
+
+    errorBox.classList.toggle("d-none", !job.error);
+    if (job.error) errorBox.textContent = job.error;
+  }
+
+  function busy(on) {
+    runBtn.disabled = on;
+    runBtn.textContent = on ? "מייבא..." : "המשך ייבוא";
+    stopBtn.classList.toggle("d-none", !on);
+  }
+
+  async function loop() {
+    // כל מנה היא בקשה נפרדת וקצרה - כך היא לא נתקלת ב-timeout של השרת,
+    // וההתקדמות נשמרת בבסיס הנתונים אחרי כל אחת מהן
+    while (!stopRequested) {
+      const data = await post(URLS.step);
+      render(data);
+      if (!data.job || !data.job.is_running) return;
+    }
+  }
+
+  runBtn.addEventListener("click", async () => {
+    stopRequested = false;
+    busy(true);
+    errorBox.classList.add("d-none");
+    try {
+      render(await post(URLS.start));
+      await loop();
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      busy(false);
+      runBtn.textContent = "המשך ייבוא";
+    }
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    stopRequested = true;
+    stopBtn.disabled = true;
+    try { render(await post(URLS.cancel)); } finally { stopBtn.disabled = false; }
+  });
+})();
+</script>
+{% endblock %}

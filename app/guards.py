@@ -20,6 +20,9 @@ MUTATING_ENDPOINTS = frozenset(
         "api.create_part",
         "api.update_part",
         "api.delete_part",
+        "admin.vehicle_import_start",
+        "admin.vehicle_import_step",
+        "admin.vehicle_import_cancel",
     }
 )
 
@@ -27,6 +30,14 @@ MESSAGE = (
     "המערכת נמצאת כרגע במצב קריאה בלבד. שינוי נתונים ייפתח "
     "עם הפעלת מערכת המשתמשים וההרשאות."
 )
+
+
+def _wants_json(request):
+    """בקשות ה-API וקריאות ה-fetch מהדפדפן צריכות JSON, לא הפניה לדף."""
+    return (
+        request.path.startswith("/api/")
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    )
 
 
 def register_read_only_guard(app):
@@ -45,7 +56,7 @@ def register_read_only_guard(app):
         app.logger.warning(
             "נחסמה בקשת שינוי במצב קריאה בלבד: %s %s", request.method, request.path
         )
-        if request.path.startswith("/api/"):
+        if _wants_json(request):
             return jsonify({"error": MESSAGE, "read_only": True}), 403
         flash(MESSAGE, "warning")
         return redirect(url_for("web.parts_list"))

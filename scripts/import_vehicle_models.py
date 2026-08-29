@@ -13,31 +13,13 @@ import argparse
 import json
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.models import db  # noqa: E402
+# שכבת הרשת משותפת עם הייבוא מתוך היישום - מימוש אחד, לא שניים
+from app.vehicle_import import PAGE_SIZE, fetch_page  # noqa: E402,F401
 from app.vehicle_catalog import collapse_records, upsert  # noqa: E402
-
-CKAN_URL = "https://data.gov.il/api/3/action/datastore_search"
-RESOURCE_ID = "142afde2-6228-49f9-8a29-9b6c3a0cbe40"
-PAGE_SIZE = 1000
-
-
-def fetch_page(offset, page_size=PAGE_SIZE, timeout=30):
-    params = urllib.parse.urlencode(
-        {"resource_id": RESOURCE_ID, "limit": page_size, "offset": offset}
-    )
-    request = urllib.request.Request(
-        f"{CKAN_URL}?{params}", headers={"User-Agent": "makat-catalog/1.0"}
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    result = payload.get("result") or {}
-    return result.get("records") or [], result.get("total")
 
 
 def fetch_all(limit=None):

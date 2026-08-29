@@ -71,6 +71,7 @@ def create_app(config_object=Config):
     if app.config["CSRF_ENABLED"]:
         csrf.init_app(app)
 
+    from .routes.admin import admin_bp
     from .routes.api import api_bp
     from .routes.identify import identify_bp
     from .routes.pwa import pwa_bp
@@ -82,6 +83,7 @@ def create_app(config_object=Config):
     app.register_blueprint(team_bp)
     app.register_blueprint(identify_bp)
     app.register_blueprint(pwa_bp)
+    app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
 
     # ה-API עובד עם מפתחות, לא עם קוקיז - CSRF לא רלוונטי שם

@@ -8,9 +8,15 @@
 הם שני ערכים שונים וההצטלבות נכשלת. הקטלוג הזה נותן רשימה סגורה
 ואמיתית לבחור ממנה.
 """
+from datetime import datetime, timezone
+
 from sqlalchemy import UniqueConstraint
 
 from .models import db
+
+
+def _now():
+    return datetime.now(timezone.utc)
 
 
 class VehicleModel(db.Model):
@@ -80,6 +86,91 @@ class VehicleModel(db.Model):
 
     def __repr__(self):
         return f"<VehicleModel {self.make} {self.model} {self.years}>"
+
+
+class VehicleImportJob(db.Model):
+    """הרצת ייבוא אחת של הקטלוג, עם נקודת ההמשך שלה.
+
+    הייבוא רץ במנות מהדפדפן: כל בקשה מייבאת כמה עמודים ומקדמת את offset.
+    ההתקדמות יושבת ב-DB ולא בזיכרון, כי gunicorn מריץ כמה workers ובקשה
+    אחת לא בהכרח נוחתת אצל מי שטיפל בקודמת - וגם כדי שנפילה באמצע לא
+    תאבד את מה שכבר יובא.
+    """
+
+    __tablename__ = "vehicle_import_jobs"
+
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    STATUS_LABELS = {
+        RUNNING: "בתהליך",
+        DONE: "הושלם",
+        FAILED: "נכשל",
+        CANCELLED: "בוטל",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20), default=RUNNING, nullable=False, index=True)
+    offset = db.Column(db.Integer, default=0, nullable=False)  # ה-offset הבא למשיכה
+    total = db.Column(db.Integer)          # סה"כ רשומות לפי המאגר
+    fetched = db.Column(db.Integer, default=0, nullable=False)   # רשומות גולמיות
+    created = db.Column(db.Integer, default=0, nullable=False)   # דגמים שנוספו
+    updated = db.Column(db.Integer, default=0, nullable=False)   # דגמים שעודכנו
+    error = db.Column(db.Text)             # השגיאה האחרונה, גם אם ההרצה ממשיכה
+    started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    started_at = db.Column(db.DateTime, default=_now)
+    updated_at = db.Column(db.DateTime, default=_now)
+    finished_at = db.Column(db.DateTime)
+
+    started_by = db.relationship("User", foreign_keys=[started_by_id])
+
+    @property
+    def is_running(self):
+        return self.status == self.RUNNING
+
+    @property
+    def progress_pct(self):
+        if not self.total:
+            return 0
+        return min(100, round(self.offset * 100 / self.total))
+
+    @property
+    def status_label(self):
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "status": self.status,
+            "status_label": self.status_label,
+            "offset": self.offset,
+            "total": self.total,
+            "fetched": self.fetched,
+            "created": self.created,
+            "updated": self.updated,
+            "error": self.error,
+            "progress_pct": self.progress_pct,
+            "is_running": self.is_running,
+            "models_in_catalog": VehicleModel.query.count(),
+        }
+
+    def __repr__(self):
+        return f"<VehicleImportJob {self.id} {self.status} @{self.offset}>"
+
+
+def active_job():
+    """ההרצה הפתוחה, אם יש. יותר מאחת במקביל תילחם על אותן שורות."""
+    return (
+        VehicleImportJob.query.filter_by(status=VehicleImportJob.RUNNING)
+        .order_by(VehicleImportJob.id.desc())
+        .first()
+    )
+
+
+def latest_job():
+    return VehicleImportJob.query.order_by(VehicleImportJob.id.desc()).first()
 
 
 def _clean(value):

@@ -5,6 +5,7 @@
 """
 from datetime import datetime, timezone
 
+from flask import current_app
 from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -105,6 +106,19 @@ class User(UserMixin, db.Model):
         return self.has_role("owner")
 
     @property
+    def is_superadmin(self):
+        """מנהל מערכת - חוצה ארגונים.
+
+        קטלוג דגמי הרכב משותף לכל הארגונים, ולכן ייבוא שלו הוא פעולה ברמת
+        המערכת ולא ברמת המוסך. ההרשאה לא נשמרת ב-DB אלא נגזרת מהסביבה,
+        כדי שלא תהיה שום דרך להעניק אותה מתוך היישום.
+        """
+        if not self.active:
+            return False
+        emails = current_app.config.get("SUPERADMIN_EMAILS") or frozenset()
+        return (self.email or "").strip().lower() in emails
+
+    @property
     def role_label(self):
         return self.ROLE_LABELS.get(self.role, self.role)
 
@@ -130,6 +144,7 @@ class User(UserMixin, db.Model):
             "organization": self.organization.name if self.organization else None,
             "organization_id": self.organization_id,
             "active": self.active,
+            "is_superadmin": self.is_superadmin,
         }
 
     def __repr__(self):

@@ -33,6 +33,16 @@ def _database_uri():
     return f"sqlite:///{BASE_DIR / 'instance' / 'makat.db'}"
 
 
+def _superadmin_emails():
+    """כתובות בעלות הרשאת-על, ממשתנה הסביבה SUPERADMIN_EMAILS.
+
+    ההרשאה הזו חוצה ארגונים ולכן היא נשלטת מהסביבה בלבד - אין דרך להעניק
+    אותה מתוך היישום, וכל מי שיכול לשנות אותה כבר שולט בשרת ממילא.
+    """
+    raw = os.environ.get("SUPERADMIN_EMAILS", "")
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
 def _is_managed_platform():
     """האם אנחנו רצים על פלטפורמה מנוהלת (Railway) ולא על מחשב מקומי."""
     return bool(
@@ -48,6 +58,15 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
     SQLALCHEMY_DATABASE_URI = _database_uri()
     IS_MANAGED_PLATFORM = _is_managed_platform()
+    SUPERADMIN_EMAILS = _superadmin_emails()
+    # כמה עמודים (1000 רשומות כל אחד) לייבא בבקשת HTTP אחת, ותקציב הזמן
+    # שלה. gunicorn הורג בקשה אחרי 60 שניות, ולכן המנה חייבת לעצור הרבה לפניו.
+    VEHICLE_IMPORT_PAGES_PER_CHUNK = int(
+        os.environ.get("VEHICLE_IMPORT_PAGES_PER_CHUNK", 3)
+    )
+    VEHICLE_IMPORT_TIME_BUDGET = float(
+        os.environ.get("VEHICLE_IMPORT_TIME_BUDGET", 25)
+    )
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
@@ -82,6 +101,7 @@ class TestConfig(Config):
 
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SUPERADMIN_EMAILS = frozenset()
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
     READ_ONLY = False
