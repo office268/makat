@@ -54,3 +54,70 @@ def test_export_csv_has_bom_and_header(client):
     assert text.startswith("﻿")       # BOM כדי שאקסל יציג עברית
     assert "part_number" in text
     assert "TEST-001" in text
+
+
+def test_part_form_accepts_structured_fitment_rows(auth_client, app, org_id):
+    """התאמות לרכב מוזנות בשדות נפרדים, לא כמחרוזת עם נקודתיים."""
+    from app.models import Part
+
+    auth_client.post("/parts/new", data={
+        "part_number": "ROW-1", "name_he": "דיסק בלם",
+        "fit_make": ["טויוטה", "לקסוס"],
+        "fit_model": ["COROLLA", "CT200H"],
+        "fit_year_from": ["2013", "2011"],
+        "fit_year_to": ["2018", "2017"],
+        "fit_engine": ["1ZR-FE", "2ZR-FXE"],
+        "cross_ref_number": ["04465-02220"],
+        "cross_ref_type": ["OEM"],
+        "cross_ref_brand": ["Toyota"],
+    })
+    with app.app_context():
+        part = Part.query.filter_by(part_number="ROW-1").first()
+        assert part is not None
+        assert len(part.fitments) == 2
+        assert {f.make for f in part.fitments} == {"טויוטה", "לקסוס"}
+        corolla = next(f for f in part.fitments if f.model == "COROLLA")
+        assert (corolla.year_from, corolla.year_to) == (2013, 2018)
+        assert corolla.engine_code == "1ZR-FE"
+        assert part.cross_refs[0].ref_number == "04465-02220"
+
+
+def test_empty_fitment_rows_are_skipped(auth_client, app):
+    """שורה ריקה בטופס לא יוצרת התאמה ריקה."""
+    from app.models import Part
+
+    auth_client.post("/parts/new", data={
+        "part_number": "ROW-2", "name_he": "מסנן",
+        "fit_make": ["מאזדה", "", ""],
+        "fit_model": ["MAZDA 3", "", ""],
+        "cross_ref_number": ["", ""],
+    })
+    with app.app_context():
+        part = Part.query.filter_by(part_number="ROW-2").first()
+        assert len(part.fitments) == 1
+        assert part.cross_refs == []
+
+
+def test_csv_import_still_uses_the_string_format(app, org_id):
+    """הפורמט הישן חייב להמשיך לעבוד - מחירוני ספקים מגיעים כך."""
+    import io
+
+    from app.models import Part
+    from app.services import import_csv
+
+    csv_text = (
+        "part_number,name_he,fitments,cross_refs\n"
+        "CSV-1,רפידות,טויוטה:COROLLA:2013:2018:1ZR-FE,OEM:04465-02220:Toyota\n"
+    )
+    created, _updated, errors = import_csv(io.StringIO(csv_text), organization_id=org_id)
+    assert (created, errors) == (1, [])
+    part = Part.query.filter_by(part_number="CSV-1").first()
+    assert part.fitments[0].make == "טויוטה"
+    assert part.cross_refs[0].ref_number == "04465-02220"
+
+
+def test_save_and_add_another_returns_to_the_form(auth_client):
+    response = auth_client.post("/parts/new", data={
+        "part_number": "ROW-3", "name_he": "חלק", "save_and_new": "1"})
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/parts/new")

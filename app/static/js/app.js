@@ -8,3 +8,30 @@ document.addEventListener("click", function (event) {
     input.focus();
   }
 });
+
+// שורות חוזרות בטופס המק"ט - התאמות לרכב ומק"טים מקבילים
+document.addEventListener("click", function (event) {
+  const addButton = event.target.closest("[data-add-row]");
+  if (addButton) {
+    const container = document.getElementById(addButton.dataset.addRow);
+    const template = container.querySelector(".repeat-row");
+    const clone = template.cloneNode(true);
+    clone.querySelectorAll("input").forEach((field) => (field.value = ""));
+    clone.querySelectorAll("select").forEach((field) => (field.selectedIndex = 0));
+    container.appendChild(clone);
+    clone.querySelector("input").focus();
+    return;
+  }
+
+  const removeButton = event.target.closest("[data-remove-row]");
+  if (removeButton) {
+    const row = removeButton.closest(".repeat-row");
+    const container = row.parentElement;
+    // תמיד משאירים שורה אחת ריקה, אחרת אי אפשר להוסיף מחדש
+    if (container.querySelectorAll(".repeat-row").length > 1) {
+      row.remove();
+    } else {
+      row.querySelectorAll("input").forEach((field) => (field.value = ""));
+    }
+  }
+});

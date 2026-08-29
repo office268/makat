@@ -370,7 +370,55 @@ def format_fitments(part):
     )
 
 
-def part_from_row(row, part=None, organization_id=None):
+def cross_refs_from_rows(rows):
+    """בונה מק"טים מקבילים משדות מקבילים בטופס (רשימות באותו אורך)."""
+    numbers = rows.get("cross_ref_number") or []
+    types = rows.get("cross_ref_type") or []
+    brands = rows.get("cross_ref_brand") or []
+    refs = []
+    for index, number in enumerate(numbers):
+        number = (number or "").strip()
+        if not number:
+            continue
+        refs.append(
+            CrossReference(
+                ref_number=number,
+                ref_type=(types[index] if index < len(types) else "") or "OEM",
+                ref_brand=(brands[index] if index < len(brands) else "").strip() or None,
+            )
+        )
+    return refs
+
+
+def fitments_from_rows(rows):
+    """בונה התאמות לרכב משדות מקבילים בטופס."""
+    makes = rows.get("fit_make") or []
+    models = rows.get("fit_model") or []
+    years_from = rows.get("fit_year_from") or []
+    years_to = rows.get("fit_year_to") or []
+    engines = rows.get("fit_engine") or []
+
+    def at(source, index):
+        return (source[index] if index < len(source) else "") or ""
+
+    fitments = []
+    for index, make in enumerate(makes):
+        make = (make or "").strip()
+        if not make:
+            continue
+        fitments.append(
+            Fitment(
+                make=make,
+                model=at(models, index).strip() or None,
+                year_from=_to_int(at(years_from, index)),
+                year_to=_to_int(at(years_to, index)),
+                engine_code=at(engines, index).strip() or None,
+            )
+        )
+    return fitments
+
+
+def part_from_row(row, part=None, organization_id=None, rows=None):
     """יוצר או מעדכן מק"ט משורת CSV / טופס.
 
     שדות הקטלוג נכתבים על Part המשותף. שדות מסחריים - מחיר, עלות,
@@ -407,9 +455,17 @@ def part_from_row(row, part=None, organization_id=None):
 
     # החלפת אוסף בהשמה ישירה מייצרת INSERT לפני ה-DELETE, ואז עדכון
     # שמשאיר את אותם ערכים נופל על אילוץ הייחודיות. מוחקים ומרוקנים קודם.
-    if "cross_refs" in row:
+    #
+    # שני פורמטי קלט: הטופס שולח שורות נפרדות (rows), ו-CSV שולח מחרוזת
+    # אחת מופרדת בנקודה-פסיק. השורות מנצחות כשהן קיימות.
+    if rows is not None and "cross_ref_number" in rows:
+        _replace_collection(part.cross_refs, cross_refs_from_rows(rows))
+    elif "cross_refs" in row:
         _replace_collection(part.cross_refs, parse_cross_refs(row.get("cross_refs")))
-    if "fitments" in row:
+
+    if rows is not None and "fit_make" in rows:
+        _replace_collection(part.fitments, fitments_from_rows(rows))
+    elif "fitments" in row:
         _replace_collection(part.fitments, parse_fitments(row.get("fitments")))
 
     if organization_id:

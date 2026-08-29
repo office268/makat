@@ -44,6 +44,7 @@ def inject_globals():
         "all_makes": services.vehicle_makes(),
         "all_part_types": all_types(),
         "org_id": services.current_org_id(),
+        "known_makes": services.vehicle_makes(),
     }
 
 
@@ -116,11 +117,15 @@ def part_create():
             flash("חובה להזין שם חלק", "danger")
         else:
             part = services.part_from_row(
-                request.form.to_dict(), organization_id=services.current_org_id()
+                request.form.to_dict(),
+                organization_id=services.current_org_id(),
+                rows=request.form.to_dict(flat=False),
             )
             db.session.add(part)
             db.session.commit()
             flash(f'המק"ט {part.part_number} נוסף בהצלחה', "success")
+            if request.form.get("save_and_new"):
+                return redirect(url_for("web.part_create"))
             return redirect(url_for("web.part_detail", part_id=part.id))
     return render_template(
         "parts/form.html", part=None, org_part=None, form=request.form
@@ -147,6 +152,7 @@ def part_edit(part_id):
             services.part_from_row(
                 request.form.to_dict(), part,
                 organization_id=services.current_org_id(),
+                rows=request.form.to_dict(flat=False),
             )
             db.session.commit()
             flash("השינויים נשמרו", "success")
