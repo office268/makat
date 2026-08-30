@@ -31,9 +31,18 @@ def test_vehicle_button_stops_after_identifying_the_vehicle(client):
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     assert "COROLLA" in html                     # הרכב זוהה
-    assert "הרכב זוהה. עכשיו שלב 2." in html      # ההנחיה לשלב הבא
     assert "TEST-001" not in html                # החיפוש לא רץ
     assert 'מק"טים מתאימים' not in html
+
+
+def test_identified_vehicle_sits_under_step_one(client):
+    """הרכב שזוהה שייך לשלב שיצר אותו, ולכן הוא מוצג לפני שלב 2."""
+    for action in ("vehicle", "part"):
+        html = client.post("/", data={"plate": "12345678", "action": action,
+                                      "query": "רפידות קדמיות"}).get_data(as_text=True)
+        assert html.index("הרכב שזוהה") < html.index("2. החלק"), action
+        assert html.index("1. מספר רישוי") < html.index("הרכב שזוהה"), action
+        assert html.count("הרכב שזוהה") == 1, action
 
 
 def test_part_button_runs_the_full_search(client):
