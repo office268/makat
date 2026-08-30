@@ -54,7 +54,7 @@ def describe_error(exc):
     return str(exc)
 
 
-def _fetch_with_retry(fetch, offset, attempts, pause):
+def fetch_with_retry(fetch, offset, attempts, pause):
     """מנסה את אותו עמוד שוב לפני שמוותרים עליו.
 
     המאגר הממשלתי מחזיר שגיאה זמנית תחת רצף בקשות ארוך, ואז הניסיון
@@ -144,7 +144,7 @@ def run_chunk(job, pages=None, time_budget=None, fetch=None):
         if pages_done and page_pause:
             time.sleep(page_pause)  # לא מציפים את השרת הממשלתי
         try:
-            page, total = _fetch_with_retry(fetch, offset, attempts, retry_pause)
+            page, total = fetch_with_retry(fetch, offset, attempts, retry_pause)
         except NETWORK_ERRORS as exc:
             # לא מקדמים את ה-offset מעבר למה שנמשך בפועל:
             # המנה הבאה תנסה שוב בדיוק מהעמוד שנפל
