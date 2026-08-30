@@ -51,6 +51,66 @@
   });
 })();
 
+// חיווי המתנה בלחיצה על קישור. תגית כיסוי פותחת ניווט מלא שמריץ
+// שאילתה בשרת, ובלעדיו המסך נראה תקוע בדיוק כמו בשליחת טופס.
+(function () {
+  document.addEventListener("click", function (event) {
+    const link = event.target.closest("[data-busy-link]");
+    if (!link || event.metaKey || event.ctrlKey || event.shiftKey) return;
+
+    const strip = link.parentElement;
+    strip.querySelectorAll("[data-busy-link]").forEach(function (other) {
+      if (other !== link) other.classList.add("opacity-50");
+      other.style.pointerEvents = "none";
+    });
+    if (!link.dataset.idleHtml) link.dataset.idleHtml = link.innerHTML;
+    link.innerHTML =
+      '<span class="spinner-border spinner-border-sm ms-1" role="status" aria-hidden="true"' +
+      ' style="width: .7rem; height: .7rem"></span>' + link.dataset.idleHtml;
+  });
+
+  // חזרה עם "אחורי" מגישה את הדף מהמטמון כפי שנעזב - עם הספינר בפנים
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    document.querySelectorAll("[data-busy-link]").forEach(function (link) {
+      if (link.dataset.idleHtml) link.innerHTML = link.dataset.idleHtml;
+      link.classList.remove("opacity-50");
+      link.style.pointerEvents = "";
+    });
+  });
+})();
+
+// מספר רישוי עם מקפים במקום הנכון, תוך כדי הקלדה.
+// מעצבים רק כשהסמן בסוף, כדי לא להקפיץ אותו בעריכה באמצע.
+(function () {
+  function formatted(digits) {
+    if (digits.length === 8) {
+      return digits.slice(0, 3) + "-" + digits.slice(3, 5) + "-" + digits.slice(5);
+    }
+    if (digits.length === 7) {
+      return digits.slice(0, 2) + "-" + digits.slice(2, 5) + "-" + digits.slice(5);
+    }
+    return digits;
+  }
+
+  function reformat(field, onlyAtEnd) {
+    const atEnd = field.selectionStart === field.value.length;
+    if (onlyAtEnd && !atEnd) return;
+    const digits = field.value.replace(/\D/g, "").slice(0, 8);
+    const next = formatted(digits);
+    if (next === field.value) return;
+    field.value = next;
+    if (atEnd) field.setSelectionRange(next.length, next.length);
+  }
+
+  document.addEventListener("input", function (event) {
+    if (event.target.matches(".plate-input")) reformat(event.target, true);
+  });
+  document.addEventListener("blur", function (event) {
+    if (event.target.matches(".plate-input")) reformat(event.target, false);
+  }, true);
+})();
+
 // שורות חוזרות בטופס המק"ט - התאמות לרכב ומק"טים מקבילים
 document.addEventListener("click", function (event) {
   const addButton = event.target.closest("[data-add-row]");

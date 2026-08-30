@@ -14,7 +14,8 @@
     <div class="card-body">
       <label class="form-label fw-bold">1. מספר רישוי</label>
       <input class="form-control form-control-lg text-center plate-input" name="plate"
-             value="{{ plate }}" placeholder="12-345-678" inputmode="numeric" required>
+             value="{{ plate | plate }}" placeholder="12-345-678" inputmode="numeric"
+             maxlength="10" required>
       <div class="d-grid mt-3">
         <button class="btn btn-outline-primary btn-lg" name="action" value="vehicle"
                 data-busy-label="מזהה רכב...">זהה רכב</button>
@@ -85,6 +86,7 @@
         {% for key, count in coverage.items() %}
         <a class="badge text-decoration-none
                   {% if key == selected_type %}bg-primary{% else %}bg-light text-dark border{% endif %}"
+           data-busy-link
            href="{{ url_for('identify.index', plate=plate, part_type=key, _anchor='results') }}">
           {{ key | part_type_name }} ({{ count }})
         </a>
@@ -128,12 +130,6 @@
   </div>
   {% endif %}
 </form>
-
-<p class="text-center">
-  <a href="{{ url_for('web.parts_list') }}">
-    או עיון בכל הקטלוג{% if catalog_size %} ({{ "{:,}".format(catalog_size) }} מק"טים){% endif %}
-  </a>
-</p>
 
 {% if searched %}
 {# בבחירה ידנית אין מה לזהות - המשתמש בחר בעצמו, והתגית שנלחצה כבר

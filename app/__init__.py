@@ -125,6 +125,13 @@ def create_app(config_object=Config):
 
         return type_name(key)
 
+    @app.template_filter("plate")
+    def plate(value):
+        """מספר רישוי בפורמט שמסתכלים עליו: 10732802 -> 107-32-802."""
+        from .vehicles import format_plate
+
+        return format_plate(value)
+
     @app.template_filter("ils")
     def ils(value):
         """עיצוב מחיר בשקלים."""

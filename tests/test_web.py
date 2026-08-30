@@ -89,10 +89,11 @@ def test_vehicle_card_drops_source_and_duplicate_plate(client):
     assert "COROLLA" in html
     assert "data.gov.il" not in html
     assert "plate-badge" not in html
-    # 12345678 מוצג כ-123-45-678. הצורה המעוצבת הייתה העותק השני;
-    # 12-345-678 שכן מופיע הוא ה-placeholder של השדה, לא ערך.
-    assert "123-45-678" not in html
-    assert html.count('value="12345678"') == 1    # רק השדה של שלב 1
+    # פעם אחת בלבד, בשדה של שלב 1 - ושם הוא מעוצב עם מקפים.
+    # הספרות הרצופות כן מופיעות בקישורי הכיסוי, וזו כתובת ולא תצוגה.
+    assert html.count("123-45-678") == 1
+    assert 'value="123-45-678"' in html
+    assert 'value="12345678"' not in html
 
 
 def test_vehicle_card_shows_the_extra_fields_it_has(client):
@@ -121,11 +122,10 @@ def test_catalog_browsable_without_searching(client):
     assert "COROLLA" in html                  # ההתאמה עצמה מוצגת
 
 
-def test_home_links_to_the_full_catalog(client):
-    """מהמסך הראשי אפשר להגיע לקטלוג בלי לחפש."""
+def test_home_does_not_offer_the_whole_catalog(client):
+    """המסך הראשי הוא זיהוי לפי רכב. הקטלוג המלא נשאר בתפריט."""
     html = client.get("/").get_data(as_text=True)
-    assert "עיון בכל הקטלוג" in html
-    assert 'href="/parts"' in html
+    assert "עיון בכל הקטלוג" not in html
 
 
 def test_filters_stay_open_when_a_filter_is_active(client):
@@ -394,3 +394,26 @@ def test_a_real_identification_still_shows_its_card(app, client):
     assert "סוג החלק שזוהה" in html
     assert "text" in html
     assert "TEST-001" in html
+
+
+def test_the_plate_field_shows_hyphens(client):
+    """8 ספרות -> 107-32-802, גם כשהמשתמש הקליד אותן ברצף."""
+    html = client.get("/?plate=10732802").get_data(as_text=True)
+    assert 'value="107-32-802"' in html
+
+    seven = client.get("/?plate=1234567").get_data(as_text=True)
+    assert 'value="12-345-67"' in seven
+
+
+def test_a_plate_with_hyphens_still_finds_the_vehicle(client):
+    """מה שמוצג חוזר לשרת בשליחה הבאה, ולכן המקפים חייבים לעבור."""
+    html = client.post("/", data={"plate": "123-45-678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "COROLLA" in html
+
+
+def test_coverage_badges_show_a_spinner_while_loading(client):
+    """הלחיצה פותחת ניווט מלא - בלי חיווי המסך נראה תקוע."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "data-busy-link" in html
