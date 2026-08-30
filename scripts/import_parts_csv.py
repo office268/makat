@@ -1,8 +1,8 @@
 """ייבוא מק"טים מקובץ CSV, מחוץ לממשק הווב.
 
-  python scripts/import_parts_csv.py data/demo_parts.csv
+  python scripts/import_parts_csv.py data/parts_catalog.csv
 
-בפריסה: IMPORT_PARTS_CSV=data/demo_parts.csv, ואז init_db טוען אותו.
+בפריסה: IMPORT_PARTS_CSV=data/parts_catalog.csv, ואז init_db טוען אותו.
 בטוח להרצה חוזרת - מק"ט קיים מעודכן ולא משוכפל.
 
 הקטלוג המשותף (מק"ט, יצרן, התאמות, מק"טים מקבילים) נטען לכל המערכת.

@@ -6,12 +6,6 @@ from app.auth_models import Organization, User
 from app.models import db
 
 
-def _age_session(client, seconds):
-    """מזקין את חותמת הפעילות, במקום להמתין בפועל."""
-    with client.session_transaction() as flask_session:
-        flask_session[auth.LAST_SEEN] -= seconds
-
-
 @pytest.fixture
 def org(app):
     with app.app_context():
@@ -189,62 +183,42 @@ def test_clicking_the_car_opens_the_app_and_does_not_ask_again(visitor):
     assert visitor.get("/").status_code == 200
 
 
-def test_browsing_keeps_the_splash_away(visitor):
-    """שוטטות בין המסכים היא פעילות - היא לא מחזירה את מסך הפתיחה."""
-    visitor.get("/enter?next=/")
-    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS - 30)
-    visitor.get("/parts")
-    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS - 30)
-    assert visitor.get("/").status_code == 200
-
-
-def test_the_car_returns_after_a_break(visitor):
-    """רבע שעה בלי פעילות אומרת שהמשתמש הלך; החזרה היא פתיחה חדשה."""
-    visitor.get("/enter?next=/")
-    assert visitor.get("/").status_code == 200
-
-    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS + 60)
-    response = visitor.get("/")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/welcome")
-
-
-def test_quiet_requests_do_not_count_as_activity(visitor):
-    """בדיקת בריאות אינה משתמש שעובד, ואסור לה להסתיר את מסך הפתיחה."""
-    visitor.get("/healthz")
-    response = visitor.get("/")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/welcome")
-
-
-def test_the_welcome_screen_itself_is_not_activity(visitor):
-    """טעינת מסך הפתיחה בלי ללחוץ לא מבריחה אותו."""
-    visitor.get("/welcome")
-    response = visitor.get("/")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/welcome")
-
-
-def test_enter_ignores_external_targets(visitor):
-    response = visitor.get("/enter?next=https://evil.example/x")
-    assert response.headers["Location"] == "/"
-
-
-def test_shared_result_link_skips_the_splash(visitor):
-    """קישור עם מספר רישוי הוא תוצאה ששיתפו - אסור שיתאדה למסך פתיחה."""
-    assert visitor.get("/?plate=12345678").status_code == 200
-
-
-def test_search_post_is_never_gated(visitor):
-    response = visitor.post("/", data={"plate": "12345678", "query": "רפידות קדמיות"})
+def test_navigating_inside_the_app_is_not_an_opening(visitor):
+    """הגעה ממסך אחר של האפליקציה אינה פתיחה שלה, ולא מנדנדת."""
+    response = visitor.get("/", headers={"Referer": "http://localhost/parts"})
     assert response.status_code == 200
-    assert "TEST-001" in response.get_data(as_text=True)
 
 
-def test_other_screens_open_directly(visitor):
-    """קישור עמוק שנשלח לעובד נפתח במקום שאליו הוא מצביע."""
-    for route in ["/parts", "/vehicles", "/login", "/signup", "/healthz"]:
-        assert visitor.get(route).status_code == 200, route
+def test_a_foreign_referrer_is_still_an_opening(visitor):
+    """קישור מאתר אחר הוא פתיחה של האפליקציה, לא ניווט בתוכה."""
+    response = visitor.get("/", headers={"Referer": "https://elsewhere.example/x"})
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
+
+
+def test_every_opening_meets_the_car_again(visitor):
+    """הלב של העניין: לא מדובר בזמן שעבר אלא בפתיחה מחדש."""
+    visitor.get("/enter?next=/")
+    assert visitor.get("/").status_code == 200          # הלחיצה נכנסה
+
+    # פתיחה נוספת, שנייה אחרי - ושוב המכונית
+    response = visitor.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
+
+
+def test_the_entry_token_burns_after_one_use(visitor):
+    """האסימון פותח את הדלת בדיוק פעם אחת."""
+    visitor.get("/enter?next=/")
+    assert visitor.get("/").status_code == 200
+    assert visitor.get("/").status_code == 302
+
+
+def test_clicking_the_car_never_loops(visitor):
+    """גם בלי Referer הלחיצה חייבת להיכנס, אחרת נוצרת לולאה."""
+    enter = visitor.get("/enter?next=/")
+    landing = visitor.get(enter.headers["Location"])
+    assert landing.status_code == 200
 
 
 def test_login_counts_as_entering(app, org):

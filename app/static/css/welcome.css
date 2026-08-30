@@ -121,49 +121,6 @@ body.welcome.is-leaving { opacity: 0; }
   white-space: nowrap;
 }
 
-/* רמז הלחיצה - צף מתחת למכונית */
-.enter-hint {
-  position: absolute;
-  bottom: clamp(.5rem, 4vh, 2rem);
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: .55rem;
-  padding: .5rem 1.15rem;
-  border: 1px solid rgba(56, 189, 248, .35);
-  border-radius: 999px;
-  background: rgba(5, 20, 31, .55);
-  backdrop-filter: blur(4px);
-  font-size: clamp(.85rem, 1.7vw, 1rem);
-  color: var(--enter-text);
-  white-space: nowrap;
-  pointer-events: none;
-  transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease;
-}
-
-.enter-hint::before {
-  content: "";
-  width: .5rem;
-  height: .5rem;
-  border-radius: 50%;
-  background: var(--enter-glow);
-  box-shadow: 0 0 10px var(--enter-glow);
-  animation: pulse 2.4s ease-in-out infinite;
-}
-
-.car-hit:hover ~ .enter-hint,
-.car-hit:focus-visible ~ .enter-hint {
-  border-color: rgba(56, 189, 248, .8);
-  box-shadow: 0 0 24px rgba(56, 189, 248, .25);
-  transform: translateX(-50%) translateY(-3px);
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .25; }
-}
-
 /* קישורי המשנה */
 .welcome-footer {
   padding: 0 clamp(1rem, 5vw, 3rem) clamp(1rem, 4vh, 2.2rem);
@@ -197,6 +154,5 @@ body.welcome.is-leaving { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .enter-hint::before { animation: none; }
   body.welcome { transition: none; }
 }

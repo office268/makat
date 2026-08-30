@@ -187,3 +187,51 @@ document.addEventListener("input", async function (event) {
     // השלמה היא נוחות בלבד - כשל ברשת לא אמור להפריע להקלדה
   }
 });
+
+// חזרה לאפליקציה אחרי שיצאנו ממנה.
+//
+// הדפדפן משחזר דף מהזיכרון בלי לפנות לשרת - PWA שנפתח מחדש, לשונית
+// שחוזרים אליה, כפתור "אחורי". במצבים האלה לא מגיעה לשרת שום בקשה,
+// והשער שמפנה למסך הפתיחה לא מקבל בכלל הזדמנות לרוץ. לכן הדף מחזיר
+// את עצמו: יציאה מהאפליקציה וחזרה אליה היא פתיחה מחדש, בדיוק כמו
+// שהשרת רואה פתיחה בכל הגעה שאינה ניווט פנימי.
+//
+// חצי דקה של סף, ולא יותר: היא מבדילה בין מעבר רגעי לאפליקציה אחרת
+// לבין יציאה אמיתית, ואינה מנסה לנחש "כמה זמן זה הרבה".
+//
+// רק בדלת הכניסה, ורק כשאין עליה תוצאות: מי שהשאיר את האפליקציה על
+// מסך פנימי או על תוצאות חיפוש חוזר למה שהשאיר, בדיוק כמו שקישור
+// עמוק לא נחסם.
+(function () {
+  const awaySeconds = Number(document.body.dataset.splashAway || 0);
+  const splashUrl = document.body.dataset.splashUrl;
+  if (!awaySeconds || !splashUrl) return;
+  if (window.location.pathname !== "/" || window.location.search) return;
+
+  let hiddenAt = null;
+  let leaving = false;
+
+  function backFromABreak() {
+    return hiddenAt !== null && Date.now() - hiddenAt > awaySeconds * 1000;
+  }
+
+  function toSplash() {
+    if (leaving) return;
+    leaving = true;
+    // replace ולא href: החזרה למסך הפתיחה אינה תחנה בהיסטוריה
+    window.location.replace(splashUrl);
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+    } else if (backFromABreak()) {
+      toSplash();
+    }
+  });
+
+  // דף ששוחזר מהמטמון לא הריץ אף בקשה, אבל שמר את המשתנים שלמעלה
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted && backFromABreak()) toSplash();
+  });
+})();

@@ -50,7 +50,6 @@ def test_reset_catalog_env_var_is_actually_wired(app, monkeypatch):
     from app.models import Part
 
     monkeypatch.setenv("RESET_CATALOG", "1")
-    monkeypatch.setenv("SEED_DEMO", "0")
     monkeypatch.setattr(init_db, "create_app", lambda: app)
     monkeypatch.setattr(init_db, "upgrade", lambda *a, **k: None)
     monkeypatch.setattr(init_db, "_adopt_pre_alembic_database", lambda: False)
@@ -69,7 +68,6 @@ def test_without_the_env_var_nothing_is_deleted(app, monkeypatch):
     from app.models import Part
 
     monkeypatch.delenv("RESET_CATALOG", raising=False)
-    monkeypatch.setenv("SEED_DEMO", "0")
     monkeypatch.setattr(init_db, "create_app", lambda: app)
     monkeypatch.setattr(init_db, "upgrade", lambda *a, **k: None)
     monkeypatch.setattr(init_db, "_adopt_pre_alembic_database", lambda: False)
@@ -78,3 +76,43 @@ def test_without_the_env_var_nothing_is_deleted(app, monkeypatch):
 
     with app.app_context():
         assert Part.query.count() == 1
+
+
+def test_a_missing_catalog_file_stops_the_deploy(app, monkeypatch, tmp_path):
+    """נתיב CSV שגוי חייב להפיל את הדיפלוי, לא לעבור בשקט.
+
+    לפני התיקון init_db התעלם מהערך המוחזר של load: שינוי שם הקובץ בריפו
+    בלי עדכון המשתנה בפרודקשן היה מייצר דיפלוי ירוק שבו הקטלוג פשוט לא
+    מתעדכן, והקטלוג הישן ב-DB ממשיך להיענות כאילו הכל תקין.
+    """
+    import scripts.init_db as init_db
+
+    monkeypatch.delenv("RESET_CATALOG", raising=False)
+    monkeypatch.setenv("IMPORT_PARTS_CSV", str(tmp_path / "אין-כזה.csv"))
+    monkeypatch.setattr(init_db, "create_app", lambda: app)
+    monkeypatch.setattr(init_db, "upgrade", lambda *a, **k: None)
+    monkeypatch.setattr(init_db, "_adopt_pre_alembic_database", lambda: False)
+
+    assert init_db.main() == 1
+
+
+def test_the_real_catalog_file_loads_and_the_deploy_passes(app, monkeypatch):
+    """המקבילה החיובית: הנתיב שבריפו באמת נטען ומחזיר 0.
+
+    זו הבדיקה שתיפול אם מישהו ישנה שוב את שם הקובץ בלי לעדכן את מי
+    שמצביע עליו.
+    """
+    import pathlib
+
+    import scripts.init_db as init_db
+
+    csv = pathlib.Path(__file__).resolve().parent.parent / "data" / "parts_catalog.csv"
+    assert csv.exists()
+
+    monkeypatch.delenv("RESET_CATALOG", raising=False)
+    monkeypatch.setenv("IMPORT_PARTS_CSV", str(csv))
+    monkeypatch.setattr(init_db, "create_app", lambda: app)
+    monkeypatch.setattr(init_db, "upgrade", lambda *a, **k: None)
+    monkeypatch.setattr(init_db, "_adopt_pre_alembic_database", lambda: False)
+
+    assert init_db.main() == 0
