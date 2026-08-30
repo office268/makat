@@ -90,3 +90,53 @@ def test_api_serves_the_picker(client, app):
     assert set(models) == {"ACCENT", "GENESIS"}
     rows = client.get("/api/vehicle-models?make=יונדאי&model=ACCENT").get_json()
     assert rows[0]["years"] == "2003-2006"
+
+
+# ---- דגמים ויצרנים נפוצים, למילוי שדה ריק במסך הגילוי ----
+
+def _seed_variants(counts):
+    """counts: {(יצרן, דגם): כמה וריאנטים}. כל וריאנט הוא קוד דגם אחר."""
+    for (make, model), amount in counts.items():
+        for index in range(amount):
+            db.session.add(VehicleModel(make=make, model=model,
+                                        model_code=f"{model}-{index}"))
+    db.session.commit()
+
+
+def test_popular_models_are_ordered_by_variant_count(app):
+    """אין נתוני מכירות; מספר הווריאנטים הוא הפרוקסי לפופולריות."""
+    from app.vehicle_catalog import popular_models
+
+    with app.app_context():
+        _seed_variants({("טויוטה", "COROLLA"): 5, ("טויוטה", "YARIS"): 3,
+                        ("טויוטה", "PRIUS"): 1})
+        assert popular_models("טויוטה", limit=2) == [
+            ("טויוטה", "COROLLA"), ("טויוטה", "YARIS")]
+
+
+def test_popular_models_can_span_makes(app):
+    """בלי יצרן, הדגמים נבחרים מכל המאגר."""
+    from app.vehicle_catalog import popular_models
+
+    with app.app_context():
+        _seed_variants({("טויוטה", "COROLLA"): 5, ("מאזדה", "MAZDA 3"): 9})
+        assert popular_models(limit=1) == [("מאזדה", "MAZDA 3")]
+
+
+def test_popular_makes_are_ordered_by_model_count(app):
+    from app.vehicle_catalog import popular_makes
+
+    with app.app_context():
+        _seed_variants({("טויוטה", "COROLLA"): 2, ("טויוטה", "YARIS"): 2,
+                        ("מאזדה", "MAZDA 3"): 1})
+        assert popular_makes(limit=1) == ["טויוטה"]
+        assert popular_makes(limit=5) == ["טויוטה", "מאזדה"]
+
+
+def test_popular_lists_are_empty_when_the_catalog_is(app):
+    """קטלוג ריק לא מפיל את התכנון - הוא פשוט לא מציע כלום."""
+    from app.vehicle_catalog import popular_makes, popular_models
+
+    with app.app_context():
+        assert popular_makes() == []
+        assert popular_models() == []

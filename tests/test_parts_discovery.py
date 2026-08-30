@@ -253,3 +253,123 @@ def test_start_without_a_key_says_so(app, client):
                                  "part_type": "oil_filter"})
     assert response.status_code == 400
     assert "ANTHROPIC_API_KEY" in response.get_json()["error"]
+
+
+# ---- תכנון: מה ירוץ כששדה נשאר ריק ----
+
+def _seed_models(app):
+    """קטלוג דגמים קטן, כדי שברירת המחדל תהיה לה ממה לבחור."""
+    from app.vehicle_catalog import VehicleModel
+
+    counts = {("טויוטה", "COROLLA"): 4, ("טויוטה", "YARIS"): 3,
+              ("טויוטה", "PRIUS"): 1, ("מאזדה", "MAZDA 3"): 2,
+              ("מאזדה", "CX-5"): 2, ("סקודה", "OCTAVIA"): 1}
+    for (make, model), amount in counts.items():
+        for index in range(amount):
+            db.session.add(VehicleModel(make=make, model=model,
+                                        model_code=f"{model}-{index}"))
+    db.session.commit()
+
+
+def test_all_three_fields_empty_falls_back_to_a_sample(app):
+    """הבקשה: לחפש בלי למלא כלום. התוצאה חייבת להיות מדגם, לא כל המאגר."""
+    with app.app_context():
+        _seed_models(app)
+        targets, capped = pd.plan_targets()
+        assert not capped
+        assert len(targets) == (pd.DEFAULT_MAKES * pd.DEFAULT_MODELS
+                                * len(pd.DEFAULT_PART_TYPES))
+        # היצרנים הנפוצים ביותר בקטלוג הזה, ורק סוגי חלקים מוכרים
+        assert {t[0] for t in targets} == {"טויוטה", "מאזדה"}
+        assert {t[2] for t in targets} <= set(pd.DEFAULT_PART_TYPES)
+
+
+def test_make_only_expands_to_its_popular_models(app):
+    with app.app_context():
+        _seed_models(app)
+        targets, _ = pd.plan_targets(make="טויוטה", part_types=["oil_filter"])
+        assert targets == [["טויוטה", "COROLLA", "oil_filter"],
+                           ["טויוטה", "YARIS", "oil_filter"]]
+
+
+def test_model_without_a_make_plans_nothing(app):
+    """דגם לבדו לא ניתן להתאמה חד-משמעית, ולכן אין מה להריץ."""
+    with app.app_context():
+        _seed_models(app)
+        assert pd.plan_targets(model="COROLLA") == ([], False)
+
+
+def test_both_fields_chosen_keeps_exactly_that_pair(app):
+    with app.app_context():
+        _seed_models(app)
+        targets, _ = pd.plan_targets("טויוטה", "COROLLA", ["oil_filter", "air_filter"])
+        assert targets == [["טויוטה", "COROLLA", "oil_filter"],
+                           ["טויוטה", "COROLLA", "air_filter"]]
+
+
+def test_unknown_part_types_fall_back_to_the_defaults(app):
+    """סוג שאינו בטקסונומיה לא הופך למטרה - ולא משאיר את הרשימה ריקה."""
+    with app.app_context():
+        _seed_models(app)
+        targets, _ = pd.plan_targets("טויוטה", "COROLLA", ["לא-קיים"])
+        assert [t[2] for t in targets] == pd.DEFAULT_PART_TYPES
+
+
+def test_the_plan_is_capped(app, monkeypatch):
+    """תקרה קשיחה: לחיצה אחת לא יכולה לפתוח חשבון בלתי צפוי."""
+    monkeypatch.setattr(pd, "MAX_TARGETS", 3)
+    with app.app_context():
+        _seed_models(app)
+        targets, capped = pd.plan_targets("טויוטה", "COROLLA")
+        assert len(targets) == 3 and capped
+
+
+def test_an_empty_vehicle_catalog_plans_nothing(app):
+    """בלי קטלוג דגמים אין ממה למלא ברירת מחדל."""
+    with app.app_context():
+        assert pd.plan_targets() == ([], False)
+
+
+# ---- תצוגה מקדימה בשרת ----
+
+def _login_superadmin(app, client):
+    app.config["SUPERADMIN_EMAILS"] = frozenset({"fixture@t.test"})
+    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+
+
+def test_plan_endpoint_describes_what_will_run(app, client):
+    with app.app_context():
+        _seed_models(app)
+    _login_superadmin(app, client)
+    plan = client.get("/admin/discovery/plan").get_json()
+    assert plan["count"] == (pd.DEFAULT_MAKES * pd.DEFAULT_MODELS
+                             * len(pd.DEFAULT_PART_TYPES))
+    assert plan["capped"] is False
+    assert plan["max"] == pd.MAX_TARGETS
+    assert len(plan["sample"]) == 6            # דוגמה, לא הרשימה כולה
+    assert "טויוטה COROLLA" in plan["sample"][0]
+
+
+def test_plan_endpoint_is_superadmin_only(auth_client):
+    assert auth_client.get("/admin/discovery/plan").status_code == 403
+
+
+def test_starting_with_empty_fields_opens_a_job(app, client, monkeypatch):
+    """הבקשה מקצה לקצה: שלושה שדות ריקים, ובכל זאת רצה עבודה."""
+    monkeypatch.setattr(pd, "discovery_available", lambda: True)
+    with app.app_context():
+        _seed_models(app)
+    _login_superadmin(app, client)
+    payload = client.post("/admin/discovery/start", data={}).get_json()
+    assert payload["job"]["total"] == (pd.DEFAULT_MAKES * pd.DEFAULT_MODELS
+                                       * len(pd.DEFAULT_PART_TYPES))
+    assert payload["job"]["status"] == "running"
+
+
+def test_starting_with_nothing_to_plan_says_so(app, client, monkeypatch):
+    """קטלוג דגמים ריק - הודעה מפורשת במקום עבודה ריקה שמסתיימת מיד."""
+    monkeypatch.setattr(pd, "discovery_available", lambda: True)
+    _login_superadmin(app, client)
+    response = client.post("/admin/discovery/start", data={})
+    assert response.status_code == 400
+    assert "לא נמצאו דגמים" in response.get_json()["error"]

@@ -270,6 +270,39 @@ def makes():
     return [row[0] for row in rows if row[0]]
 
 
+def popular_models(make=None, limit=5):
+    """דגמים לפי מספר הווריאנטים הרשמיים שלהם במאגר.
+
+    אין במאגר נתוני מכירות, אבל לדגם נפוץ יש יותר קודי דגם, רמות גימור
+    ומנועים רשומים. זה הפרוקסי היחיד לפופולריות שאפשר לגזור ממה שיש,
+    והוא מספיק כדי לבחור מדגם סביר במקום לשלוף דגמים אקראיים.
+    """
+    query = db.session.query(
+        VehicleModel.make, VehicleModel.model, db.func.count().label("variants")
+    )
+    if make:
+        query = query.filter(VehicleModel.make == make)
+    rows = (
+        query.group_by(VehicleModel.make, VehicleModel.model)
+        .order_by(db.desc("variants"), VehicleModel.make, VehicleModel.model)
+        .limit(limit)
+        .all()
+    )
+    return [(row[0], row[1]) for row in rows]
+
+
+def popular_makes(limit=2):
+    """יצרנים לפי מספר הדגמים שרשומים להם."""
+    rows = (
+        db.session.query(VehicleModel.make, db.func.count().label("models"))
+        .group_by(VehicleModel.make)
+        .order_by(db.desc("models"), VehicleModel.make)
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
 def models_for(make):
     query = db.session.query(VehicleModel.model).distinct()
     if make:
