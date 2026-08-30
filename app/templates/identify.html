@@ -95,6 +95,9 @@
   </div>
   {% endif %}
 
+  {# שלב 2 מוסתר כרגע (SHOW_PART_STEP). הכניסה לחלפים היא דרך רצועת
+     הכיסוי שבכרטיס הרכב - תגית לכל סוג חלק שקיים לרכב הזה. #}
+  {% if config.SHOW_PART_STEP %}
   <div class="card">
     <div class="card-body">
       <label class="form-label fw-bold">2. החלק</label>
@@ -123,6 +126,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 </form>
 
 <p class="text-center">
