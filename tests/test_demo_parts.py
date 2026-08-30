@@ -187,9 +187,8 @@ def test_a_platform_sibling_shares_the_air_filter(app):
 def test_no_model_is_left_with_a_single_part_type(app):
     """דגם שמחזיר סוג חלק אחד בלבד לא מדגים כלום.
 
-    שני חריגים ידועים: מסוויפט יצא רק מסנן מזגן, כי כל שאר הפריטים
-    בעמוד נפסלו על מספרי OE של יצרנים אחרים; ול-C-HR נכנסו רק מסנני
-    מזגן, שממילא משותפים לו ול-RAV4. שניהם ממתינים לסבב הבא."""
+    היו שני חריגים - סוויפט ו-C-HR - ושניהם נסגרו. הבדיקה נשארת בלי
+    רשימת פטורים בכוונה: דגם חדש שייכנס עם סוג אחד יפיל אותה."""
     _load(app)
     with app.app_context():
         by_model = {}
@@ -197,4 +196,44 @@ def test_no_model_is_left_with_a_single_part_type(app):
             for fit in part.fitments:
                 by_model.setdefault(fit.model, set()).add(part.part_type)
         thin = {model for model, types in by_model.items() if len(types) < 2}
-        assert thin == {"SWIFT", "C-HR"}, thin
+        assert thin == set(), thin
+
+
+def test_the_shared_korean_filter_serves_both_brands(app):
+    """קיה ויונדאי חולקות מנוע, ובשני העמודים אותו מספר OE."""
+    _load(app)
+    with app.app_context():
+        part = Part.query.filter_by(part_number="FO-599S").one()
+        assert {(f.make, f.model) for f in part.fitments} == {
+            ("קיה", "NIRO"), ("יונדאי", "i30")}
+        assert [r.ref_number for r in part.cross_refs] == ["26300-35505"]
+
+
+def test_the_new_popular_models_answer_a_plate(app):
+    """הדגמים שנוספו - כל אחד עם שני סוגי חלקים לפחות."""
+    from app import services
+
+    _load(app)
+    with app.app_context():
+        for make, model, year in [("קיה קוריאה", "NIRO", 2019),
+                                  ("יונדאי קוריאה", "i30", 2018),
+                                  ("מאזדה יפן", "CX-5", 2020),
+                                  ("טויוטה יפן", "C-HR", 2019),
+                                  ("סוזוקי יפן", "SWIFT", 2013)]:
+            coverage = services.catalog_coverage({"make": make, "model": model,
+                                                  "year": year})
+            assert len(coverage) >= 2, f"{model}: {coverage}"
+
+
+def test_a_hyphenated_model_is_found_either_way(app):
+    """CX-5 ו-C-HR - המאגר עשוי לכתוב אותם עם רווח או בלי מקף."""
+    from app import services
+
+    _load(app)
+    with app.app_context():
+        for model in ("CX-5", "CX 5", "CX5"):
+            assert services.parts_for_vehicle(
+                {"make": "מאזדה יפן", "model": model, "year": 2020}), model
+        for model in ("C-HR", "CHR", "C HR"):
+            assert services.parts_for_vehicle(
+                {"make": "טויוטה יפן", "model": model, "year": 2019}), model
