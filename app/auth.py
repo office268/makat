@@ -10,6 +10,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 from flask_login import (
@@ -77,6 +78,10 @@ def superadmin_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+# הדגל שאומר שכבר עברנו את מסך הפתיחה בסשן הזה
+ENTERED = "entered"
 
 
 def safe_target(target):
@@ -155,6 +160,7 @@ def signup():
             db.session.commit()
 
             login_user(user)
+            session[ENTERED] = True
             activity.note(
                 action="auth.signup",
                 summary=f"{organization.name} ({user.email})",
@@ -189,6 +195,7 @@ def login():
             flash("החשבון או הארגון מושבתים. פנה למנהל המערכת.", "warning")
         else:
             login_user(user, remember=request.form.get("remember") == "1")
+            session[ENTERED] = True
             activity.note(
                 action="auth.login",
                 summary=f"{user.email} ({user.role_label})",
@@ -203,6 +210,25 @@ def login():
     return render_template("auth/login.html", form=request.form)
 
 
+@auth_bp.before_app_request
+def splash_gate():
+    """מי שפותח את האפליקציה מקבל קודם את מסך הפתיחה.
+
+    נחסם רק ה-GET הנקי של השורש. קישור עם מספר רישוי הוא תוצאה
+    ששיתפו ו-POST הוא חיפוש - שניהם חייבים להגיע ליעד כמו שהם, ולא
+    להתאדות לטובת מסך פתיחה. שאר המסכים נגישים ישירות: קישור עמוק
+    שנשלח לעובד צריך להיפתח במקום שאליו הוא מצביע.
+
+    הדגל יושב בסשן ולא בבסיס הנתונים: המכונית מקבלת את פניך פעם אחת
+    בכל פתיחה של הדפדפן, ולא שוב בכל מעבר בין מסכים.
+    """
+    if request.method != "GET" or request.path != "/" or request.query_string:
+        return None
+    if session.get(ENTERED):
+        return None
+    return redirect(url_for("auth.welcome"))
+
+
 @auth_bp.get("/welcome")
 def welcome():
     """מסך הפתיחה: מכונית תלת-ממד מסתובבת שלחיצה עליה נכנסת לאפליקציה.
@@ -210,9 +236,17 @@ def welcome():
     מחובר או לא - הלחיצה מובילה לאותו מקום. המסך הראשי פתוח גם
     למבקר (בלי מחירים ומלאי), ולכן אין סיבה לחסום אותו בטופס.
     """
+    target = safe_target(request.args.get("next"))
     return render_template(
-        "auth/welcome.html", enter_url=safe_target(request.args.get("next"))
+        "auth/welcome.html", enter_url=url_for("auth.enter", next=target)
     )
+
+
+@auth_bp.get("/enter")
+def enter():
+    """הלחיצה על המכונית: מסמנת שנכנסנו, וממשיכה לאפליקציה."""
+    session[ENTERED] = True
+    return redirect(safe_target(request.args.get("next")))
 
 
 @auth_bp.post("/logout")
