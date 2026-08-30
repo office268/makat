@@ -10,7 +10,9 @@ const SHELL_CACHE = `makat-shell-${VERSION}`;
 
 const SHELL = [
   "{{ url_for('static', filename='css/style.css') }}",
+  "{{ url_for('static', filename='css/welcome.css') }}",
   "{{ url_for('static', filename='js/app.js') }}",
+  "{{ url_for('static', filename='js/car3d.js') }}",
   "{{ url_for('static', filename='icons/icon-192.png') }}",
   "{{ url_for('pwa.offline') }}",
 ];

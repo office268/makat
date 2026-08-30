@@ -25,8 +25,11 @@
           <button class="btn btn-primary w-100">כניסה</button>
         </form>
         <hr class="my-4">
-        <p class="text-center small mb-0">
+        <p class="text-center small mb-1">
           אין לך חשבון? <a href="{{ url_for('auth.signup') }}">רישום ארגון חדש</a>
+        </p>
+        <p class="text-center small mb-0">
+          <a class="text-muted" href="{{ url_for('auth.welcome') }}">חזרה למסך הפתיחה</a>
         </p>
       </div>
     </div>
