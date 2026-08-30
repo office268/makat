@@ -109,6 +109,17 @@ class Config:
     # create_all() לא יודע לשנות טבלה קיימת, ולכן הוא כבוי כברירת מחדל -
     # אחרת שתי מערכות היו מנהלות את אותה סכימה וסותרות זו את זו.
     AUTO_CREATE_TABLES = os.environ.get("AUTO_CREATE_TABLES", "0").strip() == "1"
+    # לוג השימוש: שורה לכל בקשה משמעותית. כבוי מייתר את הכתיבה לגמרי,
+    # ומספר הימים קובע מה נמחק בהרצת "flask prune-activity".
+    ACTIVITY_LOG_ENABLED = os.environ.get(
+        "ACTIVITY_LOG_ENABLED", "1"
+    ).strip().lower() in {"1", "true", "yes"}
+    ACTIVITY_LOG_RETENTION_DAYS = int(
+        os.environ.get("ACTIVITY_LOG_RETENTION_DAYS", 90)
+    )
+    ACTIVITY_PER_PAGE = int(os.environ.get("ACTIVITY_PER_PAGE", 50))
+    # אזור הזמן שבו מוצגים הזמנים במסכים. הכתיבה ל-DB תמיד ב-UTC.
+    DISPLAY_TIMEZONE = os.environ.get("DISPLAY_TIMEZONE", "Asia/Jerusalem")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     JSON_AS_ASCII = False

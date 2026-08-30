@@ -20,6 +20,7 @@ from flask_login import (
     logout_user,
 )
 
+from . import activity
 from .auth_models import Organization, User
 from .models import db
 
@@ -143,6 +144,13 @@ def signup():
             db.session.commit()
 
             login_user(user)
+            activity.note(
+                action="auth.signup",
+                summary=f"{organization.name} ({user.email})",
+                entity_type="organization",
+                entity_id=organization.id,
+                kind=organization.kind,
+            )
             flash(f"ברוך הבא, {organization.name}!", "success")
             return redirect(url_for("identify.index"))
 
@@ -159,11 +167,24 @@ def login():
         user = User.query.filter_by(email=email).first()
         # הודעה זהה לשני המקרים - לא מסגירים אילו כתובות רשומות
         if user is None or not user.check_password(request.form.get("password")):
+            activity.note(
+                action="auth.login_failed", summary=email, reason="bad_credentials"
+            )
             flash("דוא\"ל או סיסמה שגויים.", "danger")
         elif not user.is_active:
+            activity.note(
+                action="auth.login_failed", summary=email, reason="inactive"
+            )
             flash("החשבון או הארגון מושבתים. פנה למנהל המערכת.", "warning")
         else:
             login_user(user, remember=request.form.get("remember") == "1")
+            activity.note(
+                action="auth.login",
+                summary=f"{user.email} ({user.role_label})",
+                entity_type="user",
+                entity_id=user.id,
+                remember=request.form.get("remember") == "1",
+            )
             user.last_login_at = datetime.now(timezone.utc)
             db.session.commit()
             target = request.args.get("next")
@@ -178,6 +199,13 @@ def login():
 @auth_bp.post("/logout")
 @login_required
 def logout():
+    activity.note(
+        action="auth.logout",
+        summary=current_user.email,
+        entity_type="user",
+        entity_id=current_user.id,
+        actor=current_user,
+    )
     logout_user()
     flash("התנתקת מהמערכת.", "info")
     return redirect(url_for("auth.login"))
