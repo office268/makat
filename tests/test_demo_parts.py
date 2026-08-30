@@ -103,3 +103,73 @@ def test_oe_cross_references_came_through(app):
     with app.app_context():
         part = Part.query.filter_by(part_number="27149").one()
         assert [r.ref_number for r in part.cross_refs] == ["90915-YZZJ1"]
+
+
+def test_every_demo_plate_finds_parts(app):
+    """כל רכב בקובץ הדמו חייב להחזיר חלפים.
+
+    מספרי הרישוי האלה הם מה שמישהו מקליד כשהוא מנסה את המערכת. רכב
+    שמזוהה ואז מחזיר מסך ריק גרוע מרכב שלא מזוהה - נראה כאילו הכל
+    עבד ובכל זאת אין תשובה.
+    """
+    import json
+
+    sample = pathlib.Path(__file__).resolve().parent.parent / "data" / "vehicles_sample.json"
+    vehicles = json.loads(sample.read_text(encoding="utf-8"))
+    _load(app)
+    with app.app_context():
+        for record in vehicles:
+            vehicle = {"make": record["tozeret_nm"], "model": record["kinuy_mishari"],
+                       "year": record["shnat_yitzur"]}
+            coverage = services.catalog_coverage(vehicle)
+            assert coverage, f'{vehicle["make"]} {vehicle["model"]} {vehicle["year"]}'
+
+
+def test_new_models_reach_the_catalog(app):
+    """הדגמים שנוספו - כל אחד עם החלפים שנמצאו לו."""
+    _load(app)
+    with app.app_context():
+        for make, model, year, part_type in [
+            ("פולקסווגן גרמניה", "GOLF", 2015, "oil_filter"),
+            ("פולקסווגן גרמניה", "GOLF", 2015, "cabin_filter"),
+            ("הונדה יפן", "CIVIC", 2021, "oil_filter"),
+            ("מיצובישי יפן", "OUTLANDER", 2014, "cabin_filter"),
+            ("סוזוקי יפן", "SWIFT", 2013, "cabin_filter"),
+            ("טויוטה יפן", "RAV4", 2020, "oil_filter"),
+        ]:
+            vehicle = {"make": make, "model": model, "year": year}
+            assert services.parts_for_vehicle(vehicle, part_type), f"{model} {part_type}"
+
+
+def test_new_part_types_are_tied_to_a_real_vehicle(app):
+    """סוגי החלקים החדשים - לא רק בקטלוג, אלא נמצאים בחיפוש לפי רכב."""
+    _load(app)
+    with app.app_context():
+        octavia = {"make": "סקודה צ'כיה", "model": "OCTAVIA", "year": 2018}
+        assert services.parts_for_vehicle(octavia, "brake_disc_front")
+        assert services.parts_for_vehicle(octavia, "timing_belt")
+        corolla = {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016}
+        assert services.parts_for_vehicle(corolla, "spark_plug")
+
+
+def test_a_shared_filter_serves_both_toyotas(app):
+    """מק"ט אחד, שלושה דגמים - ההתאמות נשמרות יחד ולא דורסות זו את זו."""
+    _load(app)
+    with app.app_context():
+        part = Part.query.filter_by(part_number="DCF387K").one()
+        assert {f.model for f in part.fitments} == {"COROLLA", "RAV4", "C-HR"}
+
+
+def test_mazda_is_stored_under_the_registry_name(app):
+    """הדגם נשמר בשם שמשרד התחבורה משתמש בו, ולא בשם המסחרי הקצר.
+
+    ההשוואה היא Fitment.model ILIKE %דגם הרכב%, והדגם מגיע מהמאגר
+    כ-"MAZDA 3". התאמה ששמורה כ-"3" לא נמצאת: "3" אינו מכיל
+    "MAZDA 3". הכיוון ההפוך עובד, ולכן השם המלא הוא הנכון לשמור.
+    """
+    _load(app)
+    with app.app_context():
+        from_registry = {"make": "מאזדה יפן", "model": "MAZDA 3", "year": 2018}
+        typed_by_hand = {"make": "מאזדה יפן", "model": "3", "year": 2018}
+        assert services.parts_for_vehicle(from_registry, "oil_filter")
+        assert services.parts_for_vehicle(typed_by_hand, "oil_filter")
