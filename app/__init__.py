@@ -186,11 +186,4 @@ def create_app(config_object=Config):
         days = app.config["ACTIVITY_LOG_RETENTION_DAYS"]
         print(f"נמחקו {prune(days)} אירועים ישנים מ-{days} ימים.")
 
-    @app.cli.command("seed")
-    def seed_command():  # pragma: no cover - פקודת CLI
-        """טוען נתוני דמו לקטלוג (מוחק נתונים קיימים)."""
-        from scripts.seed import seed
-
-        seed(app)
-
     return app

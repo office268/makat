@@ -3,15 +3,13 @@
 משתני סביבה:
   RESET_CATALOG=1        מוחק את תוכן הקטלוג (הרסני; ארגונים ומשתמשים נשארים)
   IMPORT_PARTS_CSV=path  טוען מק"טים מקובץ CSV (בטוח להרצה חוזרת)
-  SEED_DEMO=1            טוען קטלוג דמו אם הקטלוג ריק
-  SEED_DEMO=force        בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
-
 
 רץ כ-preDeployCommand ב-Railway: פעם אחת לכל דיפלוי, לפני שה-workers עולים.
 בטוח להרצה חוזרת - יוצר רק טבלאות שחסרות, ולא מוחק שום דבר.
 
-אם SEED_DEMO=1 והקטלוג ריק, נטען גם קטלוג הדמו. אם כבר יש מק"טים,
-הזריעה מדלגת - כדי שדיפלוי לא ידרוס דאטה אמיתי.
+הקטלוג נטען אך ורק מ-IMPORT_PARTS_CSV, כלומר ממק"טים שנאספו ותועדו.
+אין כאן מסלול שמייצר מק"טים סינתטיים - כזה היה כאן וסולק בכוונה, כי
+מק"ט מומצא נראה בממשק בדיוק כמו מק"ט אמיתי.
 """
 import os
 import sys
@@ -77,26 +75,22 @@ def main():
 
             print("RESET_CATALOG=1 - מוחק את תוכן הקטלוג...")
             clear_catalog(app)
-            count = 0
 
         csv_path = os.environ.get("IMPORT_PARTS_CSV", "").strip()
         if csv_path:
             from scripts.import_parts_csv import load
 
+            # נתיב שגוי הוא כשל של הפריסה, לא של הנתונים, והוא הכשל
+            # השקט המסוכן: הדיפלוי עובר, הקטלוג הישן ב-DB ממשיך להיענות,
+            # ואף אחד לא יודע שהעדכון לא נכנס. לכן הוא עוצר את הדיפלוי.
+            # שורה פגומה בתוך קובץ שנמצא היא עניין אחר - היא מדווחת
+            # ולא חוסמת, אחרת רשומה אחת שבורה מונעת כל עלייה.
+            if not Path(csv_path).exists():
+                print(f'IMPORT_PARTS_CSV מצביע על קובץ שלא קיים: {csv_path}')
+                return 1
+
             print(f"IMPORT_PARTS_CSV - טוען מק\"טים מ-{csv_path}...")
             load(app, csv_path)
-
-        seed_mode = os.environ.get("SEED_DEMO", "")
-        if seed_mode == "force":
-            from scripts.seed import seed
-
-            print("SEED_DEMO=force - בונה מחדש את קטלוג הדמו...")
-            seed(app, reset=True)
-        elif seed_mode == "1" and count == 0:
-            from scripts.seed import seed
-
-            print("הקטלוג ריק ו-SEED_DEMO=1 - טוען קטלוג דמו...")
-            seed(app, reset=False)
     return 0
 
 

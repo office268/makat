@@ -1,7 +1,7 @@
 """איתור רכב לפי מספר רישוי, מול המאגר הפתוח של משרד התחבורה (data.gov.il).
 
-המאגר חינמי ולא דורש מפתח. אם אין גישה לרשת (סביבת דמו סגורה, נפילת שירות),
-המודול נופל אוטומטית לקובץ דוגמאות מקומי כדי שהדמו תמיד ירוץ.
+המאגר חינמי ולא דורש מפתח. אם אין גישה לרשת (סביבה סגורה, נפילת שירות),
+המודול נופל אוטומטית לקובץ רכבי דוגמה מקומי כדי שהזיהוי ימשיך לעבוד.
 """
 import json
 import os
@@ -108,7 +108,7 @@ def lookup_online(plate):
         }
     )
     request = urllib.request.Request(
-        f"{CKAN_URL}?{params}", headers={"User-Agent": "makat-demo/1.0"}
+        f"{CKAN_URL}?{params}", headers={"User-Agent": "makat/1.0"}
     )
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
