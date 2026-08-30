@@ -26,6 +26,10 @@ SOURCE_NOTE = "נוסף בחיפוש אינטרנט אוטומטי (Claude). מ�
 # תת-מחרוזת יציבה של ההערה, לאיתור כל מה שהגיע מכאן גם אם הנוסח ישתנה
 SOURCE_MARK = "נוסף בחיפוש אינטרנט אוטומטי"
 
+# סימון המקור של הקטלוג הבסיסי, זה שנאסף לפני שצנרת הגילוי נכתבה.
+# משמש להבחין בין מק"ט שהחיפוש האוטומטי הביא לבין מק"ט שהיה כאן לפניו.
+CATALOG_MARK = "מקור: קטלוג מקוון"
+
 # יצרני רכב מוכרים, לזיהוי מועמד ששייך לרכב אחר
 KNOWN_MARQUES = {
     "toyota", "lexus", "honda", "mazda", "nissan", "mitsubishi", "suzuki",
@@ -391,7 +395,7 @@ def save(accepted):
             )
         part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
         # מק"ט קיים שומר את ההערה שלו. דריסה הייתה מוחקת את סימון
-        # "נתוני הדגמה" ומציגה חלף שנבנה ביד כאילו הגיע מהחיפוש.
+        # המקור הקודם ומציגה חלף שנאסף קודם כאילו הגיע מהחיפוש.
         source = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
         if is_new:
             part.notes = source
@@ -525,7 +529,7 @@ def review_flags(part):
         if other and other not in wanted:
             flags.append(_flag(f'מק"ט מקביל של יצרן אחר: {other}'))
 
-    if "נתוני הדגמה" in (part.notes or ""):
+    if CATALOG_MARK in (part.notes or ""):
         flags.append(_flag("היה בקטלוג לפני החיפוש - מחיקה תסיר גם עבודה ידנית",
                            level="caution"))
     return flags

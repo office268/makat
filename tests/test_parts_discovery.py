@@ -404,7 +404,7 @@ def test_discovered_parts_are_the_ones_marked(app):
     with app.app_context():
         _discovered("DISC-1")
         db.session.add(Part(part_number="HAND-1", name_he="ידני",
-                            notes="נתוני הדגמה - נמשכו מקטלוג מקוון"))
+                            notes="מקור: קטלוג מקוון לא רשמי"))
         db.session.commit()
         assert [p.part_number for p in pd.discovered_parts()] == ["DISC-1"]
 
@@ -451,7 +451,7 @@ def test_missing_maker_and_unknown_type_are_flagged(app):
 def test_a_part_that_predates_the_search_is_flagged(app):
     """מחיקה של כזה מוחקת גם עבודה ידנית, ולכן זה נאמר במפורש."""
     with app.app_context():
-        part = _discovered("BOTH-1", note=f"נתוני הדגמה - AUTODOC | {pd.SOURCE_NOTE}")
+        part = _discovered("BOTH-1", note=f"מקור: קטלוג מקוון (AUTODOC) | {pd.SOURCE_NOTE}")
         flags = pd.review_flags(part)
         assert any("היה בקטלוג" in flag["text"] for flag in flags)
         # אזהרה, לא סיבה למחוק - ולכן השורה לא נבחרת מראש
@@ -465,17 +465,17 @@ def test_the_source_url_comes_out_of_the_note(app):
 
 
 def test_saving_does_not_overwrite_an_existing_note(app):
-    """מק"ט שנבנה ביד ועודכן בחיפוש שומר על סימון "נתוני הדגמה" שלו."""
+    """מק"ט שנאסף קודם ועודכן בחיפוש שומר על סימון המקור שלו."""
     with app.app_context():
         db.session.add(Part(part_number="KEEP-1", name_he="ידני",
-                            part_type="oil_filter", notes="נתוני הדגמה - AUTODOC"))
+                            part_type="oil_filter", notes="מקור: קטלוג מקוון (AUTODOC)"))
         db.session.commit()
         rows, _ = pd.validate([candidate(number="KEEP-1")],
                               "טויוטה", "COROLLA", "oil_filter")
         created, updated = pd.save(rows)
         part = Part.query.filter_by(part_number="KEEP-1").one()
         assert (created, updated) == (0, 1)
-        assert "נתוני הדגמה" in part.notes
+        assert pd.CATALOG_MARK in part.notes
         assert pd.SOURCE_MARK in part.notes
 
 

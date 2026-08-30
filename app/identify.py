@@ -120,7 +120,7 @@ def identify_from_image(image_bytes, media_type="image/jpeg", hint=None):
             output_config={"effort": "low"},
             messages=[{"role": "user", "content": content}],
         )
-    except Exception as exc:  # שגיאת רשת/מכסה לא אמורה להפיל את הדמו
+    except Exception as exc:  # שגיאת רשת/מכסה לא אמורה להפיל את מסך הזיהוי
         return [_result(None, 0.0, "vision", f"שגיאה בקריאה ל-Claude: {exc}")]
 
     if response.stop_reason == "refusal":

@@ -1,10 +1,10 @@
-"""קובץ ההדגמה: הוא קיים כדי שהזרימה תעבוד, ולכן זה מה שנבדק."""
+"""קובץ הקטלוג: הוא מה שנטען בפרודקשן, ולכן זה מה שנבדק."""
 import pathlib
 
 from app import services
 from app.models import Part, db
 
-CSV = pathlib.Path(__file__).resolve().parent.parent / "data" / "demo_parts.csv"
+CSV = pathlib.Path(__file__).resolve().parent.parent / "data" / "parts_catalog.csv"
 
 
 def _load(app):
@@ -42,13 +42,13 @@ def test_year_range_is_real_not_decorative(app):
         assert services.parts_for_vehicle(old, "oil_filter") == []
 
 
-def test_every_row_is_marked_as_demo_data(app):
+def test_every_row_carries_its_source(app):
     """מקור הנתונים לא רשמי, ולכן כל שורה נושאת את זה בגלוי."""
     _load(app)
     with app.app_context():
         parts = Part.query.all()
         assert parts
-        assert all("נתוני הדגמה" in (p.notes or "") for p in parts)
+        assert all("מקור: קטלוג מקוון" in (p.notes or "") for p in parts)
 
 
 def test_shared_part_number_keeps_every_fitment(app):
@@ -89,7 +89,7 @@ def test_catalog_spans_several_part_types(app):
 
 
 def test_corolla_answers_more_than_one_question(app):
-    """הדגם המוביל בהדגמה - כמה סוגי חלקים על אותו רכב."""
+    """הדגם המוביל בקטלוג - כמה סוגי חלקים על אותו רכב."""
     _load(app)
     with app.app_context():
         corolla = {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016}
@@ -105,8 +105,8 @@ def test_oe_cross_references_came_through(app):
         assert [r.ref_number for r in part.cross_refs] == ["90915-YZZJ1"]
 
 
-def test_every_demo_plate_finds_parts(app):
-    """כל רכב בקובץ הדמו חייב להחזיר חלפים.
+def test_every_sample_plate_finds_parts(app):
+    """כל רכב בקובץ רכבי הדוגמה חייב להחזיר חלפים.
 
     מספרי הרישוי האלה הם מה שמישהו מקליד כשהוא מנסה את המערכת. רכב
     שמזוהה ואז מחזיר מסך ריק גרוע מרכב שלא מזוהה - נראה כאילו הכל
