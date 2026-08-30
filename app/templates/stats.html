@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}רכבים על הכביש{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">רכבים פעילים בישראל, לפי דגם</h1>
+<p class="text-muted small">
+  {% if totals.models %}
+    {{ "{:,}".format(totals.vehicles) }} רכבים פעילים ·
+    {{ "{:,}".format(totals.models) }} דגמים ·
+    נכון ל-{{ totals.taken_at | localtime("%d/%m/%Y") }} ·
+    מקור: מרשם כלי הרכב של משרד התחבורה (data.gov.il)
+  {% else %}
+    מרשם כלי הרכב של משרד התחבורה (data.gov.il)
+  {% endif %}
+</p>
+
+{% if not totals.models %}
+<div class="alert alert-secondary">
+  <p class="mb-2">הפילוח עוד לא נטען. הוא נמשך פעם אחת ונשמר, כי הספירה היא על
+    כשלושה מיליון רשומות אצל המאגר:</p>
+  <pre class="mb-2 bg-light p-2 rounded command" dir="ltr"><code>python scripts/vehicle_stats.py --load</code></pre>
+  <p class="mb-2 small text-muted">אם נקודת ה-SQL של המאגר סגורה, אותה ספירה בדפדוף:</p>
+  <pre class="mb-0 bg-light p-2 rounded command small" dir="ltr"><code>python scripts/vehicle_stats.py --scan --load</code></pre>
+</div>
+{% else %}
+
+<form class="card mb-3" method="get"><div class="card-body row g-2">
+  <div class="col-md-5">
+    <input class="form-control" name="q" value="{{ selected.q or '' }}"
+           placeholder="דגם, יצרן או קוד דגם">
+  </div>
+  <div class="col-md-4">
+    <select class="form-select" name="make">
+      <option value="">כל היצרנים</option>
+      {% for mk in makes %}
+      <option value="{{ mk }}" {% if selected.make == mk %}selected{% endif %}>{{ mk }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3 d-grid d-md-flex gap-2">
+    <button class="btn btn-primary flex-fill">חפש</button>
+    <a class="btn btn-outline-secondary"
+       href="{{ url_for('web.stats_csv', q=selected.q, make=selected.make) }}">CSV</a>
+  </div>
+</div></form>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>{{ "{:,}".format(pagination.total) }} דגמים</span>
+    <span class="text-muted small">
+      {{ "{:,}".format(filtered_vehicles) }} רכבים
+      {%- if totals.vehicles %} · {{ "%.1f" | format(filtered_vehicles * 100.0 / totals.vehicles) }}% מהצי{% endif %}
+    </span>
+  </div>
+  <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <thead class="table-light"><tr>
+      <th class="text-center">#</th><th>יצרן</th><th>דגם</th><th>קוד דגם</th>
+      <th>שנות ייצור</th><th class="text-end">רכבים</th><th>נתח מהצי</th>
+    </tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td class="text-center text-muted">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+      <td>{{ row.make }}</td>
+      <td class="fw-bold">
+        {# הדגם הוא הכניסה לחיפוש החלפים - זה מה שעושים עם המספר הזה #}
+        <a href="{{ url_for('web.vehicles', make=row.search_make, model=row.model) }}">{{ row.model }}</a>
+      </td>
+      <td class="font-monospace small text-muted">{{ row.model_code or '—' }}</td>
+      <td class="small">{{ row.years or '—' }}</td>
+      <td class="text-end fw-bold">{{ "{:,}".format(row.vehicles) }}</td>
+      <td style="min-width: 8rem">
+        {% set share = row.share(totals.vehicles) %}
+        <div class="progress" style="height: .5rem" role="img"
+             aria-label="{{ "%.2f" | format(share) }}% מכלל הרכבים">
+          {# הנתח של דגם בודד הוא שברירי אחוז; בלי רצפה הפס פשוט לא נראה #}
+          <div class="progress-bar bg-info" style="width: {{ "%.2f" | format(share if share > 1.5 else 1.5) }}%"></div>
+        </div>
+        <span class="small text-muted">{{ "%.2f" | format(share) }}%</span>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="text-center text-muted py-4">לא נמצאו דגמים מתאימים.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  {% for page_num in pagination.iter_pages() %}
+    {% if page_num %}
+      <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('web.stats', **dict(request.args, page=page_num)) }}">{{ page_num }}</a></li>
+    {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+  {% endfor %}
+</ul></nav>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -26,3 +26,26 @@ body { background: #f5f7f9; }
 .table > :not(caption) > * > * { padding: .6rem .75rem; }
 
 footer a { color: var(--brand); }
+
+/* טבלה ללא גלישת שורה: כל שורה נשארת בשורה אחת וגוללת אופקית
+   בתוך table-responsive, במקום להתפצל להרבה שורות בטלפון. */
+.table-nowrap > :not(caption) > * > * { white-space: nowrap; }
+
+/* עמודות טקסט חופשי לא ימתחו את הטבלה בלי סוף - הן נחתכות
+   בשלוש נקודות, והטקסט המלא נשאר ב-title ובדף המק"ט. */
+.table-nowrap .cell-truncate {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-nowrap .cell-truncate.cell-wide { max-width: 32ch; }
+
+/* פקודת הרצה בתוך דף בעברית: היא אנגלית מתחילתה ועד סופה, ולכן היא
+   מסומנת dir="ltr" ונקראת משמאל לימין. בטלפון היא ארוכה מרוחב המסך,
+   ו-pre רגיל היה חותך אותה בקצה - הגלילה האופקית שם קיימת אבל אף אחד
+   לא מנחש שהיא שם. לכן היא נשברת בין מילים ומוצגת במלואה. */
+.command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

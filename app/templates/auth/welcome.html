@@ -15,31 +15,15 @@
 </head>
 <body class="welcome">
 
+{# מסך בלי מילים: המכונית לבדה, ממלאת אותו. ההתחברות והרישום
+   ממתינים בסרגל הניווט מעבר לדלת. #}
 <div class="stage">
-  <header class="welcome-header">
-    <p class="welcome-brand">🔧 קטלוג מק"טים לחלקי רכב</p>
-    <p class="welcome-tagline">מספר רישוי וחלק &mdash; ומק"ט אחד מדויק בחזרה</p>
-  </header>
+  <canvas id="car-canvas" aria-hidden="true"></canvas>
 
-  <div class="car-stage">
-    <canvas id="car-canvas" aria-hidden="true"></canvas>
-
-    {# הכניסה היא קישור אמיתי: עובד ב-Tab, בקורא מסך, ובלי JavaScript #}
-    <a class="car-hit" id="enter-app" href="{{ enter_url }}">
-      <span class="visually-hidden">כניסה לאפליקציה</span>
-    </a>
-  </div>
-
-  <footer class="welcome-footer">
-    {% if current_user.is_authenticated %}
-      <span class="welcome-user">{{ current_user.organization.name }}</span>
-      <a href="{{ enter_url }}">כניסה לאפליקציה</a>
-      <a href="{{ url_for('auth.account') }}">החשבון שלי</a>
-    {% else %}
-      <a href="{{ url_for('auth.login') }}">התחברות</a>
-      <a href="{{ url_for('auth.signup') }}">רישום ארגון חדש</a>
-    {% endif %}
-  </footer>
+  {# הכניסה היא קישור אמיתי: עובד ב-Tab, בקורא מסך, ובלי JavaScript #}
+  <a class="car-hit" id="enter-app" href="{{ enter_url }}">
+    <span class="visually-hidden">כניסה לאפליקציה</span>
+  </a>
 </div>
 
 <script src="{{ url_for('static', filename='js/car3d.js') }}"></script>

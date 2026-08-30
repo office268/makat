@@ -30,8 +30,6 @@ body.welcome.is-leaving { opacity: 0; }
 .stage {
   position: fixed;
   inset: 0;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
   isolation: isolate;
 }
 
@@ -56,31 +54,6 @@ body.welcome.is-leaving { opacity: 0; }
   background-size: 64px 64px;
   mask-image: radial-gradient(ellipse 70% 55% at 50% 62%, #000 0%, transparent 75%);
   -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 62%, #000 0%, transparent 75%);
-}
-
-/* כותרת */
-.welcome-header {
-  padding: clamp(1rem, 4vh, 2.5rem) clamp(1rem, 5vw, 3rem) 0;
-  text-align: center;
-}
-
-.welcome-brand {
-  font-size: clamp(1.15rem, 2.6vw, 1.6rem);
-  font-weight: 700;
-  letter-spacing: .01em;
-  margin: 0;
-}
-
-.welcome-tagline {
-  margin: .4rem 0 0;
-  font-size: clamp(.82rem, 1.6vw, .98rem);
-  color: rgba(219, 234, 254, .62);
-}
-
-/* הבמה של המכונית */
-.car-stage {
-  position: relative;
-  min-height: 0;
 }
 
 #car-canvas {
@@ -119,34 +92,6 @@ body.welcome.is-leaving { opacity: 0; }
   clip: rect(0 0 0 0);
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-/* קישורי המשנה */
-.welcome-footer {
-  padding: 0 clamp(1rem, 5vw, 3rem) clamp(1rem, 4vh, 2.2rem);
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: .4rem 1.4rem;
-  font-size: .9rem;
-}
-
-.welcome-footer a {
-  color: rgba(219, 234, 254, .78);
-  text-decoration: none;
-  border-bottom: 1px solid rgba(56, 189, 248, .35);
-  padding-bottom: 2px;
-}
-
-.welcome-footer a:hover,
-.welcome-footer a:focus-visible {
-  color: #fff;
-  border-bottom-color: var(--enter-glow);
-}
-
-.welcome-user {
-  color: rgba(219, 234, 254, .55);
 }
 
 @media (max-width: 560px) {
