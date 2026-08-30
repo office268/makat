@@ -56,10 +56,23 @@ def discovery_available():
     )
 
 
+def fitment_make(make):
+    """שם היצרן כפי שהתאמה חייבת לשמור אותו.
+
+    החיפוש לפי מספר רישוי משווה מול המילה הראשונה של שם היצרן במאגר
+    משרד התחבורה ("פיג'ו צרפת" -> "פיג'ו"). שמירת השם המלא יוצרת מק"ט
+    שנמצא בקטלוג אבל לא נמצא לעולם בחיפוש - כשל שקט.
+    """
+    parts = (make or "").strip().split()
+    return parts[0] if parts else ""
+
+
 def marque_of(make):
     """שם היצרן בלועזית, מהעברית או כמו שהוא."""
     key = (make or "").strip()
-    return HEBREW_TO_MARQUE.get(key, key.lower())
+    return HEBREW_TO_MARQUE.get(key) or HEBREW_TO_MARQUE.get(
+        fitment_make(key), fitment_make(key).lower()
+    )
 
 
 def build_prompt(make, model, part_type):
@@ -337,12 +350,15 @@ def save(accepted):
         part.notes = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
 
         # התאמה חדשה מתווספת; קיימת לא משוכפלת
+        wanted_make = fitment_make(row["make"])
         exists = any(
-            (f.make or "") == row["make"] and (f.model or "") == row["model"]
+            (f.make or "") == wanted_make and (f.model or "") == row["model"]
             for f in part.fitments
         )
         if not exists:
-            part.fitments.append(Fitment(make=row["make"], model=row["model"]))
+            part.fitments.append(
+                Fitment(make=fitment_make(row["make"]), model=row["model"])
+            )
         if row.get("oe_number") and not any(
             r.ref_number == row["oe_number"] for r in part.cross_refs
         ):
