@@ -3,10 +3,13 @@
 מה שנמצא כאן משפיע על כל הלקוחות במערכת ולא על מוסך בודד, ולכן הכל
 מוגן ב-superadmin_required ולא בתפקידים שבתוך הארגון.
 """
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 
+from .. import parts_discovery
 from ..auth import superadmin_required
+from ..models import Part
+from ..taxonomy import all_types
 from ..vehicle_catalog import VehicleModel, active_job, latest_job
 from ..vehicle_import import cancel_job, run_chunk, start_job
 
@@ -56,3 +59,71 @@ def vehicle_import_step():
 @superadmin_required
 def vehicle_import_cancel():
     return jsonify(_payload(cancel_job(active_job())))
+
+
+# ---------------------------------------------------------------------------
+# גילוי מק"טים מהאינטרנט
+# ---------------------------------------------------------------------------
+
+
+def _discovery_payload(job):
+    return {
+        "job": job.to_dict() if job else None,
+        "catalog_size": Part.query.count(),
+    }
+
+
+@admin_bp.get("/discovery")
+@superadmin_required
+def discovery():
+    return render_template(
+        "admin/discovery.html",
+        job=parts_discovery.latest_job(),
+        part_types=all_types(),
+        available=parts_discovery.discovery_available(),
+        catalog_size=Part.query.count(),
+    )
+
+
+@admin_bp.get("/discovery/status")
+@superadmin_required
+def discovery_status():
+    return jsonify(_discovery_payload(parts_discovery.latest_job()))
+
+
+@admin_bp.post("/discovery/start")
+@superadmin_required
+def discovery_start():
+    """מטרה לכל צירוף של דגם וסוג חלק שנבחרו."""
+    if not parts_discovery.discovery_available():
+        return jsonify({"error": "לא הוגדר ANTHROPIC_API_KEY בשרת."}), 400
+
+    make = (request.form.get("make") or "").strip()
+    model = (request.form.get("model") or "").strip()
+    types = [t for t in request.form.getlist("part_type") if t]
+    if not make or not model:
+        return jsonify({"error": "יש להזין יצרן ודגם."}), 400
+    if not types:
+        return jsonify({"error": "יש לבחור לפחות סוג חלק אחד."}), 400
+
+    targets = [[make, model, part_type] for part_type in types]
+    job = parts_discovery.start_job(targets, user_id=current_user.id)
+    return jsonify(_discovery_payload(job))
+
+
+@admin_bp.post("/discovery/step")
+@superadmin_required
+def discovery_step():
+    job = parts_discovery.active_job()
+    if job is None:
+        return jsonify({"error": "אין חיפוש פעיל.",
+                        **_discovery_payload(parts_discovery.latest_job())}), 409
+    return jsonify(_discovery_payload(parts_discovery.run_step(job)))
+
+
+@admin_bp.post("/discovery/cancel")
+@superadmin_required
+def discovery_cancel():
+    return jsonify(
+        _discovery_payload(parts_discovery.cancel_job(parts_discovery.active_job()))
+    )

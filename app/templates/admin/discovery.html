@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}גילוי מק"טים{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">גילוי מק"טים מהאינטרנט</h1>
+<p class="text-muted small mb-3">
+  Claude מחפש ברשת, קורא את העמודים ומחזיר מק"טים מובנים. התוצאות
+  נכנסות לקטלוג ישירות, ולכן כל מועמד עובר אימות — ומה שנפסל מופיע ביומן.
+</p>
+
+{% if not available %}
+<div class="alert alert-warning">
+  <strong>לא הוגדר <code>ANTHROPIC_API_KEY</code> בשרת.</strong>
+  <div class="small mt-1">בלעדיו החיפוש לא ירוץ. אותו מפתח מפעיל גם זיהוי חלק מתמונה.</div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <form class="card" id="discovery-form">
+      {{ csrf_field() }}
+      <div class="card-body">
+        <label class="form-label fw-bold">יצרן הרכב</label>
+        <input class="form-control mb-3" name="make" list="known-makes"
+               placeholder="טויוטה" required>
+        <datalist id="known-makes">
+          {% for mk in known_makes %}<option value="{{ mk }}">{% endfor %}
+        </datalist>
+
+        <label class="form-label fw-bold">דגם</label>
+        <input class="form-control mb-3" name="model" placeholder="COROLLA" required>
+
+        <label class="form-label fw-bold">סוגי חלקים</label>
+        <div class="row row-cols-2 g-1 mb-3" style="max-height: 260px; overflow-y: auto">
+          {% for pt in part_types %}
+          <div class="col"><div class="form-check">
+            <input class="form-check-input" type="checkbox" name="part_type"
+                   value="{{ pt.key }}" id="pt-{{ pt.key }}">
+            <label class="form-check-label small" for="pt-{{ pt.key }}">{{ pt.name_he }}</label>
+          </div></div>
+          {% endfor %}
+        </div>
+
+        <div class="d-grid">
+          <button class="btn btn-primary btn-lg" id="btn-run" {% if not available %}disabled{% endif %}>
+            התחל חיפוש
+          </button>
+        </div>
+        <p class="form-text mb-0">
+          חיפוש נפרד לכל סוג חלק שנבחר. כל אחד הוא קריאה ל-Claude שעולה כסף.
+        </p>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">התקדמות</span>
+        <span class="badge bg-secondary" id="job-status">
+          {{ job.status_label if job else "לא הופעל" }}
+        </span>
+      </div>
+      <div class="progress mb-2" style="height: 1.4rem">
+        <div class="progress-bar" id="progress-bar" role="progressbar"
+             style="width: {{ job.progress_pct if job else 0 }}%">
+          {{ job.progress_pct if job else 0 }}%
+        </div>
+      </div>
+      <p class="small text-muted mb-2" id="job-counters">
+        {% if job %}{{ job.cursor }}/{{ job.total }} · נוספו {{ job.created }} ·
+        עודכנו {{ job.updated }} · נפסלו {{ job.rejected }}{% else %}—{% endif %}
+      </p>
+      <div class="alert alert-warning small d-none" id="job-error"></div>
+      <button class="btn btn-sm btn-outline-secondary d-none" id="btn-stop">עצור</button>
+
+      <hr>
+      <div class="d-flex justify-content-between">
+        <span class="small fw-bold">יומן</span>
+        <span class="small text-muted">בקטלוג <span id="catalog-size">{{ catalog_size }}</span> מק"טים</span>
+      </div>
+      <pre class="small mt-2 mb-0" id="job-log" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap"
+        >{% if job %}{{ job.log }}{% else %}—{% endif %}</pre>
+    </div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const form = document.getElementById("discovery-form");
+  const bar = document.getElementById("progress-bar");
+  const status = document.getElementById("job-status");
+  const counters = document.getElementById("job-counters");
+  const errorBox = document.getElementById("job-error");
+  const logBox = document.getElementById("job-log");
+  const sizeBox = document.getElementById("catalog-size");
+  const runBtn = document.getElementById("btn-run");
+  const stopBtn = document.getElementById("btn-stop");
+  const token = document.querySelector('meta[name="csrf-token"]');
+  const URLS = {start: "{{ url_for('admin.discovery_start') }}",
+                step: "{{ url_for('admin.discovery_step') }}",
+                cancel: "{{ url_for('admin.discovery_cancel') }}"};
+  let stopRequested = false;
+
+  async function post(url, body) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers, body: body});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  function render(data) {
+    sizeBox.textContent = data.catalog_size;
+    const job = data.job;
+    if (!job) return;
+    bar.style.width = job.progress_pct + "%";
+    bar.textContent = job.progress_pct + "%";
+    status.textContent = job.status_label;
+    status.className = "badge " + (job.status === "done" ? "bg-success"
+      : job.status === "running" ? "bg-primary" : "bg-secondary");
+    counters.textContent = `${job.cursor}/${job.total} · נוספו ${job.created}` +
+      ` · עודכנו ${job.updated} · נפסלו ${job.rejected}`;
+    errorBox.classList.toggle("d-none", !job.error);
+    if (job.error) errorBox.textContent = job.error;
+    if (job.log && job.log.length) logBox.textContent = job.log.join("\n");
+  }
+
+  function busy(on) {
+    runBtn.disabled = on;
+    runBtn.textContent = on ? "מחפש..." : "התחל חיפוש";
+    stopBtn.classList.toggle("d-none", !on);
+  }
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    stopRequested = false;
+    busy(true);
+    errorBox.classList.add("d-none");
+    try {
+      render(await post(URLS.start, new FormData(form)));
+      let last = -1;
+      while (!stopRequested) {
+        const data = await post(URLS.step);
+        render(data);
+        if (!data.job || !data.job.is_running) break;
+        // רשת ביטחון: מטרה שלא התקדמה לא תיתקע בלולאה
+        if (data.job.cursor === last) throw new Error("החיפוש לא מתקדם.");
+        last = data.job.cursor;
+      }
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      busy(false);
+    }
+  });
+
+  stopBtn.addEventListener("click", async function () {
+    stopRequested = true;
+    try { render(await post(URLS.cancel)); } catch (e) { /* העצירה כבר בתוקף */ }
+  });
+})();
+</script>
+{% endblock %}
