@@ -6,11 +6,6 @@ body { background: #f5f7f9; }
 
 .stat-card { border-top-width: 3px; }
 
-.demo-hero {
-  border-inline-start: 4px solid var(--brand);
-  padding-inline-start: 14px;
-}
-
 /* שדה מספר רישוי - במראה של לוחית ישראלית */
 .plate-input {
   font-family: "Courier New", monospace;

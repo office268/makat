@@ -126,8 +126,8 @@ def test_save_and_add_another_returns_to_the_form(auth_client):
 def test_home_is_the_identify_flow(client):
     """השורש הוא זיהוי לפי מספר רישוי, לא לוח מחוונים."""
     html = client.get("/").get_data(as_text=True)
-    assert "זיהוי מק\"ט לפי רכב וחלק" in html
     assert "מספר רישוי" in html
+    assert 'name="plate"' in html
 
 
 def test_legacy_urls_redirect_home(client):
@@ -144,15 +144,11 @@ def test_dashboard_moved_and_still_works(client):
     assert "יצרני חלקים" in html      # אחד הכרטיסים בלוח
 
 
-def test_empty_catalog_explains_itself_on_home(app, client):
-    """קטלוג ריק צריך להסביר מה חסר, לא להחזיר מסך שקט."""
+def test_home_stays_usable_with_an_empty_catalog(app, client):
+    """מסך הזיהוי עומד בפני עצמו - הטופס נשאר שם גם בלי קטלוג."""
     from scripts.clear_catalog import clear_catalog
 
     clear_catalog(app)
     html = client.get("/").get_data(as_text=True)
-    assert "הקטלוג ריק" in html
-    assert "התאמות לרכב" in html      # מסביר מה מפעיל את החיפוש
-
-
-def test_full_catalog_hides_the_empty_notice(client):
-    assert "הקטלוג ריק" not in client.get("/").get_data(as_text=True)
+    assert client.get("/").status_code == 200
+    assert 'name="plate"' in html
