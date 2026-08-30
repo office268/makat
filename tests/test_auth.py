@@ -217,6 +217,26 @@ def test_quiet_requests_do_not_count_as_activity(visitor):
     assert response.headers["Location"].endswith("/welcome")
 
 
+def test_the_door_is_never_cached_by_the_browser(client, visitor):
+    """בלי זה הדפדפן מגיש את השורש מהמטמון והשער לא רץ בכלל."""
+    assert visitor.get("/").headers["Cache-Control"] == "no-store"
+    assert client.get("/").headers["Cache-Control"] == "no-store"
+
+
+def test_the_door_tells_the_page_when_to_come_back(client):
+    """הדף מקבל את הסף, כי יש חזרה לאפליקציה שלא מייצרת בקשה כלל."""
+    html = client.get("/").get_data(as_text=True)
+    assert f'data-splash-idle="{auth.SPLASH_IDLE_SECONDS}"' in html
+    assert 'data-splash-url="/welcome"' in html
+
+
+def test_a_screen_with_results_is_not_sent_back(client):
+    """מסך עם תוצאות לא יקפוץ למסך פתיחה - המשתמש היה מאבד אותן."""
+    html = client.post("/", data={"plate": "12345678", "query": "רפידות"}
+                       ).get_data(as_text=True)
+    assert "data-splash-idle" not in html
+
+
 def test_the_welcome_screen_itself_is_not_activity(visitor):
     """טעינת מסך הפתיחה בלי ללחוץ לא מבריחה אותו."""
     visitor.get("/welcome")

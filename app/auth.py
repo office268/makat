@@ -263,6 +263,31 @@ def splash_gate():
     return None
 
 
+@auth_bp.after_app_request
+def no_store_at_the_door(response):
+    """דלת הכניסה לא נשמרת במטמון הדפדפן.
+
+    בלעדי זה הדפדפן מגיש את השורש מהמטמון שלו בלי לשאול את השרת,
+    והשער - שרץ רק כשמגיעה בקשה - לא מקבל הזדמנות לפעול.
+    """
+    if _opens_the_app(request):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@auth_bp.app_context_processor
+def splash_settings():
+    """הסף והיעד, כדי שהדף יכיר אותם בדיוק כמו השרת.
+
+    הדף זקוק להם כי יש חזרה לאפליקציה שלא מייצרת בקשה כלל: דפדפן
+    שמשחזר את הדף מהזיכרון. ראה static/js/app.js.
+    """
+    return {
+        "splash_idle_seconds": SPLASH_IDLE_SECONDS,
+        "splash_url": url_for("auth.welcome"),
+    }
+
+
 @auth_bp.get("/welcome")
 def welcome():
     """מסך הפתיחה: מכונית תלת-ממד מסתובבת שלחיצה עליה נכנסת לאפליקציה.
