@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}ספירת הרכבים בישראל{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">ספירת הרכבים הפעילים בישראל</h1>
+<p class="text-muted small mb-3">
+  מרשם כלי הרכב של משרד התחבורה, מ-data.gov.il. שורה לכל רכב פעיל, כשלושה
+  מיליון רשומות. הספירה עצמה נעשית בצד המאגר, והתוצאה מוצגת ב-<a href="{{ url_for('web.stats') }}">/stats</a>.
+</p>
+
+{% if config.READ_ONLY %}
+<div class="alert alert-warning small">
+  המערכת במצב קריאה בלבד (<code dir="ltr">READ_ONLY=1</code>), ולכן הספירה
+  לא תרוץ. יש להגדיר <code dir="ltr">READ_ONLY=0</code> בשירות כדי להפעיל אותה.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">מצב הספירה</span>
+        <span class="badge bg-secondary" id="job-status">
+          {{ job.status_label if job else "לא הופעל" }}
+        </span>
+      </div>
+
+      {# אין למאגר "סה"כ קבוצות", ולכן אין אחוז התקדמות אמיתי. פס נע
+         שאומר "עובד" עדיף על אחוז מומצא, והמונים מספרים את האמת. #}
+      <div class="progress mb-2 d-none" id="progress" style="height: 1.4rem">
+        <div class="progress-bar progress-bar-striped progress-bar-animated"
+             style="width: 100%">סופר...</div>
+      </div>
+
+      <p class="small text-muted mb-3" id="job-counters">
+        {% if job %}
+          נספרו {{ "{:,}".format(job.models) }} דגמים ·
+          {{ "{:,}".format(job.vehicles) }} רכבים
+        {% else %}עדיין לא הופעלה ספירה.{% endif %}
+      </p>
+
+      <div class="alert alert-warning small d-none" id="job-error"></div>
+
+      <p class="small text-success mb-2 {% if not (job and job.status == 'done') %}d-none{% endif %}"
+         id="done-note">
+        הספירה מעודכנת מול המאגר. "ספירה מחדש" סופרת הכל שוב, לקליטת
+        רכבים שנוספו או ירדו מהכביש מאז.
+      </p>
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" id="btn-run">
+          {{ job.action_label if job else "התחל ספירה" }}
+        </button>
+        <button class="btn btn-outline-secondary d-none" id="btn-stop">עצור</button>
+      </div>
+
+      <p class="small text-muted mt-3 mb-0">
+        הספירה רצה במנות. אפשר לעצור באמצע ולהמשיך מאוחר יותר מאותה נקודה —
+        גם אחרי סגירת הדפדפן או פריסה מחדש. הצילום הקודם ממשיך להיות מוצג
+        עד שהחדש שלם, ורק אז הוא מוחלף.
+      </p>
+    </div></div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <p class="mb-1">מוצג כרגע ב-/stats</p>
+      <p class="h3 mb-0"><span id="snapshot-vehicles">{{ "{:,}".format(snapshot.vehicles) }}</span>
+        <span class="h6 text-muted">רכבים</span></p>
+      <p class="small text-muted mb-0">
+        <span id="snapshot-models">{{ "{:,}".format(snapshot.models) }}</span> דגמים
+        {%- if snapshot.taken_at %} · נכון ל-{{ snapshot.taken_at | localtime("%d/%m/%Y %H:%M") }}{% endif %}
+      </p>
+    </div></div>
+    <div class="card mt-3"><div class="card-body small text-muted">
+      <p class="fw-bold text-body mb-1">למה זה חשוב</p>
+      <p class="mb-0">
+        הקטלוג יודע אילו דגמים קיימים, לא כמה מהם על הכביש. דגם עם 90 אלף
+        רכבים ודגם עם 300 נראים אותו דבר ברשימת הדגמים, והם לא אותו דבר
+        כשמחליטים איזה מק"ט להחזיק במלאי.
+      </p>
+    </div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const progress = document.getElementById("progress");
+  const status = document.getElementById("job-status");
+  const counters = document.getElementById("job-counters");
+  const errorBox = document.getElementById("job-error");
+  const runBtn = document.getElementById("btn-run");
+  const stopBtn = document.getElementById("btn-stop");
+  const doneNote = document.getElementById("done-note");
+  const snapVehicles = document.getElementById("snapshot-vehicles");
+  const snapModels = document.getElementById("snapshot-models");
+  const token = document.querySelector('meta[name="csrf-token"]');
+
+  const URLS = {
+    start: "{{ url_for('admin.fleet_stats_start') }}",
+    step: "{{ url_for('admin.fleet_stats_step') }}",
+    cancel: "{{ url_for('admin.fleet_stats_cancel') }}",
+  };
+  const LABELS = {running: "בתהליך", done: "הושלם", failed: "נכשל", cancelled: "בוטל"};
+  let stopRequested = false;
+  let actionLabel = runBtn.textContent.trim();
+
+  const num = (n) => (n || 0).toLocaleString("he-IL");
+
+  async function post(url) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  function render(data) {
+    if (data.snapshot) {
+      snapVehicles.textContent = num(data.snapshot.vehicles);
+      snapModels.textContent = num(data.snapshot.models);
+    }
+    const job = data.job;
+    if (!job) return;
+
+    status.textContent = job.status_label || LABELS[job.status] || job.status;
+    status.className = "badge " + (job.status === "done" ? "bg-success"
+      : job.status === "running" ? "bg-primary" : "bg-secondary");
+    progress.classList.toggle("d-none", job.status !== "running");
+
+    counters.textContent = "נספרו " + num(job.models) + " דגמים · "
+      + num(job.vehicles) + " רכבים";
+
+    errorBox.classList.toggle("d-none", !job.error);
+    if (job.error) errorBox.textContent = job.error;
+
+    actionLabel = job.action_label || actionLabel;
+    if (!runBtn.disabled) runBtn.textContent = actionLabel;
+    doneNote.classList.toggle("d-none", job.status !== "done");
+  }
+
+  function busy(on) {
+    runBtn.disabled = on;
+    runBtn.textContent = on ? "סופר..." : actionLabel;
+    stopBtn.classList.toggle("d-none", !on);
+  }
+
+  async function loop() {
+    // כל מנה היא בקשה נפרדת וקצרה - כך היא לא נתקלת ב-timeout של השרת,
+    // וההתקדמות נשמרת בבסיס הנתונים אחרי כל אחת מהן
+    let lastOffset = -1;
+    while (!stopRequested) {
+      const data = await post(URLS.step);
+      render(data);
+      if (!data.job || !data.job.is_running) return;
+
+      // רשת ביטחון: אם המנה לא הזיזה את נקודת ההמשך והשרת עדיין מדווח
+      // "בתהליך", עוצרים. בלי זה הלולאה מנסה שוב לנצח ומציפה את המאגר.
+      if (data.job.offset === lastOffset) {
+        throw new Error(data.job.error || "הספירה לא מתקדמת. אפשר לנסות שוב מאוחר יותר.");
+      }
+      lastOffset = data.job.offset;
+    }
+  }
+
+  runBtn.addEventListener("click", async () => {
+    stopRequested = false;
+    busy(true);
+    errorBox.classList.add("d-none");
+    try {
+      render(await post(URLS.start));
+      await loop();
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      busy(false);
+    }
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    stopRequested = true;
+    stopBtn.disabled = true;
+    try { render(await post(URLS.cancel)); } finally { stopBtn.disabled = false; }
+  });
+})();
+</script>
+{% endblock %}

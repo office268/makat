@@ -270,10 +270,14 @@ def stats():
     q = request.args.get("q", "").strip() or None
     make = request.args.get("make", "").strip() or None
     page = request.args.get("page", 1, type=int)
-    pagination = fleet_stats.search(q=q, make=make).paginate(
+    # הצילום החי נקבע פעם אחת ומועבר לכל השאילתות: אחרת ספירה שרצה
+    # ברקע הייתה יכולה להתפרסם באמצע הבקשה, והמסך היה מציג טבלה מצילום
+    # אחד וסכומים מצילום אחר
+    taken_at = fleet_stats.live_taken_at()
+    pagination = fleet_stats.search(q=q, make=make, taken_at=taken_at).paginate(
         page=page, per_page=current_app.config["PER_PAGE"], error_out=False
     )
-    totals = fleet_stats.summary()
+    totals = fleet_stats.summary(taken_at=taken_at)
     activity.note(
         summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
         results=pagination.total,
@@ -285,8 +289,8 @@ def stats():
         rows=pagination.items,
         totals=totals,
         # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
-        filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make),
-        makes=fleet_stats.makes(),
+        filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make, taken_at=taken_at),
+        makes=fleet_stats.makes(taken_at=taken_at),
         selected={"q": q, "make": make},
     )
 

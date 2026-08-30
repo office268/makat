@@ -82,6 +82,17 @@ class Config:
     VEHICLE_IMPORT_MAX_FAILURES = int(
         os.environ.get("VEHICLE_IMPORT_MAX_FAILURES", 3)
     )
+    # ספירת הצי (/admin/fleet-stats). כל "עמוד" כאן הוא GROUP BY של עשרת
+    # אלפים דגמים אצל המאגר - כבד ואיטי מעמוד רגיל, ולכן עמוד אחד למנה.
+    FLEET_STATS_PAGE_SIZE = int(os.environ.get("FLEET_STATS_PAGE_SIZE", 10000))
+    FLEET_STATS_PAGES_PER_CHUNK = int(
+        os.environ.get("FLEET_STATS_PAGES_PER_CHUNK", 1)
+    )
+    FLEET_STATS_TIME_BUDGET = float(os.environ.get("FLEET_STATS_TIME_BUDGET", 25))
+    FLEET_STATS_FETCH_ATTEMPTS = int(os.environ.get("FLEET_STATS_FETCH_ATTEMPTS", 3))
+    FLEET_STATS_RETRY_PAUSE = float(os.environ.get("FLEET_STATS_RETRY_PAUSE", 2))
+    FLEET_STATS_PAGE_PAUSE = float(os.environ.get("FLEET_STATS_PAGE_PAUSE", 0.3))
+    FLEET_STATS_MAX_FAILURES = int(os.environ.get("FLEET_STATS_MAX_FAILURES", 3))
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
@@ -135,6 +146,8 @@ class TestConfig(Config):
     SUPERADMIN_EMAILS = frozenset()
     VEHICLE_IMPORT_RETRY_PAUSE = 0  # בלי המתנות אמיתיות בבדיקות
     VEHICLE_IMPORT_PAGE_PAUSE = 0
+    FLEET_STATS_RETRY_PAUSE = 0
+    FLEET_STATS_PAGE_PAUSE = 0
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
     READ_ONLY = False
