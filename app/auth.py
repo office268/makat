@@ -1,5 +1,6 @@
 """התחברות, הרשמה והרשאות."""
 import re
+import time
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -80,8 +81,18 @@ def superadmin_required(view):
     return wrapped
 
 
-# הדגל שאומר שכבר עברנו את מסך הפתיחה בסשן הזה
-ENTERED = "entered"
+# חותמת הפעילות האחרונה בסשן. מכאן נגזר מה נחשב "פתיחה של האפליקציה":
+# חזרה אחרי הפסקה מקבלת שוב את מסך הפתיחה, עבודה רצופה לא.
+LAST_SEEN = "seen_at"
+SPLASH_IDLE_SECONDS = 15 * 60
+
+# כותבים את החותמת לכל היותר פעם בדקה - אחרת כל לחיצה גוררת עוגייה חדשה
+STAMP_INTERVAL_SECONDS = 60
+
+# בקשות שאינן "המשתמש עובד": נכסים, בדיקת בריאות, קבצי ה-PWA וה-API
+# (שעובד עם מפתחות ולא עם קוקיז). אלה לא מאריכים את חיי הסשן.
+QUIET_PREFIXES = ("/static/", "/api/")
+QUIET_PATHS = ("/healthz", "/sw.js", "/manifest.webmanifest", "/offline")
 
 
 def safe_target(target):
@@ -160,7 +171,6 @@ def signup():
             db.session.commit()
 
             login_user(user)
-            session[ENTERED] = True
             activity.note(
                 action="auth.signup",
                 summary=f"{organization.name} ({user.email})",
@@ -195,7 +205,6 @@ def login():
             flash("החשבון או הארגון מושבתים. פנה למנהל המערכת.", "warning")
         else:
             login_user(user, remember=request.form.get("remember") == "1")
-            session[ENTERED] = True
             activity.note(
                 action="auth.login",
                 summary=f"{user.email} ({user.role_label})",
@@ -210,23 +219,48 @@ def login():
     return render_template("auth/login.html", form=request.form)
 
 
+def _is_quiet(path):
+    """בקשה שאינה מעידה על משתמש שעובד."""
+    return path.startswith(QUIET_PREFIXES) or path in QUIET_PATHS
+
+
+def _opens_the_app(req):
+    """ה-GET הנקי של השורש - הדרך שבה פותחים את האפליקציה.
+
+    קישור עם מספר רישוי הוא תוצאה ששיתפו ו-POST הוא חיפוש; שניהם
+    חייבים להגיע ליעד כמו שהם ולא להתאדות לטובת מסך פתיחה.
+    """
+    return req.method == "GET" and req.path == "/" and not req.query_string
+
+
 @auth_bp.before_app_request
 def splash_gate():
     """מי שפותח את האפליקציה מקבל קודם את מסך הפתיחה.
 
-    נחסם רק ה-GET הנקי של השורש. קישור עם מספר רישוי הוא תוצאה
-    ששיתפו ו-POST הוא חיפוש - שניהם חייבים להגיע ליעד כמו שהם, ולא
-    להתאדות לטובת מסך פתיחה. שאר המסכים נגישים ישירות: קישור עמוק
-    שנשלח לעובד צריך להיפתח במקום שאליו הוא מצביע.
+    "פתיחה" נמדדת בזמן ולא בביקור: כל בקשה מחדשת את חותמת הפעילות,
+    ורבע שעה בלי אף בקשה אומרת שהמשתמש הלך. החזרה שאחריה היא פתיחה
+    חדשה, והמכונית מקבלת את פניו שוב. מכאן ששוטטות רצופה בין המסכים
+    לא מנדנדת, ופתיחה של האפליקציה בבוקר כן מראה אותה.
 
-    הדגל יושב בסשן ולא בבסיס הנתונים: המכונית מקבלת את פניך פעם אחת
-    בכל פתיחה של הדפדפן, ולא שוב בכל מעבר בין מסכים.
+    נחסם רק השורש. שאר המסכים נגישים ישירות: קישור עמוק שנשלח לעובד
+    צריך להיפתח במקום שאליו הוא מצביע, ולא לזרוק אותו למסך פתיחה.
+
+    החותמת יושבת בסשן ולא בבסיס הנתונים - זו העדפת תצוגה של דפדפן
+    אחד, לא נתון על המשתמש.
     """
-    if request.method != "GET" or request.path != "/" or request.query_string:
+    if _is_quiet(request.path) or request.path == url_for("auth.welcome"):
         return None
-    if session.get(ENTERED):
-        return None
-    return redirect(url_for("auth.welcome"))
+
+    now = int(time.time())
+    seen = session.get(LAST_SEEN)
+    active = seen is not None and now - seen < SPLASH_IDLE_SECONDS
+
+    if not active and _opens_the_app(request):
+        return redirect(url_for("auth.welcome"))
+
+    if seen is None or now - seen > STAMP_INTERVAL_SECONDS:
+        session[LAST_SEEN] = now
+    return None
 
 
 @auth_bp.get("/welcome")
@@ -245,7 +279,7 @@ def welcome():
 @auth_bp.get("/enter")
 def enter():
     """הלחיצה על המכונית: מסמנת שנכנסנו, וממשיכה לאפליקציה."""
-    session[ENTERED] = True
+    session[LAST_SEEN] = int(time.time())
     return redirect(safe_target(request.args.get("next")))
 
 
