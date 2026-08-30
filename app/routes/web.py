@@ -11,7 +11,7 @@ from flask import (
     url_for,
 )
 
-from .. import activity, services
+from .. import activity, fleet_stats, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 from ..taxonomy import all_types
@@ -256,6 +256,52 @@ def vehicles():
         results=results,
         models=services.vehicle_models(make),
         selected={"make": make, "model": model, "year": year},
+    )
+
+
+@web_bp.route("/stats")
+def stats():
+    """כמה רכבים מכל דגם פעילים בישראל, לפי מרשם משרד התחבורה.
+
+    הטבלה נטענת מראש (scripts/vehicle_stats.py) ולא נמשכת בזמן הבקשה:
+    הספירה היא על שלושה מיליון רשומות אצל המאגר, וזה לא משהו שמחכים לו
+    בתוך בקשת דפדפן.
+    """
+    q = request.args.get("q", "").strip() or None
+    make = request.args.get("make", "").strip() or None
+    page = request.args.get("page", 1, type=int)
+    pagination = fleet_stats.search(q=q, make=make).paginate(
+        page=page, per_page=current_app.config["PER_PAGE"], error_out=False
+    )
+    totals = fleet_stats.summary()
+    activity.note(
+        summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
+        results=pagination.total,
+        page=page,
+    )
+    return render_template(
+        "stats.html",
+        pagination=pagination,
+        rows=pagination.items,
+        totals=totals,
+        # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
+        filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make),
+        makes=fleet_stats.makes(),
+        selected={"q": q, "make": make},
+    )
+
+
+@web_bp.route("/stats.csv")
+def stats_csv():
+    """ייצוא הפילוח שעל המסך, באותו סינון."""
+    q = request.args.get("q", "").strip() or None
+    make = request.args.get("make", "").strip() or None
+    rows = [row.to_dict() for row in fleet_stats.search(q=q, make=make).all()]
+    activity.note(summary=f"ייצוא צי הרכב · {len(rows)} דגמים", rows=len(rows))
+    return Response(
+        fleet_stats.to_csv(rows),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=fleet_by_model.csv"},
     )
 
 
