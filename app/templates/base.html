@@ -16,7 +16,10 @@
   <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
   {% if config.CSRF_ENABLED %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
 </head>
-<body>
+{# מסך פנימי או מסך עם תוצאות חיפוש לא חוזר למסך הפתיחה - המשתמש
+   לא אמור לאבד את מה שכבר על המסך. ראה static/js/app.js #}
+<body{% if not searched|default(false) %} data-splash-idle="{{ splash_idle_seconds }}"
+      data-splash-url="{{ splash_url }}"{% endif %}>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark-blue">
   <div class="container-fluid">
     <a class="navbar-brand fw-bold" href="{{ url_for('identify.index') }}">🔧 קטלוג מק"טים</a>
