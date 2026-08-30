@@ -74,9 +74,11 @@ def shared_app():
 @pytest.fixture
 def client(app):
     """לקוח שכבר עבר את מסך הפתיחה - מצבו של כל מי שנמצא בתוך האפליקציה."""
+    import time
+
     test_client = app.test_client()
     with test_client.session_transaction() as flask_session:
-        flask_session["entered"] = True
+        flask_session["seen_at"] = int(time.time())
     return test_client
 
 
