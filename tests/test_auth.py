@@ -1,8 +1,15 @@
 """ארגונים, משתמשים והרשאות."""
 import pytest
 
+from app import auth
 from app.auth_models import Organization, User
 from app.models import db
+
+
+def _age_session(client, seconds):
+    """מזקין את חותמת הפעילות, במקום להמתין בפועל."""
+    with client.session_transaction() as flask_session:
+        flask_session[auth.LAST_SEEN] -= seconds
 
 
 @pytest.fixture
@@ -180,6 +187,42 @@ def test_clicking_the_car_opens_the_app_and_does_not_ask_again(visitor):
     assert enter.headers["Location"] == "/"
     # מכאן והלאה נכנסים ישר לאפליקציה, בלי לעבור שוב במסך הפתיחה
     assert visitor.get("/").status_code == 200
+
+
+def test_browsing_keeps_the_splash_away(visitor):
+    """שוטטות בין המסכים היא פעילות - היא לא מחזירה את מסך הפתיחה."""
+    visitor.get("/enter?next=/")
+    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS - 30)
+    visitor.get("/parts")
+    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS - 30)
+    assert visitor.get("/").status_code == 200
+
+
+def test_the_car_returns_after_a_break(visitor):
+    """רבע שעה בלי פעילות אומרת שהמשתמש הלך; החזרה היא פתיחה חדשה."""
+    visitor.get("/enter?next=/")
+    assert visitor.get("/").status_code == 200
+
+    _age_session(visitor, seconds=auth.SPLASH_IDLE_SECONDS + 60)
+    response = visitor.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
+
+
+def test_quiet_requests_do_not_count_as_activity(visitor):
+    """בדיקת בריאות אינה משתמש שעובד, ואסור לה להסתיר את מסך הפתיחה."""
+    visitor.get("/healthz")
+    response = visitor.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
+
+
+def test_the_welcome_screen_itself_is_not_activity(visitor):
+    """טעינת מסך הפתיחה בלי ללחוץ לא מבריחה אותו."""
+    visitor.get("/welcome")
+    response = visitor.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
 
 
 def test_enter_ignores_external_targets(visitor):
