@@ -51,7 +51,7 @@
 
 <div class="card">
   <div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
+    <table class="table table-hover table-nowrap mb-0 align-middle">
       <thead class="table-light"><tr>
         <th>מק"ט</th><th>שם</th><th>יצרן</th><th>מתאים ל</th>
         <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th>
@@ -60,15 +60,16 @@
         {% for part in parts %}
         <tr>
           <td><a class="font-monospace fw-bold sku" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
-          <td>{{ part.name_he }}</td>
+          <td><div class="cell-truncate" title="{{ part.name_he }}">{{ part.name_he }}</div></td>
           <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
-          <td class="small text-muted">
-            {% for fit in part.fitments[:3] %}
-              {{ fit.make }} {{ fit.model }}{% if fit.year_from %} {{ fit.year_from }}–{{ fit.year_to or '' }}{% endif %}
-              {%- if not loop.last %} · {% endif %}
-            {% else %}—{% endfor %}
-            {% if part.fitments | length > 3 %} ועוד {{ part.fitments | length - 3 }}{% endif %}
-          </td>
+          {# התאמות הן הטקסט הארוך בשורה, ולכן הן נחתכות בשלוש נקודות ולא גולשות #}
+          {% set fit_labels = [] %}
+          {% for fit in part.fitments %}
+            {%- set _ = fit_labels.append(fit.make ~ ' ' ~ (fit.model or '') ~ (' ' ~ fit.year_from ~ '–' ~ (fit.year_to or '') if fit.year_from else '')) -%}
+          {% endfor %}
+          {% set fit_text = fit_labels[:3] | join(' · ') %}
+          {% if fit_labels | length > 3 %}{% set fit_text = fit_text ~ ' ועוד ' ~ (fit_labels | length - 3) %}{% endif %}
+          <td class="small text-muted"><div class="cell-truncate cell-wide" title="{{ fit_labels | join(' · ') }}">{{ fit_text or '—' }}</div></td>
           {% set op = part.for_org(org_id) %}
           <td class="text-end">{{ op.price_with_vat | ils if op else '—' }}</td>
           <td class="text-center">
