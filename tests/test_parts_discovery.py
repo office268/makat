@@ -184,6 +184,48 @@ def test_cancelled_job_stops_working(app):
 # ---- הרשאות ומסך ----
 
 
+# ---- שם היצרן שנשמר בהתאמה ----
+
+
+@pytest.mark.parametrize("selected, stored", [
+    ("פיג'ו צרפת", "פיג'ו"),
+    ("טויוטה יפן", "טויוטה"),
+    ("סקודה", "סקודה"),
+    ("  יונדאי קוריאה  ", "יונדאי"),
+])
+def test_fitment_make_is_the_first_word(selected, stored):
+    """החיפוש לפי רישוי משווה מול המילה הראשונה בלבד."""
+    assert pd.fitment_make(selected) == stored
+
+
+def test_saved_part_is_findable_by_plate_lookup(app):
+    """הכשל השקט: מק"ט בקטלוג שהחיפוש לפי רישוי לא מוצא.
+
+    הרשימה נטענת מקטלוג משרד התחבורה, ושם השם עשוי לכלול מדינה.
+    אם הוא נשמר כך, ההשוואה מול "פיג'ו" נכשלת והמק"ט אבוד.
+    """
+    from app import services
+
+    with app.app_context():
+        rows, _ = pd.validate([candidate(number="FIND-ME")],
+                              "פיג'ו צרפת", "5008", "oil_filter")
+        pd.save(rows)
+        vehicle = {"make": "פיג'ו צרפת", "model": "5008", "year": 2020}
+        found = services.parts_for_vehicle(vehicle, "oil_filter")
+        assert [p.part_number for p in found] == ["FIND-ME"]
+
+
+def test_marque_guard_still_works_with_a_country_suffix(app):
+    """אזכור טויוטה תקין גם כשנבחר 'טויוטה יפן'."""
+    with app.app_context():
+        ok, _ = pd.validate([candidate(oe_brand="Toyota")],
+                            "טויוטה יפן", "COROLLA", "oil_filter")
+        assert len(ok) == 1
+
+
+# ---- הרשאות ומסך ----
+
+
 def test_anonymous_is_sent_to_login(app):
     # לקוח נפרד: auth_client ב-conftest מחבר את אותו client עצמו
     assert app.test_client().get("/admin/discovery").status_code == 302
@@ -202,6 +244,10 @@ def test_start_without_a_key_says_so(app, client):
     client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
     html = client.get("/admin/discovery").get_data(as_text=True)
     assert "ANTHROPIC_API_KEY" in html
+    # רשימות בחירה, לא טקסט חופשי, ואפשרות לסמן הכל
+    assert '<select class="form-select mb-3" name="make"' in html
+    assert '<select class="form-select mb-3" name="model"' in html
+    assert 'id="select-all"' in html
     response = client.post("/admin/discovery/start",
                            data={"make": "טויוטה", "model": "COROLLA",
                                  "part_type": "oil_filter"})

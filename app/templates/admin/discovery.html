@@ -19,18 +19,27 @@
     <form class="card" id="discovery-form">
       {{ csrf_field() }}
       <div class="card-body">
-        <label class="form-label fw-bold">יצרן הרכב</label>
-        <input class="form-control mb-3" name="make" list="known-makes"
-               placeholder="טויוטה" required>
-        <datalist id="known-makes">
-          {% for mk in known_makes %}<option value="{{ mk }}">{% endfor %}
-        </datalist>
+        <label class="form-label fw-bold" for="make">יצרן הרכב</label>
+        <select class="form-select mb-3" name="make" id="make" required>
+          <option value="">— בחר יצרן —</option>
+          {% for mk in known_makes %}<option value="{{ mk }}">{{ mk }}</option>{% endfor %}
+        </select>
 
-        <label class="form-label fw-bold">דגם</label>
-        <input class="form-control mb-3" name="model" placeholder="COROLLA" required>
+        <label class="form-label fw-bold" for="model">דגם</label>
+        {# הדגמים נטענים לפי היצרן שנבחר, מקטלוג משרד התחבורה #}
+        <select class="form-select mb-3" name="model" id="model" required disabled>
+          <option value="">— בחר קודם יצרן —</option>
+        </select>
 
-        <label class="form-label fw-bold">סוגי חלקים</label>
-        <div class="row row-cols-2 g-1 mb-3" style="max-height: 260px; overflow-y: auto">
+        <div class="d-flex justify-content-between align-items-center">
+          <label class="form-label fw-bold mb-0">סוגי חלקים</label>
+          <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="select-all">
+            <label class="form-check-label small fw-bold" for="select-all">הכל</label>
+          </div>
+        </div>
+        <div class="row row-cols-2 g-1 my-2" style="max-height: 260px; overflow-y: auto"
+             id="part-types">
           {% for pt in part_types %}
           <div class="col"><div class="form-check">
             <input class="form-check-input" type="checkbox" name="part_type"
@@ -40,12 +49,13 @@
           {% endfor %}
         </div>
 
-        <div class="d-grid">
+        <div class="d-grid mt-3">
           <button class="btn btn-primary btn-lg" id="btn-run" {% if not available %}disabled{% endif %}>
             התחל חיפוש
           </button>
         </div>
-        <p class="form-text mb-0">
+        {# כל סוג חלק הוא קריאה נפרדת בתשלום, ולכן המספר מוצג לפני הלחיצה #}
+        <p class="form-text mb-0" id="cost-note">
           חיפוש נפרד לכל סוג חלק שנבחר. כל אחד הוא קריאה ל-Claude שעולה כסף.
         </p>
       </div>
@@ -100,6 +110,65 @@
                 step: "{{ url_for('admin.discovery_step') }}",
                 cancel: "{{ url_for('admin.discovery_cancel') }}"};
   let stopRequested = false;
+
+  // ---- רשימת הדגמים לפי היצרן שנבחר ----
+  const makeSelect = document.getElementById("make");
+  const modelSelect = document.getElementById("model");
+
+  makeSelect.addEventListener("change", async function () {
+    const make = makeSelect.value;
+    modelSelect.disabled = true;
+    modelSelect.innerHTML = '<option value="">טוען…</option>';
+    if (!make) {
+      modelSelect.innerHTML = '<option value="">— בחר קודם יצרן —</option>';
+      return;
+    }
+    try {
+      const response = await fetch(
+        "/api/vehicle-models?models_only=1&make=" + encodeURIComponent(make));
+      const models = response.ok ? await response.json() : [];
+      modelSelect.innerHTML = models.length
+        ? '<option value="">— בחר דגם —</option>'
+        : '<option value="">אין דגמים לקטלוג הזה</option>';
+      models.forEach(function (name) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        modelSelect.appendChild(option);
+      });
+      modelSelect.disabled = models.length === 0;
+    } catch (error) {
+      modelSelect.innerHTML = '<option value="">שגיאה בטעינת הדגמים</option>';
+    }
+  });
+
+  // ---- בחירת הכל, וספירת החיפושים שיירוצו ----
+  const selectAll = document.getElementById("select-all");
+  const boxes = [...document.querySelectorAll('#part-types input[name="part_type"]')];
+  const costNote = document.getElementById("cost-note");
+  const BASE_NOTE = costNote.textContent.trim();
+
+  function refreshCost() {
+    const chosen = boxes.filter((box) => box.checked).length;
+    selectAll.checked = chosen === boxes.length && chosen > 0;
+    selectAll.indeterminate = chosen > 0 && chosen < boxes.length;
+    if (!chosen) {
+      costNote.textContent = BASE_NOTE;
+      costNote.className = "form-text mb-0";
+      return;
+    }
+    costNote.textContent = `${chosen} חיפושים ירוצו — קריאה נפרדת ל-Claude לכל אחד.`;
+    // כשמסמנים הכל זה עשרות קריאות בתשלום, ועדיף לדעת לפני ולא אחרי
+    costNote.className = chosen > 10
+      ? "form-text mb-0 text-danger fw-bold" : "form-text mb-0";
+  }
+
+  selectAll.addEventListener("change", function () {
+    boxes.forEach((box) => { box.checked = selectAll.checked; });
+    refreshCost();
+  });
+  boxes.forEach((box) => box.addEventListener("change", refreshCost));
+  refreshCost();
 
   async function post(url, body) {
     const headers = {"X-Requested-With": "XMLHttpRequest"};
