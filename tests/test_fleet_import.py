@@ -16,6 +16,33 @@ def sql_record(model, vehicles, make="טויוטה יפן", code="A1"):
             "vehicles": vehicles, "year_from": 2015, "year_to": 2022}
 
 
+def raw(model, year, make="טויוטה יפן", code="A1"):
+    """שורת רכב גולמית מהמאגר - אחת לכל רכב פעיל."""
+    return {fleet_stats.FIELD_MAKE: make, fleet_stats.FIELD_MODEL: model,
+            fleet_stats.FIELD_CODE: code, fleet_stats.FIELD_YEAR: year}
+
+
+def scanner(pages, total=None):
+    """scan_page מזויף: מחזיר (עמוד, סה"כ) לפי ה-offset המבוקש."""
+    flat = [row for page in pages for row in page]
+    total = len(flat) if total is None else total
+    sizes = [len(page) for page in pages]
+
+    def fetch(offset):
+        position = 0
+        for index, size in enumerate(sizes):
+            if position == offset:
+                return pages[index], total
+            position += size
+        return [], total
+
+    return fetch
+
+
+def not_found(offset):
+    raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+
+
 def pager(pages):
     """sql_page מזויף שמגיש עמוד לפי ה-offset המבוקש."""
     sizes = [len(page) for page in pages]
@@ -189,6 +216,125 @@ def test_button_label_says_what_it_will_do(app):
         assert job.action_label == "המשך ספירה"
         fleet_import._finish(job, FleetStatsJob.DONE)
         assert job.action_label == "ספירה מחדש"
+
+
+# ---- מסלול הסריקה ----
+
+
+def test_missing_sql_endpoint_switches_to_scanning(app):
+    """מה שקרה בייצור: נקודת ה-SQL של המאגר מחזירה 404.
+
+    זה כשל של המסלול, לא של ההרצה - היא ממשיכה בדרך השנייה במקום להיעצר.
+    """
+    with app.app_context():
+        job = fleet_import.start_job()
+        assert job.mode == FleetStatsJob.SQL
+
+        fleet_import.run_chunk(job, pages=1, fetch=not_found)
+        assert job.mode == FleetStatsJob.SCAN
+        assert job.status == FleetStatsJob.RUNNING
+        assert job.failures == 0  # לא כישלון שסופרים לקראת עצירה
+        assert "סריקה מלאה" in job.error
+
+
+def test_switch_to_scan_drops_what_the_sql_path_wrote(app):
+    """המשך סריקה על שורות מהמסלול הקודם היה סופר רכבים פעמיים."""
+    with app.app_context():
+        app.config["FLEET_STATS_PAGE_SIZE"] = 2
+        job = fleet_import.start_job()
+        fleet_import.run_chunk(job, pages=1, fetch=pager(
+            [[sql_record("COROLLA", 90000), sql_record("YARIS", 30000)]]))
+        assert FleetModelCount.query.count() == 2
+
+        fleet_import.run_chunk(job, pages=1, fetch=not_found)
+        assert FleetModelCount.query.count() == 0
+        assert (job.offset, job.models, job.vehicles) == (0, 0, 0)
+
+
+def test_a_temporary_error_does_not_switch_paths(app):
+    """500 היא תקלה רגעית; החלפת מסלול בגללה הייתה מוותרת על המהיר."""
+    def server_error(offset):
+        raise urllib.error.HTTPError("u", 500, "Server Error", {}, None)
+
+    with app.app_context():
+        job = fleet_import.start_job()
+        fleet_import.run_chunk(job, pages=1, fetch=server_error)
+        assert job.mode == FleetStatsJob.SQL
+        assert job.failures == 1
+
+
+def test_scan_accumulates_across_chunks_and_publishes_at_the_end(app):
+    pages = [[raw("COROLLA", 2015), raw("COROLLA", 2019)],
+             [raw("3", 2018, make="מאזדה יפן", code="B2")]]
+    with app.app_context():
+        old_snapshot()
+        job = fleet_import.start_job()
+        job.mode = FleetStatsJob.SCAN
+        db.session.commit()
+
+        fleet_import.run_chunk(job, pages=1, fetch=scanner(pages))
+        assert job.offset == 2
+        assert job.models == 1        # שתי שנות ייצור של אותו דגם
+        assert job.vehicles == 2
+        assert job.counts             # הצבירה נשמרה בין המנות
+        assert fleet_stats.summary()["vehicles"] == 1000  # עדיין הישן
+        assert FleetModelCount.query.count() == 1  # שום שורת ביניים לא נכתבה
+
+        fleet_import.run_chunk(job, pages=1, fetch=scanner(pages))
+        assert job.status == FleetStatsJob.DONE
+        assert job.counts is None
+        assert fleet_stats.summary()["vehicles"] == 3
+        rows = fleet_stats.search().all()
+        assert [(row.model, row.vehicles) for row in rows] == [("COROLLA", 2), ("3", 1)]
+        assert rows[0].year_from == 2015 and rows[0].year_to == 2019
+
+
+def test_scan_progress_uses_the_total_from_the_registry(app):
+    """בסריקה יש סה"כ אמיתי, ולכן מותר להראות אחוז."""
+    pages = [[raw("COROLLA", 2015)], [raw("YARIS", 2016)]]
+    with app.app_context():
+        job = fleet_import.start_job()
+        job.mode = FleetStatsJob.SCAN
+        db.session.commit()
+        assert job.progress_pct is None
+
+        fleet_import.run_chunk(job, pages=1, fetch=scanner(pages, total=4))
+        assert job.total == 4
+        assert job.progress_pct == 25
+
+
+def test_scan_stops_on_the_total_even_when_the_page_is_short(app):
+    """השרת רשאי לקצר עמוד; רק הסה"כ אומר שהסריקה נגמרה."""
+    pages = [[raw("COROLLA", 2015)], [raw("YARIS", 2016)]]
+    calls = {"n": 0}
+    inner = scanner(pages)
+
+    def counting(offset):
+        calls["n"] += 1
+        return inner(offset)
+
+    with app.app_context():
+        job = fleet_import.start_job()
+        job.mode = FleetStatsJob.SCAN
+        db.session.commit()
+        fleet_import.run_chunk(job, pages=5, fetch=counting)
+        assert job.status == FleetStatsJob.DONE
+        assert calls["n"] == 2  # לא נמשך עמוד מיותר אחרי שהמאגר נגמר
+
+
+def test_packed_counts_survive_a_round_trip():
+    counts = fleet_stats.aggregate_records([raw("COROLLA", 2015), raw("COROLLA", 2019)])
+    restored = fleet_stats.unpack_counts(fleet_stats.pack_counts(counts))
+    assert restored == counts
+
+
+def test_html_error_page_is_not_pasted_into_the_message():
+    """404 של השער הממשלתי מגיע עם דף HTML שלם - הוא הסתיר את הקוד."""
+    from app.vehicle_import import describe_error
+
+    exc = urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    exc.read = lambda: b"<!DOCTYPE html><html dir='rtl'><head><meta charset='UTF-8'>"
+    assert describe_error(exc) == "HTTP 404 Not Found"
 
 
 # ---- הרשאות ומסך ----

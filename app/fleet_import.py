@@ -8,17 +8,23 @@
 נקודת ההמשך יושבת ב-FleetStatsJob ולא בזיכרון - כמה workers, נפילה באמצע
 וסגירת דפדפן.
 
+שני מסלולים לאותה ספירה: המאגר סופר בעצמו ב-GROUP BY אחד, או שאנחנו
+מושכים את השורות וסופרים כאן. נקודת ה-SQL של המאגר לא זמינה בכל סביבה -
+היא מחזירה 404 - ולכן ההרצה מזהה זאת ועוברת לסריקה בעצמה, בלי שמישהו
+יצטרך לדעת שיש שני מסלולים.
+
 מה שמיוחד לספירה: היא בונה צילום חדש לצד הישן ולא במקומו. כל שורה נושאת את
 חותמת ההרצה, המסך ממשיך להציג את הצילום השלם הקודם, וההחלפה קורית ברגע אחד
 בסוף. חצי ספירה שמוצגת כאילו היא הצי כולו היא מספר שקרי, לא מספר חלקי.
 """
 import time
+import urllib.error
 from datetime import datetime, timezone
 
 from flask import current_app
 
 from . import fleet_stats
-from .fleet_stats import FleetStatsJob, active_job, latest_job, sql_page
+from .fleet_stats import FleetStatsJob, active_job, latest_job, scan_page, sql_page
 from .models import db
 from .vehicle_import import NETWORK_ERRORS, describe_error, fetch_with_retry
 
@@ -86,20 +92,55 @@ def _finish(job, status, error=None):
     db.session.commit()
 
 
+def _sql_is_missing(exc):
+    """האם השגיאה אומרת "נקודת ה-SQL הזאת לא קיימת כאן".
+
+    404 ו-405 הם התשובות של שער שלא מכיר את הנתיב; שגיאה זמנית (500,
+    timeout) אינה כזאת, ועליה מנסים שוב במקום להחליף מסלול.
+    """
+    return isinstance(exc, urllib.error.HTTPError) and exc.code in (403, 404, 405)
+
+
+def _switch_to_scan(job):
+    """עובר מספירה אצל המאגר לסריקה מלאה, ומתחיל את הצילום מחדש.
+
+    השורות שנכתבו עד כה שייכות לספירה שלא תושלם, והן נמחקות: המשך
+    סריקה על גביהן היה סופר חלק מהרכבים פעמיים.
+    """
+    fleet_stats.discard(job.snapshot_at)
+    job.mode = FleetStatsJob.SCAN
+    job.offset = 0
+    job.models = 0
+    job.vehicles = 0
+    job.counts = None
+    job.failures = 0
+    job.error = (
+        "נקודת ה-SQL של המאגר אינה זמינה. ממשיכים בסריקה מלאה - "
+        "אותה תוצאה, לוקח יותר זמן."
+    )
+    job.updated_at = _now()
+    db.session.commit()
+    return job
+
+
 def run_chunk(job, pages=None, time_budget=None, fetch=None):
-    """מריץ מנה אחת: מושך כמה עמודים, כותב אותם ומקדם את נקודת ההמשך."""
+    """מריץ מנה אחת, לפי המסלול שההרצה נמצאת בו."""
     if not job.is_running:
         return job
 
     config = current_app.config
-    page_size = config["FLEET_STATS_PAGE_SIZE"]
     pages = pages or config["FLEET_STATS_PAGES_PER_CHUNK"]
-    time_budget = time_budget or config["FLEET_STATS_TIME_BUDGET"]
-    attempts = config["FLEET_STATS_FETCH_ATTEMPTS"]
-    retry_pause = config["FLEET_STATS_RETRY_PAUSE"]
-    page_pause = config["FLEET_STATS_PAGE_PAUSE"]
+    deadline = time.monotonic() + (time_budget or config["FLEET_STATS_TIME_BUDGET"])
+    if job.mode == FleetStatsJob.SCAN:
+        return _run_scan_chunk(job, pages, deadline, fetch, config)
+    return _run_sql_chunk(job, pages, deadline, fetch, config)
+
+
+def _run_sql_chunk(job, pages, deadline, fetch, config):
+    """המסלול המהיר: המאגר מחזיר את הפילוח מוכן, עמוד אחרי עמוד."""
+    page_size = config["FLEET_STATS_PAGE_SIZE"]
     fetch = fetch or (lambda offset: sql_page(offset, page_size, MIN_COUNT))
-    deadline = time.monotonic() + time_budget
+    page_pause = config["FLEET_STATS_PAGE_PAUSE"]
 
     records, pages_done, exhausted, error = [], 0, False, None
     while pages_done < pages:
@@ -107,8 +148,14 @@ def run_chunk(job, pages=None, time_budget=None, fetch=None):
         if pages_done and page_pause:
             time.sleep(page_pause)  # לא מציפים את השרת הממשלתי
         try:
-            page = fetch_with_retry(fetch, offset, attempts, retry_pause)
+            page = fetch_with_retry(
+                fetch, offset, config["FLEET_STATS_FETCH_ATTEMPTS"],
+                config["FLEET_STATS_RETRY_PAUSE"],
+            )
         except NETWORK_ERRORS as exc:
+            if _sql_is_missing(exc):
+                # לא כישלון של ההרצה אלא של המסלול: אותה ספירה נמשכת בדרך השנייה
+                return _switch_to_scan(job)
             # ה-offset לא זז מעבר למה שנמשך בפועל: המנה הבאה תנסה שוב
             # בדיוק מהעמוד שנפל
             error = f"שגיאה ב-offset {offset}: {describe_error(exc)}"
@@ -135,10 +182,77 @@ def run_chunk(job, pages=None, time_budget=None, fetch=None):
     elif error:
         job.failures = (job.failures or 0) + 1
 
+    return _close_chunk(job, error, exhausted, bool(job.models), config)
+
+
+def _run_scan_chunk(job, pages, deadline, fetch, config):
+    """המסלול השני: מושכים את השורות עצמן וסופרים כאן.
+
+    הצבירה נשמרת על ההרצה ולא בטבלה: שלושה מיליון שורות מתכווצות לעשרות
+    אלפי דגמים, וכתיבתן כשורות ביניים הייתה עולה יותר מהספירה עצמה.
+    """
+    page_size = config["FLEET_STATS_SCAN_PAGE_SIZE"]
+    fetch = fetch or (lambda offset: scan_page(offset, page_size))
+    page_pause = config["FLEET_STATS_PAGE_PAUSE"]
+
+    counts = fleet_stats.unpack_counts(job.counts)
+    seen, pages_done, exhausted, error = 0, 0, False, None
+    while pages_done < pages:
+        offset = job.offset + seen
+        if pages_done and page_pause:
+            time.sleep(page_pause)
+        try:
+            page, total = fetch_with_retry(
+                fetch, offset, config["FLEET_STATS_FETCH_ATTEMPTS"],
+                config["FLEET_STATS_RETRY_PAUSE"],
+            )
+        except NETWORK_ERRORS as exc:
+            error = f"שגיאה ב-offset {offset}: {describe_error(exc)}"
+            break
+
+        if total is not None:
+            job.total = total
+        if not page:
+            exhausted = True
+            break
+
+        fleet_stats.aggregate_records(page, counts)
+        seen += len(page)
+        pages_done += 1
+        # כאן יש סה"כ אמיתי מהמאגר, והוא הסימן לסוף - לא אורך העמוד,
+        # שהשרת רשאי לקצר מתחת למבוקש
+        if job.total and job.offset + seen >= job.total:
+            exhausted = True
+            break
+        if time.monotonic() >= deadline:
+            break
+
+    if seen:
+        job.counts = fleet_stats.pack_counts(counts)
+        job.offset += seen
+        job.models = len(counts)
+        job.vehicles = sum(row["vehicles"] for row in counts.values())
+        job.failures = 0
+    elif error:
+        job.failures = (job.failures or 0) + 1
+
+    if exhausted and counts:
+        # רק כאן, בסוף, הספירה הופכת לשורות בטבלה
+        rows = fleet_stats.sort_rows(counts.values())
+        fleet_stats.add_rows(rows, job.snapshot_at)
+        job.models = len(rows)
+        job.vehicles = sum(row["vehicles"] for row in rows)
+        job.counts = None
+
+    return _close_chunk(job, error, exhausted, bool(counts), config)
+
+
+def _close_chunk(job, error, exhausted, has_data, config):
+    """סוגר מנה: מעדכן, ומחליט אם ההרצה נגמרה, נכשלה או ממשיכה."""
     job.error = error
     job.updated_at = _now()
 
-    if exhausted and not job.models:
+    if exhausted and not has_data:
         # ספירה שהסתיימה בלי שורה אחת אינה "צילום ריק" אלא כשל: פרסום
         # שלה היה מוחק את הצילום הקודם ומשאיר את המסך בלי כלום
         _finish(job, FleetStatsJob.FAILED, error="המאגר לא החזיר נתונים.")

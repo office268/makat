@@ -43,13 +43,20 @@ def fetch_page(offset, page_size=PAGE_SIZE, timeout=30):
 
 
 def describe_error(exc):
-    """הודעה שאפשר לאבחן ממנה. HTTPError בלי הקוד לא אומר כלום."""
+    """הודעה שאפשר לאבחן ממנה. HTTPError בלי הקוד לא אומר כלום.
+
+    גוף התשובה נכנס להודעה רק כשהוא אומר משהו: כשהשער הממשלתי מחזיר דף
+    שגיאה מעוצב, מאתיים התווים הראשונים שלו הם doctype ותגיות meta -
+    רעש שמסתיר את הקוד עצמו על המסך.
+    """
     if isinstance(exc, urllib.error.HTTPError):
         body = ""
         try:
             body = exc.read().decode("utf-8", "replace").strip()[:200]
         except Exception:  # pragma: no cover - הגוף לא תמיד ניתן לקריאה
             pass
+        if body.startswith("<"):
+            body = ""
         return f"HTTP {exc.code} {exc.reason}" + (f" - {body}" if body else "")
     return str(exc)
 
