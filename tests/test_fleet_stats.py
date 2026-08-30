@@ -236,6 +236,9 @@ def test_stats_page_explains_itself_when_empty(client, app):
         fleet_stats.db.session.commit()
     html = client.get("/stats").get_data(as_text=True)
     assert "vehicle_stats.py" in html  # מסך ריק שלא אומר מה לעשות הוא באג
+    # הפקודה אנגלית בתוך דף עברי: בלי dir="ltr" הדפדפן שובר אותה באמצע
+    # הדגלים, ו-"--scan --load" נקרא הפוך
+    assert 'dir="ltr"><code>python scripts/vehicle_stats.py --scan --load' in html
 
 
 def test_stats_csv_export(client, app):
