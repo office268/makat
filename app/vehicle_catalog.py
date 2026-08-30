@@ -119,6 +119,7 @@ class VehicleImportJob(db.Model):
     created = db.Column(db.Integer, default=0, nullable=False)   # דגמים שנוספו
     updated = db.Column(db.Integer, default=0, nullable=False)   # דגמים שעודכנו
     error = db.Column(db.Text)             # השגיאה האחרונה, גם אם ההרצה ממשיכה
+    failures = db.Column(db.Integer, default=0, nullable=False)  # כשלונות רצופים
     started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     started_at = db.Column(db.DateTime, default=_now)
     updated_at = db.Column(db.DateTime, default=_now)
@@ -151,6 +152,7 @@ class VehicleImportJob(db.Model):
             "created": self.created,
             "updated": self.updated,
             "error": self.error,
+            "failures": self.failures,
             "progress_pct": self.progress_pct,
             "is_running": self.is_running,
             "models_in_catalog": VehicleModel.query.count(),

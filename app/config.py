@@ -67,6 +67,21 @@ class Config:
     VEHICLE_IMPORT_TIME_BUDGET = float(
         os.environ.get("VEHICLE_IMPORT_TIME_BUDGET", 25)
     )
+    # המאגר הממשלתי מחזיר שגיאה זמנית תחת רצף בקשות ארוך. מנסים שוב
+    # את אותו עמוד, נושמים בין עמודים, ומוותרים אחרי כמה מנות רצופות
+    # שלא התקדמו - אחרת הדפדפן מנסה שוב לנצח.
+    VEHICLE_IMPORT_FETCH_ATTEMPTS = int(
+        os.environ.get("VEHICLE_IMPORT_FETCH_ATTEMPTS", 3)
+    )
+    VEHICLE_IMPORT_RETRY_PAUSE = float(
+        os.environ.get("VEHICLE_IMPORT_RETRY_PAUSE", 2)
+    )
+    VEHICLE_IMPORT_PAGE_PAUSE = float(
+        os.environ.get("VEHICLE_IMPORT_PAGE_PAUSE", 0.3)
+    )
+    VEHICLE_IMPORT_MAX_FAILURES = int(
+        os.environ.get("VEHICLE_IMPORT_MAX_FAILURES", 3)
+    )
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
@@ -102,6 +117,8 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     SUPERADMIN_EMAILS = frozenset()
+    VEHICLE_IMPORT_RETRY_PAUSE = 0  # בלי המתנות אמיתיות בבדיקות
+    VEHICLE_IMPORT_PAGE_PAUSE = 0
     AUTO_CREATE_TABLES = True
     IS_MANAGED_PLATFORM = False
     READ_ONLY = False
