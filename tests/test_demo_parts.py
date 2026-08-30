@@ -302,7 +302,7 @@ def test_the_three_japanese_and_korean_brands_answer_more_than_filters(app):
                     by_model.setdefault(fit.model, set()).add(part.part_type)
         thin = {model for model, types in by_model.items()
                 if not types & beyond_filters}
-        assert thin == {"YARIS"}, thin
+        assert thin == set(), thin
 
 
 def test_spark_plugs_are_petrol_only(app):
@@ -315,8 +315,11 @@ def test_spark_plugs_are_petrol_only(app):
             for part in Part.query.filter_by(part_type="spark_plug")
             for fit in part.fitments
         }
-        assert models == {"COROLLA", "GOLF", "C-HR", "RAV4", "CX-5",
-                          "SPORTAGE"}, models
+        # רשימת ההיתר נכתבת ביד בכוונה: דגם חדש שיקבל מצתים חייב
+        # לעבור אישור אנושי, ולא להיכנס בשקט עם סבב איסוף
+        petrol = {"COROLLA", "GOLF", "C-HR", "RAV4", "CX-5", "SPORTAGE",
+                  "MAZDA 3", "NIRO", "PICANTO", "YARIS", "RIO"}
+        assert models <= petrol, models - petrol
 
 
 def test_the_korean_front_disc_serves_tucson_and_sportage(app):
@@ -330,3 +333,36 @@ def test_the_korean_front_disc_serves_tucson_and_sportage(app):
             part = Part.query.filter_by(part_number=number).one()
             assert {(f.make, f.model) for f in part.fitments} == {
                 ("יונדאי", "TUCSON"), ("קיה", "SPORTAGE")}, number
+
+
+def test_front_brake_pads_are_a_real_category_now(app):
+    """רפידות קדמיות היו הקטגוריה שנפסלה בסבבים הראשונים.
+
+    מה שפתח אותה הוא מספר ה-WVA: כשכל הפריטים בעמוד נושאים את אותו
+    מספר, הוא מכריע שמדובר באותה רפידה - בדיוק כמו ש-Front Axle
+    הכריע בדיסקים. עמוד שבו כמה מספרי WVA שונים נפסל כולו."""
+    _load(app)
+    with app.app_context():
+        models = {
+            fit.model
+            for part in Part.query.filter_by(part_type="brake_pads_front")
+            for fit in part.fitments
+        }
+        assert len(models) >= 4, models
+        assert {"MAZDA 3", "C-HR", "RAV4"} <= models, models
+        assert services.parts_for_vehicle(
+            {"make": "מאזדה יפן", "model": "MAZDA 3", "year": 2017},
+            "brake_pads_front")
+
+
+def test_a_wiper_pair_is_never_split_between_two_lengths(app):
+    """זוג מגבים קדמי הוא שני אורכים, ושניהם חייבים להיות אותו זוג.
+
+    לכל דגם עם מגבים יש מק"טים שנאספו מאותו עמוד ולפי אותו זוג
+    אורכים; RAV4 ופיקנטו הם החדשים כאן."""
+    _load(app)
+    with app.app_context():
+        for make, model in [("טויוטה יפן", "RAV4"), ("קיה קוריאה", "PICANTO")]:
+            found = services.parts_for_vehicle(
+                {"make": make, "model": model, "year": 2020}, "wiper_blade")
+            assert len(found) >= 2, f"{model}: {found}"

@@ -58,6 +58,16 @@ def app():
 
 @pytest.fixture
 def client(app):
+    """לקוח שכבר עבר את מסך הפתיחה - מצבו של כל מי שנמצא בתוך האפליקציה."""
+    test_client = app.test_client()
+    with test_client.session_transaction() as flask_session:
+        flask_session["entered"] = True
+    return test_client
+
+
+@pytest.fixture
+def visitor(app):
+    """לקוח שנוחת על האפליקציה בפעם הראשונה, לפני מסך הפתיחה."""
     return app.test_client()
 
 
