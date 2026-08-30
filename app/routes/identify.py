@@ -7,7 +7,6 @@ from flask import Blueprint, jsonify, redirect, render_template, request, url_fo
 
 from .. import identify as identifier
 from .. import services, vehicles
-from ..models import Part
 from ..taxonomy import all_types, type_name
 
 identify_bp = Blueprint("identify", __name__)
@@ -18,8 +17,6 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 @identify_bp.route("/", methods=["GET", "POST"])
 def index():
     context = {
-        "catalog_empty": Part.query.count() == 0,
-        "sample_plates": vehicles.sample_plates(),
         "part_types": all_types(),
         "vision_on": identifier.vision_available(),
         "plate": "",
@@ -43,10 +40,7 @@ def index():
     # שלב 1 - הרכב
     vehicle = vehicles.lookup(plate)
     if not vehicle:
-        context["error"] = (
-            f'לא נמצא רכב עבור מספר רישוי "{plate}". '
-            "בסביבת הדמו זמינים מספרי הרישוי שמופיעים למטה."
-        )
+        context["error"] = f'לא נמצא רכב עבור מספר רישוי "{plate}".'
         return render_template("identify.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)

@@ -121,14 +121,3 @@ def lookup(plate, allow_offline=True):
         return lookup_offline(plate)
     return None
 
-
-def sample_plates():
-    """מספרי הרישוי הזמינים בקובץ הדוגמאות - לכפתורי הדמו."""
-    return [
-        {
-            "plate": normalize_plate(row.get("mispar_rechev")),
-            "display": format_plate(row.get("mispar_rechev")),
-            "label": f"{row.get('tozeret_nm','')} {row.get('kinuy_mishari','')} {row.get('shnat_yitzur','')}".strip(),
-        }
-        for row in _load_samples()
-    ]

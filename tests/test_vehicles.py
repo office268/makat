@@ -1,5 +1,5 @@
 """איתור רכב לפי מספר רישוי (מצב offline)."""
-from app.vehicles import format_plate, lookup, lookup_offline, normalize_plate, sample_plates
+from app.vehicles import format_plate, lookup, lookup_offline, normalize_plate
 
 
 def test_normalize_plate_strips_separators():
@@ -30,8 +30,3 @@ def test_lookup_falls_back_to_offline_without_network():
 def test_unknown_plate_returns_none():
     assert lookup_offline("00000000") is None
 
-
-def test_sample_plates_are_listed():
-    samples = sample_plates()
-    assert len(samples) >= 5
-    assert all(s["plate"] and s["display"] for s in samples)

@@ -2,38 +2,6 @@
 {% block title %}זיהוי מק"ט{% endblock %}
 {% block content %}
 
-<div class="demo-hero mb-4">
-  <h1 class="h3 mb-1">זיהוי מק"ט לפי רכב וחלק</h1>
-  <p class="text-muted mb-0">
-    מספר רישוי מזהה את הרכב · תמונה או תיאור מזהים את <em>סוג</em> החלק ·
-    ההצטלבות מייצרת מק"ט יחיד ומחיר.
-  </p>
-</div>
-
-{% if catalog_empty %}
-<div class="alert alert-info d-flex align-items-start gap-3">
-  <span class="fs-4">📥</span>
-  <div>
-    <strong>הקטלוג ריק, ולכן החיפוש לא יחזיר מק"טים.</strong>
-    <div class="small mt-1">
-      זיהוי הרכב לפי מספר רישוי כבר עובד. מה שחסר הוא הקטלוג —
-      <strong>מק"ט יימצא בחיפוש הזה רק אם הוזנו לו התאמות לרכב.</strong>
-      {% if current_user.is_authenticated and current_user.can_edit_catalog %}
-      <div class="mt-2 d-flex gap-2">
-        <a class="btn btn-sm btn-primary" href="{{ url_for('web.part_create') }}">הזנת מק"ט ראשון</a>
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.import_csv') }}">ייבוא מקובץ CSV</a>
-      </div>
-      {% elif not current_user.is_authenticated %}
-      <div class="mt-2">
-        <a class="btn btn-sm btn-primary" href="{{ url_for('auth.login') }}">התחברות</a>
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('auth.signup') }}">רישום ארגון</a>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="card mb-4">
@@ -44,12 +12,6 @@
         <label class="form-label fw-bold">1. מספר רישוי</label>
         <input class="form-control form-control-lg text-center plate-input" name="plate"
                value="{{ plate }}" placeholder="12-345-678" inputmode="numeric" required>
-        <div class="mt-2 d-flex flex-wrap gap-1">
-          {% for sample in sample_plates %}
-          <button type="button" class="btn btn-sm btn-outline-secondary plate-pick"
-                  data-plate="{{ sample.plate }}" title="{{ sample.label }}">{{ sample.display }}</button>
-          {% endfor %}
-        </div>
       </div>
 
       <div class="col-md-4">
@@ -58,13 +20,9 @@
                placeholder='למשל: רפידות קדמיות, פילטר שמן'>
         <div class="mt-2">
           <input class="form-control form-control-sm" type="file" name="photo" accept="image/*" capture="environment">
-          <div class="form-text">
-            {% if vision_on %}
-              <span class="text-success">✓ זיהוי מתמונה פעיל (Claude)</span>
-            {% else %}
-              זיהוי מתמונה דורש <code>ANTHROPIC_API_KEY</code>. בינתיים אפשר לתאר במילים.
-            {% endif %}
-          </div>
+          {% if vision_on %}
+          <div class="form-text text-success">✓ זיהוי מתמונה פעיל (Claude)</div>
+          {% endif %}
         </div>
       </div>
 
