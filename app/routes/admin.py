@@ -6,10 +6,13 @@
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 
-from .. import activity, parts_discovery
+from .. import activity, fleet_stats, parts_discovery
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
+from ..fleet_import import cancel_job as cancel_fleet_job
+from ..fleet_import import run_chunk as run_fleet_chunk
+from ..fleet_import import start_job as start_fleet_job
 from ..vehicle_catalog import VehicleModel, active_job, latest_job
 from ..vehicle_import import cancel_job, run_chunk, start_job
 
@@ -63,6 +66,60 @@ def vehicle_import_step():
 def vehicle_import_cancel():
     activity.note(summary="ייבוא קטלוג דגמי רכב בוטל")
     return jsonify(_payload(cancel_job(active_job())))
+
+
+# ---------------------------------------------------------------------------
+# ספירת הרכבים הפעילים בישראל
+# ---------------------------------------------------------------------------
+
+
+def _fleet_payload(job):
+    """מצב ההרצה + מה שמוצג כרגע במסך /stats, לא מה שנבנה ברקע."""
+    return {"job": job.to_dict() if job else None, "snapshot": fleet_stats.summary()}
+
+
+@admin_bp.get("/fleet-stats")
+@superadmin_required
+def fleet_stats_screen():
+    """מסך הספירה. מציג את ההרצה האחרונה כדי שאפשר יהיה להמשיך אותה."""
+    return render_template(
+        "admin/fleet_stats.html",
+        job=fleet_stats.latest_job(),
+        snapshot=fleet_stats.summary(),
+    )
+
+
+@admin_bp.get("/fleet-stats/status")
+@superadmin_required
+def fleet_stats_status():
+    return jsonify(_fleet_payload(fleet_stats.latest_job()))
+
+
+@admin_bp.post("/fleet-stats/start")
+@superadmin_required
+def fleet_stats_start():
+    job = start_fleet_job(user_id=current_user.id)
+    activity.note(summary="ספירת הרכבים הפעילים הופעלה", entity_type="job",
+                  entity_id=job.id if job else None)
+    return jsonify(_fleet_payload(job))
+
+
+@admin_bp.post("/fleet-stats/step")
+@superadmin_required
+def fleet_stats_step():
+    """מנה אחת. הדפדפן קורא לזה שוב ושוב עד שהסטטוס מפסיק להיות running."""
+    job = fleet_stats.active_job()
+    if job is None:
+        return jsonify({"error": "אין ספירה פעילה.",
+                        **_fleet_payload(fleet_stats.latest_job())}), 409
+    return jsonify(_fleet_payload(run_fleet_chunk(job)))
+
+
+@admin_bp.post("/fleet-stats/cancel")
+@superadmin_required
+def fleet_stats_cancel():
+    activity.note(summary="ספירת הרכבים הפעילים בוטלה")
+    return jsonify(_fleet_payload(cancel_fleet_job(fleet_stats.active_job())))
 
 
 # ---------------------------------------------------------------------------

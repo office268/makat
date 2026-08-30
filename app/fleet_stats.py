@@ -113,6 +113,96 @@ class FleetModelCount(db.Model):
         return f"<FleetModelCount {self.make} {self.model} {self.vehicles}>"
 
 
+class FleetStatsJob(db.Model):
+    """הרצת ספירה אחת, עם נקודת ההמשך שלה והחותמת של הצילום שהיא בונה.
+
+    אותו היגיון כמו ייבוא קטלוג הדגמים: המסך מריץ מנות, וההתקדמות יושבת
+    ב-DB ולא בזיכרון - כמה workers, נפילה באמצע, וסגירת דפדפן.
+
+    מה שנוסף כאן הוא snapshot_at: כל שורה שההרצה כותבת נושאת אותה, ולכן
+    הספירה החדשה נבנית לצד הישנה בלי לגעת בה. הצילום הישן ממשיך להיות
+    זה שמוצג עד שהחדש שלם, ורק אז הוא נמחק. חצי ספירה שמוצגת כאילו היא
+    הצי כולו היא מספר שקרי, לא מספר חלקי.
+    """
+
+    __tablename__ = "fleet_stats_jobs"
+
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    STATUS_LABELS = {
+        RUNNING: "בתהליך",
+        DONE: "הושלם",
+        FAILED: "נכשל",
+        CANCELLED: "בוטל",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20), default=RUNNING, nullable=False, index=True)
+    offset = db.Column(db.Integer, default=0, nullable=False)   # העמוד הבא למשיכה
+    models = db.Column(db.Integer, default=0, nullable=False)   # דגמים שנספרו
+    vehicles = db.Column(db.Integer, default=0, nullable=False)  # רכבים שנספרו
+    error = db.Column(db.Text)
+    failures = db.Column(db.Integer, default=0, nullable=False)  # כשלונות רצופים
+    snapshot_at = db.Column(db.DateTime, nullable=False, default=_now, index=True)
+    started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    started_at = db.Column(db.DateTime, default=_now)
+    updated_at = db.Column(db.DateTime, default=_now)
+    finished_at = db.Column(db.DateTime)
+
+    started_by = db.relationship("User", foreign_keys=[started_by_id])
+
+    @property
+    def is_running(self):
+        return self.status == self.RUNNING
+
+    @property
+    def status_label(self):
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    @property
+    def action_label(self):
+        """מה הכפתור עושה בפועל מהמצב הנוכחי.
+
+        אין למאגר "סה\"כ קבוצות" להשוות אליו, ולכן אין אחוז התקדמות ואי
+        אפשר להסתמך עליו כדי להסביר את הכפתור - הטקסט הוא ההסבר.
+        """
+        return "ספירה מחדש" if self.status == self.DONE else "המשך ספירה"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "status": self.status,
+            "status_label": self.status_label,
+            "action_label": self.action_label,
+            "offset": self.offset,
+            "models": self.models,
+            "vehicles": self.vehicles,
+            "error": self.error,
+            "failures": self.failures,
+            "is_running": self.is_running,
+        }
+
+    def __repr__(self):
+        return f"<FleetStatsJob {self.id} {self.status} @{self.offset}>"
+
+
+def active_job():
+    """ההרצה הפתוחה, אם יש. שתיים במקביל היו בונות שני צילומים חלקיים."""
+    return (
+        FleetStatsJob.query.filter_by(status=FleetStatsJob.RUNNING)
+        .order_by(FleetStatsJob.id.desc())
+        .first()
+    )
+
+
+def latest_job():
+    return FleetStatsJob.query.order_by(FleetStatsJob.id.desc()).first()
+
+
+
 # ---- שכבת הרשת ----
 
 
@@ -202,6 +292,11 @@ def _from_sql(record):
     )
 
 
+def rows_from_sql(records):
+    """רשומות מנקודת ה-SQL -> שורות פילוח."""
+    return [_from_sql(record) for record in records]
+
+
 def fetch_counts(min_count=1, page_size=SQL_PAGE_SIZE, fetch=None, max_rows=None,
                  progress=None):
     """הפילוח המלא לפי דגם, בעמודים, מנקודת ה-SQL.
@@ -213,7 +308,7 @@ def fetch_counts(min_count=1, page_size=SQL_PAGE_SIZE, fetch=None, max_rows=None
     rows, offset = [], 0
     while True:
         page = fetch(offset, page_size, min_count)
-        rows.extend(_from_sql(record) for record in page)
+        rows.extend(rows_from_sql(page))
         if progress:
             progress(len(rows))
         if len(page) < page_size:
@@ -286,32 +381,66 @@ def scan_counts(page_size=SCAN_PAGE_SIZE, fetch=None, max_records=None, min_coun
 _SNAPSHOT_FIELDS = ("make", "model", "model_code", "vehicles", "year_from", "year_to")
 
 
-def replace_snapshot(rows, taken_at=None):
-    """מחליף את צילום המצב כולו בטרנזקציה אחת."""
-    taken_at = taken_at or _now()
+def add_rows(rows, taken_at):
+    """כותב שורות לתוך צילום מסוים. מחזיר (כמה דגמים, כמה רכבים)."""
     payload = [
         {field: row.get(field) for field in _SNAPSHOT_FIELDS} | {"taken_at": taken_at}
         for row in rows
     ]
-    FleetModelCount.query.delete()
     if payload:
         db.session.bulk_insert_mappings(FleetModelCount, payload)
+    return len(payload), sum(row["vehicles"] or 0 for row in payload)
+
+
+def publish(taken_at):
+    """הופך צילום לזה שמוצג: מוחק כל שורה שאינה שייכת לו.
+
+    זה רגע ההחלפה, והוא בא רק כשהספירה שלמה. עד אליו הצילום הישן
+    ממשיך להיענות למסך.
+    """
+    FleetModelCount.query.filter(FleetModelCount.taken_at != taken_at).delete(
+        synchronize_session=False
+    )
     db.session.commit()
-    return len(payload)
 
 
-def summary():
-    """סה"כ רכבים, מספר הדגמים ותאריך הצילום. ריק = עוד לא נטען."""
-    row = db.session.query(
-        db.func.sum(FleetModelCount.vehicles),
-        db.func.count(FleetModelCount.id),
-        db.func.max(FleetModelCount.taken_at),
-    ).one()
-    return {"vehicles": row[0] or 0, "models": row[1] or 0, "taken_at": row[2]}
+def replace_snapshot(rows, taken_at=None):
+    """מחליף את צילום המצב כולו בטרנזקציה אחת. זה המסלול של הסקריפט."""
+    taken_at = taken_at or _now()
+    FleetModelCount.query.delete()
+    models, _ = add_rows(rows, taken_at)
+    db.session.commit()
+    return models
 
 
-def _filtered(query, q=None, make=None):
-    """הסינון עצמו, בלי מיון - כדי שגם הסכימה תוכל להשתמש בו."""
+def live_taken_at():
+    """החותמת של הצילום השלם האחרון - זה שמותר להציג.
+
+    צילום שנבנה כרגע, נכשל או בוטל יושב בטבלה עם חותמת משלו. הצגתו
+    הייתה מציגה חצי ספירה כאילו היא הצי כולו, ולכן חותמות של הרצות
+    שאינן "הושלם" נשארות מחוץ לתמונה.
+    """
+    partial = db.session.query(FleetStatsJob.snapshot_at).filter(
+        FleetStatsJob.status != FleetStatsJob.DONE,
+        FleetStatsJob.snapshot_at.isnot(None),
+    )
+    return (
+        db.session.query(db.func.max(FleetModelCount.taken_at))
+        .filter(FleetModelCount.taken_at.notin_(partial))
+        .scalar()
+    )
+
+
+def _filtered(query, q=None, make=None, taken_at=None):
+    """הסינון עצמו, בלי מיון - כדי שגם הסכימה תוכל להשתמש בו.
+
+    כל שאילתה מוגבלת לצילום אחד. בלי זה, בזמן ספירה חדשה היו נספרים
+    שני צילומים יחד וכל מספר על המסך היה כפול.
+    """
+    if taken_at is None:
+        taken_at = live_taken_at()
+    # taken_at ריק -> IS NULL, והעמודה אינה nullable: אין נתונים, אין תוצאות
+    query = query.filter(FleetModelCount.taken_at == taken_at)
     if make:
         query = query.filter(FleetModelCount.make == make)
     if q:
@@ -326,19 +455,36 @@ def _filtered(query, q=None, make=None):
     return query
 
 
-def search(q=None, make=None):
+def summary(taken_at=None):
+    """סה"כ רכבים, מספר הדגמים ותאריך הצילום. ריק = עוד לא נטען."""
+    if taken_at is None:
+        taken_at = live_taken_at()
+    row = _filtered(
+        db.session.query(
+            db.func.sum(FleetModelCount.vehicles),
+            db.func.count(FleetModelCount.id),
+        ),
+        taken_at=taken_at,
+    ).one()
+    return {"vehicles": row[0] or 0, "models": row[1] or 0, "taken_at": taken_at}
+
+
+def search(q=None, make=None, taken_at=None):
     """שאילתת הטבלה, מהדגם הנפוץ לנדיר."""
-    return _filtered(FleetModelCount.query, q, make).order_by(
+    return _filtered(FleetModelCount.query, q, make, taken_at).order_by(
         FleetModelCount.vehicles.desc(), FleetModelCount.make, FleetModelCount.model
     )
 
 
-def total_vehicles(q=None, make=None):
+def total_vehicles(q=None, make=None, taken_at=None):
     """כמה רכבים יש בסינון הנוכחי - לא כמה שורות, כמה רכבים."""
-    query = _filtered(
-        db.session.query(db.func.sum(FleetModelCount.vehicles)), q, make
+    return (
+        _filtered(
+            db.session.query(db.func.sum(FleetModelCount.vehicles)), q, make, taken_at
+        ).scalar()
+        or 0
     )
-    return query.scalar() or 0
+
 
 
 # ---- ייצוא ----
@@ -362,11 +508,15 @@ def to_csv(rows):
     return "\ufeff" + buffer.getvalue()
 
 
-def makes():
+def makes(taken_at=None):
     """יצרנים לפי מספר הרכבים שלהם על הכביש."""
     rows = (
-        db.session.query(
-            FleetModelCount.make, db.func.sum(FleetModelCount.vehicles).label("total")
+        _filtered(
+            db.session.query(
+                FleetModelCount.make,
+                db.func.sum(FleetModelCount.vehicles).label("total"),
+            ),
+            taken_at=taken_at,
         )
         .group_by(FleetModelCount.make)
         .order_by(db.desc("total"))
