@@ -270,17 +270,63 @@ def test_brake_discs_are_a_real_category_now(app):
 
     _load(app)
     with app.app_context():
+        expected = {"COROLLA", "OCTAVIA", "RAV4", "TUCSON", "OUTLANDER",
+                    "GOLF", "RIO", "C-HR", "CX-5", "MAZDA 3", "SPORTAGE",
+                    "NIRO", "PICANTO"}
         found = {
             model
-            for model in ("COROLLA", "OCTAVIA", "RAV4", "TUCSON", "OUTLANDER",
-                          "GOLF", "RIO")
+            for model in expected
             if Part.query.join(Part.fitments)
             .filter(Part.part_type == "brake_disc_front")
             .filter_by(model=model).first()
         }
-        assert found == {"COROLLA", "OCTAVIA", "RAV4", "TUCSON", "OUTLANDER",
-                         "GOLF", "RIO"}, found
+        assert found == expected, expected - found
         # והם נמצאים גם בחיפוש לפי רכב, לא רק בקטלוג
         assert services.parts_for_vehicle(
             {"make": "טויוטה יפן", "model": "RAV4", "year": 2020},
             "brake_disc_front")
+
+
+def test_the_three_japanese_and_korean_brands_answer_more_than_filters(app):
+    """מאזדה, טויוטה וקיה - הדגמים שנמכרים כאן הכי הרבה.
+
+    עד הסבב הזה כמעט כל מה שהיה להם היה מסננים. עכשיו לכל אחד מהם
+    יש גם חלק מתכלה שהמוסך מחליף בפועל: דיסק, מצת או מגב."""
+    _load(app)
+    with app.app_context():
+        beyond_filters = {"brake_disc_front", "spark_plug", "wiper_blade"}
+        by_model = {}
+        for part in Part.query.all():
+            for fit in part.fitments:
+                if fit.make in ("מאזדה", "טויוטה", "קיה"):
+                    by_model.setdefault(fit.model, set()).add(part.part_type)
+        thin = {model for model, types in by_model.items()
+                if not types & beyond_filters}
+        assert thin == {"YARIS"}, thin
+
+
+def test_spark_plugs_are_petrol_only(app):
+    """מנוע דיזל אין לו מצתים. כל מצת בקטלוג תלוי בדגם עם מנוע בנזין,
+    ולכן הבדיקה נעולה על רשימת הדגמים - דיזל שייכנס לכאן יפיל אותה."""
+    _load(app)
+    with app.app_context():
+        models = {
+            fit.model
+            for part in Part.query.filter_by(part_type="spark_plug")
+            for fit in part.fitments
+        }
+        assert models == {"COROLLA", "GOLF", "C-HR", "RAV4", "CX-5",
+                          "SPORTAGE"}, models
+
+
+def test_the_korean_front_disc_serves_tucson_and_sportage(app):
+    """אותו מק"ט, 305x25, מופיע בעמוד הטוסון ובעמוד הספורטג'.
+
+    שתי השורות האלה כבר היו בקטלוג עבור טוסון; עמוד הספורטג' הוא
+    שהוסיף להן את ההתאמה השנייה, ולא ניחוש על סמך פלטפורמה משותפת."""
+    _load(app)
+    with app.app_context():
+        for number in ("ADG043221", "108575"):
+            part = Part.query.filter_by(part_number=number).one()
+            assert {(f.make, f.model) for f in part.fitments} == {
+                ("יונדאי", "TUCSON"), ("קיה", "SPORTAGE")}, number
