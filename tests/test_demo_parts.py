@@ -173,3 +173,28 @@ def test_mazda_is_stored_under_the_registry_name(app):
         typed_by_hand = {"make": "מאזדה יפן", "model": "3", "year": 2018}
         assert services.parts_for_vehicle(from_registry, "oil_filter")
         assert services.parts_for_vehicle(typed_by_hand, "oil_filter")
+
+
+def test_a_platform_sibling_shares_the_air_filter(app):
+    """טוסון וספורטג' חולקים פלטפורמה, ובשני העמודים אותו מספר OE."""
+    _load(app)
+    with app.app_context():
+        part = Part.query.filter_by(part_number="18685").one()
+        assert {f.model for f in part.fitments} == {"TUCSON", "SPORTAGE"}
+        assert [r.ref_number for r in part.cross_refs] == ["28113-D3300"]
+
+
+def test_no_model_is_left_with_a_single_part_type(app):
+    """דגם שמחזיר סוג חלק אחד בלבד לא מדגים כלום.
+
+    שני חריגים ידועים: מסוויפט יצא רק מסנן מזגן, כי כל שאר הפריטים
+    בעמוד נפסלו על מספרי OE של יצרנים אחרים; ול-C-HR נכנסו רק מסנני
+    מזגן, שממילא משותפים לו ול-RAV4. שניהם ממתינים לסבב הבא."""
+    _load(app)
+    with app.app_context():
+        by_model = {}
+        for part in Part.query.all():
+            for fit in part.fitments:
+                by_model.setdefault(fit.model, set()).add(part.part_type)
+        thin = {model for model, types in by_model.items() if len(types) < 2}
+        assert thin == {"SWIFT", "C-HR"}, thin
