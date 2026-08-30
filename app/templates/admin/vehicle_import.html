@@ -34,9 +34,15 @@
 
       <div class="alert alert-warning small d-none" id="job-error"></div>
 
+      <p class="small text-success mb-2 {% if not (job and job.status == "done") %}d-none{% endif %}"
+         id="done-note">
+        הקטלוג מעודכן מול המאגר. אין צורך בפעולה נוספת - "ייבוא מחדש" מושך
+        את כל המאגר שוב, לקליטת דגמים שנוספו בו מאז.
+      </p>
+
       <div class="d-flex gap-2">
         <button class="btn btn-primary" id="btn-run">
-          {% if job and job.is_running %}המשך ייבוא{% else %}התחל ייבוא{% endif %}
+          {{ job.action_label if job else "התחל ייבוא" }}
         </button>
         <button class="btn btn-outline-secondary d-none" id="btn-stop">עצור</button>
       </div>
@@ -72,6 +78,7 @@
   const errorBox = document.getElementById("job-error");
   const modelsCount = document.getElementById("models-count");
   const runBtn = document.getElementById("btn-run");
+  const doneNote = document.getElementById("done-note");
   const stopBtn = document.getElementById("btn-stop");
   const token = document.querySelector('meta[name="csrf-token"]');
 
@@ -82,6 +89,7 @@
   };
   const LABELS = {running: "בתהליך", done: "הושלם", failed: "נכשל", cancelled: "בוטל"};
   let stopRequested = false;
+  let actionLabel = runBtn.textContent.trim();
 
   const num = (n) => (n || 0).toLocaleString("he-IL");
 
@@ -111,11 +119,17 @@
 
     errorBox.classList.toggle("d-none", !job.error);
     if (job.error) errorBox.textContent = job.error;
+
+    // "המשך" ו-"ייבוא מחדש" עושים דברים שונים לגמרי; הכפתור חייב
+    // להגיד מי מהם, ולא להישאר נעול על טקסט אחד
+    actionLabel = job.action_label || actionLabel;
+    if (!runBtn.disabled) runBtn.textContent = actionLabel;
+    doneNote.classList.toggle("d-none", job.status !== "done");
   }
 
   function busy(on) {
     runBtn.disabled = on;
-    runBtn.textContent = on ? "מייבא..." : "המשך ייבוא";
+    runBtn.textContent = on ? "מייבא..." : actionLabel;
     stopBtn.classList.toggle("d-none", !on);
   }
 
@@ -149,7 +163,6 @@
       errorBox.classList.remove("d-none");
     } finally {
       busy(false);
-      runBtn.textContent = "המשך ייבוא";
     }
   });
 

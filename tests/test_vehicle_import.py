@@ -243,6 +243,32 @@ def test_finished_job_starts_a_fresh_one(app):
         assert fresh.offset == 0
 
 
+def test_button_label_says_what_it_will_do(app):
+    """הרצה שהושלמה מתחילה מחדש; הרצה שנעצרה ממשיכה. שני דברים שונים."""
+    with app.app_context():
+        job = vehicle_import.start_job()
+        assert job.action_label == "המשך ייבוא"
+        vehicle_import._finish(job, VehicleImportJob.CANCELLED)
+        assert job.action_label == "המשך ייבוא"
+        vehicle_import._finish(job, VehicleImportJob.DONE)
+        assert job.action_label == "ייבוא מחדש"
+
+
+def test_finished_screen_offers_a_restart_not_a_resume(app, superadmin_client):
+    pages = [[record("טויוטה", "COROLLA", 2015)]]
+    with app.app_context():
+        job = vehicle_import.start_job()
+        vehicle_import.run_chunk(job, pages=1, fetch=pager(pages))
+        assert job.status == VehicleImportJob.DONE
+
+    html = superadmin_client.get("/admin/vehicle-import").get_data(as_text=True)
+    assert "ייבוא מחדש" in html
+    assert "המשך ייבוא" not in html
+    assert superadmin_client.get(
+        "/admin/vehicle-import/status"
+    ).get_json()["job"]["action_label"] == "ייבוא מחדש"
+
+
 def test_start_job_returns_the_open_one(app):
     with app.app_context():
         first = vehicle_import.start_job()

@@ -141,11 +141,22 @@ class VehicleImportJob(db.Model):
     def status_label(self):
         return self.STATUS_LABELS.get(self.status, self.status)
 
+    @property
+    def action_label(self):
+        """מה הכפתור עושה בפועל מהמצב הנוכחי.
+
+        הרצה שנעצרה באמצע ממשיכה מנקודת העצירה; הרצה שהושלמה מתחילה
+        מחדש ומושכת את כל המאגר. שני דברים שונים לגמרי, ולכן הכפתור
+        חייב להגיד מי מהם - מקור אמת אחד לתבנית ול-JS גם יחד.
+        """
+        return "ייבוא מחדש" if self.status == self.DONE else "המשך ייבוא"
+
     def to_dict(self):
         return {
             "id": self.id,
             "status": self.status,
             "status_label": self.status_label,
+            "action_label": self.action_label,
             "offset": self.offset,
             "total": self.total,
             "fetched": self.fetched,
