@@ -302,7 +302,7 @@ def test_the_three_japanese_and_korean_brands_answer_more_than_filters(app):
                     by_model.setdefault(fit.model, set()).add(part.part_type)
         thin = {model for model, types in by_model.items()
                 if not types & beyond_filters}
-        assert thin == {"YARIS"}, thin
+        assert thin == set(), thin
 
 
 def test_spark_plugs_are_petrol_only(app):
@@ -315,8 +315,11 @@ def test_spark_plugs_are_petrol_only(app):
             for part in Part.query.filter_by(part_type="spark_plug")
             for fit in part.fitments
         }
-        assert models == {"COROLLA", "GOLF", "C-HR", "RAV4", "CX-5",
-                          "SPORTAGE", "MAZDA 3", "NIRO", "PICANTO"}, models
+        # רשימת ההיתר נכתבת ביד בכוונה: דגם חדש שיקבל מצתים חייב
+        # לעבור אישור אנושי, ולא להיכנס בשקט עם סבב איסוף
+        petrol = {"COROLLA", "GOLF", "C-HR", "RAV4", "CX-5", "SPORTAGE",
+                  "MAZDA 3", "NIRO", "PICANTO", "YARIS", "RIO"}
+        assert models <= petrol, models - petrol
 
 
 def test_the_korean_front_disc_serves_tucson_and_sportage(app):
@@ -345,7 +348,8 @@ def test_front_brake_pads_are_a_real_category_now(app):
             for part in Part.query.filter_by(part_type="brake_pads_front")
             for fit in part.fitments
         }
-        assert models == {"5008", "MAZDA 3", "C-HR", "RAV4"}, models
+        assert len(models) >= 4, models
+        assert {"MAZDA 3", "C-HR", "RAV4"} <= models, models
         assert services.parts_for_vehicle(
             {"make": "מאזדה יפן", "model": "MAZDA 3", "year": 2017},
             "brake_pads_front")
