@@ -188,10 +188,10 @@
       <tbody>
         {% for part in matches %}
         <tr>
-          <td><span class="font-monospace fw-bold">{{ part.part_number }}</span></td>
+          <td><span class="font-monospace fw-bold sku">{{ part.part_number }}</span></td>
           <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
           <td class="font-monospace small text-muted">
-            {% for ref in part.cross_refs %}{{ ref.ref_number }}{% if not loop.last %}, {% endif %}{% endfor %}
+            {% for ref in part.cross_refs %}<span class="sku">{{ ref.ref_number }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
           </td>
           {% set op = part.for_org(org_id) %}
           <td class="text-end fw-bold">

@@ -59,7 +59,7 @@
                  value="{{ row.part.id }}" {% if row.suspect %}checked{% endif %}>
         </td>
         <td>
-          <a class="font-monospace fw-bold" target="_blank"
+          <a class="font-monospace fw-bold sku" target="_blank"
              href="{{ url_for('web.part_detail', part_id=row.part.id) }}">{{ row.part.part_number }}</a>
           {% if row.source_url %}
           <div><a class="small text-muted" href="{{ row.source_url }}"

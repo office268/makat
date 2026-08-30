@@ -1,0 +1,202 @@
+/* מסך הפתיחה. עומד בפני עצמו ולא נשען על base.html:
+   אין כאן ניווט, אין כרטיסים - רק המכונית והכניסה. */
+
+:root {
+  --enter-bg: #05141f;
+  --enter-glow: #38bdf8;
+  --enter-text: #dbeafe;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body.welcome {
+  background: var(--enter-bg);
+  color: var(--enter-text);
+  font-family: system-ui, "Segoe UI", Arial, sans-serif;
+  overflow: hidden;
+  /* הדהייה מסתנכרנת עם ההצניחה פנימה: ease-in משאיר את המכונית
+     נראית כמעט עד הסוף, ורק אז המסך נעלם */
+  transition: opacity .42s ease-in;
+}
+
+body.welcome.is-leaving { opacity: 0; }
+
+/* שכבות הרקע: זוהר עמוק במרכז ורשת עדינה שנותנת לרצפה מקום */
+.stage {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  isolation: isolate;
+}
+
+.stage::before,
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.stage::before {
+  background:
+    radial-gradient(circle at 50% 46%, #0e3a58 0%, #071c2b 45%, #04101a 100%);
+}
+
+.stage::after {
+  background-image:
+    linear-gradient(rgba(56, 189, 248, .07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, .07) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 62%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 62%, #000 0%, transparent 75%);
+}
+
+/* כותרת */
+.welcome-header {
+  padding: clamp(1rem, 4vh, 2.5rem) clamp(1rem, 5vw, 3rem) 0;
+  text-align: center;
+}
+
+.welcome-brand {
+  font-size: clamp(1.15rem, 2.6vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: .01em;
+  margin: 0;
+}
+
+.welcome-tagline {
+  margin: .4rem 0 0;
+  font-size: clamp(.82rem, 1.6vw, .98rem);
+  color: rgba(219, 234, 254, .62);
+}
+
+/* הבמה של המכונית */
+.car-stage {
+  position: relative;
+  min-height: 0;
+}
+
+#car-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* הקישור עצמו הוא איבר אמיתי ולא רק מאזין על ה-canvas, כדי שאפשר
+   יהיה להגיע לכניסה גם ב-Tab ושקורא מסך יידע מה יש כאן. */
+.car-hit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(78%, 900px);
+  height: 58%;
+  display: block;
+  border: 0;
+  border-radius: 50% / 40%;
+  cursor: pointer;
+  outline-offset: 6px;
+}
+
+.car-hit:focus-visible {
+  outline: 2px solid var(--enter-glow);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* רמז הלחיצה - צף מתחת למכונית */
+.enter-hint {
+  position: absolute;
+  bottom: clamp(.5rem, 4vh, 2rem);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .5rem 1.15rem;
+  border: 1px solid rgba(56, 189, 248, .35);
+  border-radius: 999px;
+  background: rgba(5, 20, 31, .55);
+  backdrop-filter: blur(4px);
+  font-size: clamp(.85rem, 1.7vw, 1rem);
+  color: var(--enter-text);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease;
+}
+
+.enter-hint::before {
+  content: "";
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--enter-glow);
+  box-shadow: 0 0 10px var(--enter-glow);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.car-hit:hover ~ .enter-hint,
+.car-hit:focus-visible ~ .enter-hint {
+  border-color: rgba(56, 189, 248, .8);
+  box-shadow: 0 0 24px rgba(56, 189, 248, .25);
+  transform: translateX(-50%) translateY(-3px);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
+
+/* קישורי המשנה */
+.welcome-footer {
+  padding: 0 clamp(1rem, 5vw, 3rem) clamp(1rem, 4vh, 2.2rem);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: .4rem 1.4rem;
+  font-size: .9rem;
+}
+
+.welcome-footer a {
+  color: rgba(219, 234, 254, .78);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(56, 189, 248, .35);
+  padding-bottom: 2px;
+}
+
+.welcome-footer a:hover,
+.welcome-footer a:focus-visible {
+  color: #fff;
+  border-bottom-color: var(--enter-glow);
+}
+
+.welcome-user {
+  color: rgba(219, 234, 254, .55);
+}
+
+@media (max-width: 560px) {
+  .car-hit { width: 92%; height: 46%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter-hint::before { animation: none; }
+  body.welcome { transition: none; }
+}

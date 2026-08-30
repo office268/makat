@@ -79,6 +79,17 @@ def superadmin_required(view):
     return wrapped
 
 
+def safe_target(target):
+    """יעד הפניה מתוך פרמטר ב-URL, או המסך הראשי כשהוא לא בטוח.
+
+    כתובת שאינה מתחילה ב-"/" (או מתחילה ב-"//") היא אתר חיצוני, ואסור
+    לתת לפרמטר בשורת הכתובת לזרוק משתמש מחוץ למערכת אחרי התחברות.
+    """
+    if not target or not target.startswith("/") or target.startswith("//"):
+        return url_for("identify.index")
+    return target
+
+
 def slugify(name):
     slug = re.sub(r"[^\w֐-׿-]+", "-", (name or "").strip().lower()).strip("-")
     return slug or "org"
@@ -187,13 +198,21 @@ def login():
             )
             user.last_login_at = datetime.now(timezone.utc)
             db.session.commit()
-            target = request.args.get("next")
-            # מונע הפניה לאתר חיצוני דרך הפרמטר next
-            if not target or not target.startswith("/") or target.startswith("//"):
-                target = url_for("identify.index")
-            return redirect(target)
+            return redirect(safe_target(request.args.get("next")))
 
     return render_template("auth/login.html", form=request.form)
+
+
+@auth_bp.get("/welcome")
+def welcome():
+    """מסך הפתיחה: מכונית תלת-ממד מסתובבת שלחיצה עליה נכנסת לאפליקציה.
+
+    מחובר או לא - הלחיצה מובילה לאותו מקום. המסך הראשי פתוח גם
+    למבקר (בלי מחירים ומלאי), ולכן אין סיבה לחסום אותו בטופס.
+    """
+    return render_template(
+        "auth/welcome.html", enter_url=safe_target(request.args.get("next"))
+    )
 
 
 @auth_bp.post("/logout")
