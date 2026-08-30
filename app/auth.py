@@ -1,6 +1,6 @@
 """התחברות, הרשמה והרשאות."""
 import re
-import time
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -81,18 +81,12 @@ def superadmin_required(view):
     return wrapped
 
 
-# חותמת הפעילות האחרונה בסשן. מכאן נגזר מה נחשב "פתיחה של האפליקציה":
-# חזרה אחרי הפסקה מקבלת שוב את מסך הפתיחה, עבודה רצופה לא.
-LAST_SEEN = "seen_at"
-SPLASH_IDLE_SECONDS = 15 * 60
+# אסימון חד-פעמי שנשרף בכניסה. הוא מה שמונע לולאה: גם כשהדפדפן אינו
+# שולח Referer, הלחיצה על המכונית עוברת - בדיוק פעם אחת.
+PASS_ONCE = "may_enter"
 
-# כותבים את החותמת לכל היותר פעם בדקה - אחרת כל לחיצה גוררת עוגייה חדשה
-STAMP_INTERVAL_SECONDS = 60
-
-# בקשות שאינן "המשתמש עובד": נכסים, בדיקת בריאות, קבצי ה-PWA וה-API
-# (שעובד עם מפתחות ולא עם קוקיז). אלה לא מאריכים את חיי הסשן.
-QUIET_PREFIXES = ("/static/", "/api/")
-QUIET_PATHS = ("/healthz", "/sw.js", "/manifest.webmanifest", "/offline")
+# היעדרות ארוכה מזו נחשבת פתיחה מחדש, גם בלי בקשה לשרת. ראה app.js.
+SPLASH_AWAY_SECONDS = 30
 
 
 def safe_target(target):
@@ -171,6 +165,7 @@ def signup():
             db.session.commit()
 
             login_user(user)
+            session[PASS_ONCE] = True
             activity.note(
                 action="auth.signup",
                 summary=f"{organization.name} ({user.email})",
@@ -205,6 +200,7 @@ def login():
             flash("החשבון או הארגון מושבתים. פנה למנהל המערכת.", "warning")
         else:
             login_user(user, remember=request.form.get("remember") == "1")
+            session[PASS_ONCE] = True
             activity.note(
                 action="auth.login",
                 summary=f"{user.email} ({user.role_label})",
@@ -219,11 +215,6 @@ def login():
     return render_template("auth/login.html", form=request.form)
 
 
-def _is_quiet(path):
-    """בקשה שאינה מעידה על משתמש שעובד."""
-    return path.startswith(QUIET_PREFIXES) or path in QUIET_PATHS
-
-
 def _opens_the_app(req):
     """ה-GET הנקי של השורש - הדרך שבה פותחים את האפליקציה.
 
@@ -233,34 +224,44 @@ def _opens_the_app(req):
     return req.method == "GET" and req.path == "/" and not req.query_string
 
 
+def _from_inside(req):
+    """הגעה ממסך אחר של האפליקציה, להבדיל מפתיחה שלה.
+
+    זה ההבדל בין "ניווט" ל"פתיחה", והוא מה שנמדד כאן. מדידה לפי זמן
+    שגתה: מי שסגר ופתח את האפליקציה אחרי דקה פתח אותה מחדש לכל דבר,
+    גם אם השעון בקושי זז.
+
+    ההשוואה על ה-host בלבד ולא על הכתובת המלאה: מאחורי ה-proxy יש
+    אי-התאמות של http מול https, והן לא אמורות להיחשב אתר אחר.
+    """
+    if not req.referrer:
+        return False
+    return urlparse(req.referrer).netloc == urlparse(req.host_url).netloc
+
+
 @auth_bp.before_app_request
 def splash_gate():
-    """מי שפותח את האפליקציה מקבל קודם את מסך הפתיחה.
+    """כל פתיחה של האפליקציה מתחילה במסך הפתיחה.
 
-    "פתיחה" נמדדת בזמן ולא בביקור: כל בקשה מחדשת את חותמת הפעילות,
-    ורבע שעה בלי אף בקשה אומרת שהמשתמש הלך. החזרה שאחריה היא פתיחה
-    חדשה, והמכונית מקבלת את פניו שוב. מכאן ששוטטות רצופה בין המסכים
-    לא מנדנדת, ופתיחה של האפליקציה בבוקר כן מראה אותה.
+    שלושה מצבים, בסדר הזה:
+
+      אסימון כניסה   מי שלחץ על המכונית נכנס. האסימון נשרף מיד, ולכן
+                     הוא פותח את הדלת בדיוק פעם אחת ולא יוצר לולאה
+                     כשהדפדפן אינו שולח Referer
+      הגעה מבפנים    ניווט ממסך אחר של האפליקציה אינו פתיחה שלה
+      כל השאר        פתיחה: אייקון במסך הבית, סימנייה, כתובת שהוקלדה,
+                     לשונית חדשה - ושם המכונית מקבלת את הפנים
 
     נחסם רק השורש. שאר המסכים נגישים ישירות: קישור עמוק שנשלח לעובד
-    צריך להיפתח במקום שאליו הוא מצביע, ולא לזרוק אותו למסך פתיחה.
-
-    החותמת יושבת בסשן ולא בבסיס הנתונים - זו העדפת תצוגה של דפדפן
-    אחד, לא נתון על המשתמש.
+    צריך להיפתח במקום שאליו הוא מצביע.
     """
-    if _is_quiet(request.path) or request.path == url_for("auth.welcome"):
+    if not _opens_the_app(request):
         return None
-
-    now = int(time.time())
-    seen = session.get(LAST_SEEN)
-    active = seen is not None and now - seen < SPLASH_IDLE_SECONDS
-
-    if not active and _opens_the_app(request):
-        return redirect(url_for("auth.welcome"))
-
-    if seen is None or now - seen > STAMP_INTERVAL_SECONDS:
-        session[LAST_SEEN] = now
-    return None
+    if session.pop(PASS_ONCE, False):
+        return None
+    if _from_inside(request):
+        return None
+    return redirect(url_for("auth.welcome"))
 
 
 @auth_bp.after_app_request
@@ -277,13 +278,13 @@ def no_store_at_the_door(response):
 
 @auth_bp.app_context_processor
 def splash_settings():
-    """הסף והיעד, כדי שהדף יכיר אותם בדיוק כמו השרת.
+    """מה שהדף צריך כדי להגיע לאותה מסקנה כמו השרת.
 
-    הדף זקוק להם כי יש חזרה לאפליקציה שלא מייצרת בקשה כלל: דפדפן
+    הוא זקוק לזה כי יש חזרה לאפליקציה שלא מייצרת בקשה כלל: דפדפן
     שמשחזר את הדף מהזיכרון. ראה static/js/app.js.
     """
     return {
-        "splash_idle_seconds": SPLASH_IDLE_SECONDS,
+        "splash_away_seconds": SPLASH_AWAY_SECONDS,
         "splash_url": url_for("auth.welcome"),
     }
 
@@ -303,8 +304,8 @@ def welcome():
 
 @auth_bp.get("/enter")
 def enter():
-    """הלחיצה על המכונית: מסמנת שנכנסנו, וממשיכה לאפליקציה."""
-    session[LAST_SEEN] = int(time.time())
+    """הלחיצה על המכונית: אסימון כניסה יחיד, וממשיכה לאפליקציה."""
+    session[PASS_ONCE] = True
     return redirect(safe_target(request.args.get("next")))
 
 

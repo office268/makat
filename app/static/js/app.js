@@ -188,27 +188,31 @@ document.addEventListener("input", async function (event) {
   }
 });
 
-// חזרה לאפליקציה אחרי הפסקה.
+// חזרה לאפליקציה אחרי שיצאנו ממנה.
 //
 // הדפדפן משחזר דף מהזיכרון בלי לפנות לשרת - PWA שנפתח מחדש, לשונית
 // שחוזרים אליה, כפתור "אחורי". במצבים האלה לא מגיעה לשרת שום בקשה,
 // והשער שמפנה למסך הפתיחה לא מקבל בכלל הזדמנות לרוץ. לכן הדף מחזיר
-// את עצמו: הוא מודד כמה זמן היה מוסתר, ומגיע לאותה מסקנה כמו השרת.
+// את עצמו: יציאה מהאפליקציה וחזרה אליה היא פתיחה מחדש, בדיוק כמו
+// שהשרת רואה פתיחה בכל הגעה שאינה ניווט פנימי.
+//
+// חצי דקה של סף, ולא יותר: היא מבדילה בין מעבר רגעי לאפליקציה אחרת
+// לבין יציאה אמיתית, ואינה מנסה לנחש "כמה זמן זה הרבה".
 //
 // רק בדלת הכניסה, ורק כשאין עליה תוצאות: מי שהשאיר את האפליקציה על
 // מסך פנימי או על תוצאות חיפוש חוזר למה שהשאיר, בדיוק כמו שקישור
 // עמוק לא נחסם.
 (function () {
-  const idleSeconds = Number(document.body.dataset.splashIdle || 0);
+  const awaySeconds = Number(document.body.dataset.splashAway || 0);
   const splashUrl = document.body.dataset.splashUrl;
-  if (!idleSeconds || !splashUrl) return;
+  if (!awaySeconds || !splashUrl) return;
   if (window.location.pathname !== "/" || window.location.search) return;
 
   let hiddenAt = null;
   let leaving = false;
 
   function backFromABreak() {
-    return hiddenAt !== null && Date.now() - hiddenAt > idleSeconds * 1000;
+    return hiddenAt !== null && Date.now() - hiddenAt > awaySeconds * 1000;
   }
 
   function toSplash() {
