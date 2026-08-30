@@ -1,0 +1,15 @@
+part_number,name_he,name_en,description,manufacturer,category,barcode,price,cost,currency,vat_included,stock_qty,min_stock,location,weight_kg,dimensions,warranty_months,side,part_type,image_url,notes,is_active,cross_refs,fitments
+H90W23,מסנן שמן 5008,,,HENGST FILTER,מסננים,,4.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,פיג'ו:5008:2016:2026
+32223,מסנן שמן 5008,,,FEBI BILSTEIN,מסננים,,5.29,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. spin-on,1,OEM:1109.AL:Peugeot,פיג'ו:5008:2016:2026
+32103,מסנן שמן 5008,,,FEBI BILSTEIN,מסננים,,4.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. filter insert,1,OEM:98 189 149 80:Peugeot,פיג'ו:5008:2016:2026
+26-0193,מסנן שמן 5008,,,MAXGEAR,מסננים,,,,,,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,פיג'ו:5008:2016:2026
+GDB2193,רפידות בלם קדמיות 5008,,,TRW,בלמים,,58.49,,EUR,1,,,,,,,,brake_pads_front,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. סט סרן קדמי,1,,פיג'ו:5008:2016:2026
+FO-210S,מסנן שמן COROLLA,,,JAPANPARTS,מסננים,,7.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. spin-on,1,OEM:9091510009:Toyota,טויוטה:COROLLA:2013:2019:1ZR-FAE
+10-ECO051,מסנן שמן COROLLA,,,ASHIKA,מסננים,,4.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. filter insert,1,OEM:0415237010:Toyota,טויוטה:COROLLA:2013:2019:1ZR-FAE
+27149,מסנן שמן COROLLA,,,FEBI BILSTEIN,מסננים,,4.59,,EUR,1,,,,,,,,oil_filter,,"נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי. spin-on, מ-09/2016",1,OEM:90915-YZZJ1:Toyota,טויוטה:COROLLA:2016:2019:1ZR-FAE
+FO-316S,מסנן שמן SPORTAGE,,,JAPANPARTS,מסננים,,7.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,OEM:2630002752:Kia,קיה:SPORTAGE::
+OC 115,מסנן שמן SPORTAGE,,,MAHLE,מסננים,,7.29,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,קיה:SPORTAGE::
+OC 205,מסנן שמן TUCSON,,,MAHLE,מסננים,,6.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,יונדאי:TUCSON::
+OC 1673,מסנן שמן TUCSON,,,MAHLE,מסננים,,7.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,יונדאי:TUCSON::
+OC 1063,מסנן שמן 3,,,MAHLE,מסננים,,8.99,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,מאזדה:3::
+OC 1566,מסנן שמן 3,,,MAHLE,מסננים,,8.29,,EUR,1,,,,,,,,oil_filter,,נתוני הדגמה - נמשכו מקטלוג מקוון לא רשמי (AUTODOC). לא לשימוש מסחרי.,1,,מאזדה:3::
