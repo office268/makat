@@ -10,6 +10,7 @@ from flask import (
     request,
     url_for,
 )
+from sqlalchemy.orm import selectinload
 
 from .. import activity, fleet_stats, services
 from ..auth import role_required
@@ -76,7 +77,11 @@ def parts_list():
     filters = _filters_from_request()
     page = request.args.get("page", 1, type=int)
     per_page = current_app.config["PER_PAGE"]
-    query = services.search_parts(**filters)
+    # הטבלה מציגה מק"ט מקורי והתאמות לכל שורה, ובלי טעינה מראש כל שורה
+    # הייתה שאילתה נוספת.
+    query = services.search_parts(**filters).options(
+        selectinload(Part.cross_refs), selectinload(Part.fitments)
+    )
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     # מה שהמשתמש בחר, להבדיל ממה שתמיד נשלח (מיון, ארגון, active_only)
     is_filtered = any(
