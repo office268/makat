@@ -18,7 +18,7 @@ def _load(app):
 def test_file_imports_without_errors(app):
     created, updated, errors = _load(app)
     assert errors == []
-    assert created >= 40
+    assert created >= 60
 
 
 def test_plate_to_part_number_actually_resolves(app):
@@ -77,6 +77,25 @@ def test_catalog_covers_the_common_israeli_models(app):
         for make, model, year in expected:
             vehicle = {"make": make, "model": model, "year": year}
             assert services.catalog_coverage(vehicle), f"{make} {model} בלי חלפים"
+
+
+def test_catalog_spans_several_part_types(app):
+    """קטלוג של מסנני שמן בלבד לא מדגים כלום - צריך רוחב."""
+    _load(app)
+    with app.app_context():
+        types = {p.part_type for p in Part.query.all()}
+        assert {"oil_filter", "air_filter", "cabin_filter",
+                "wiper_blade", "fuel_filter"} <= types
+
+
+def test_corolla_answers_more_than_one_question(app):
+    """הדגם המוביל בהדגמה - כמה סוגי חלקים על אותו רכב."""
+    _load(app)
+    with app.app_context():
+        corolla = {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016}
+        coverage = services.catalog_coverage(corolla)
+        assert len(coverage) >= 5, coverage
+        assert sum(coverage.values()) >= 15
 
 
 def test_oe_cross_references_came_through(app):
