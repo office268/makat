@@ -7,7 +7,7 @@
 {# שני שלבים, שני כפתורים, טופס אחד. שדה מספר הרישוי משותף לשניהם,
    ולכן שני הכפתורים שולחים את אותו טופס ונבדלים ב-action - כך מספר
    הרישוי תמיד עדכני, בלי שדה מוסתר שצריך לסנכרן. #}
-<form method="post" enctype="multipart/form-data" class="mb-4">
+<form method="post" enctype="multipart/form-data" class="mb-4" data-busy-form>
   {{ csrf_field() }}
 
   <div class="card mb-3">
@@ -16,9 +16,8 @@
       <input class="form-control form-control-lg text-center plate-input" name="plate"
              value="{{ plate }}" placeholder="12-345-678" inputmode="numeric" required>
       <div class="d-grid mt-3">
-        <button class="btn btn-outline-primary btn-lg" name="action" value="vehicle">
-          זהה רכב
-        </button>
+        <button class="btn btn-outline-primary btn-lg" name="action" value="vehicle"
+                data-busy-label="מזהה רכב...">זהה רכב</button>
       </div>
     </div>
   </div>
@@ -84,7 +83,8 @@
       </select>
 
       <div class="d-grid mt-3">
-        <button class="btn btn-primary btn-lg" name="action" value="part">חפש חלק</button>
+        <button class="btn btn-primary btn-lg" name="action" value="part"
+                data-busy-label="מחפש מק&quot;ט...">חפש חלק</button>
       </div>
     </div>
   </div>

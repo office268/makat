@@ -1,3 +1,56 @@
+// חיווי המתנה בשליחת טופס. זיהוי הרכב פונה למאגר משרד התחבורה, וזו
+// יכולה להיות שנייה או שתיים שבהן המסך נראה תקוע - במיוחד בטלפון,
+// שבו אין ללחיצה שום משוב עד שהדף הבא נטען.
+(function () {
+  // event.submitter לא קיים בדפדפנים ישנים; שומרים את הכפתור האחרון שנלחץ
+  let lastClicked = null;
+  document.addEventListener("click", function (event) {
+    const button = event.target.closest("button[type=submit], button:not([type])");
+    if (button) lastClicked = button;
+  });
+
+  document.addEventListener("submit", function (event) {
+    const form = event.target.closest("[data-busy-form]");
+    if (!form) return;
+
+    const submitter = event.submitter || lastClicked;
+    const buttons = form.querySelectorAll("button[type=submit], button:not([type])");
+
+    // שם וערך של הכפתור שנלחץ נשמרים גם בשדה מוסתר: יש דפדפנים
+    // שמשמיטים אותם כשהכפתור עצמו מושבת תוך כדי השליחה, וה-action
+    // הוא מה שקובע איזה משני השלבים ירוץ
+    if (submitter && submitter.name && form.contains(submitter)) {
+      const carry = document.createElement("input");
+      carry.type = "hidden";
+      carry.name = submitter.name;
+      carry.value = submitter.value;
+      form.appendChild(carry);
+    }
+
+    buttons.forEach(function (button) {
+      if (!button.dataset.idleHtml) button.dataset.idleHtml = button.innerHTML;
+      if (button === submitter && button.dataset.busyLabel) {
+        button.innerHTML =
+          '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' +
+          button.dataset.busyLabel;
+      }
+      button.disabled = true;
+    });
+  });
+
+  // חזרה עם "אחורי" מגישה את הדף מהמטמון בדיוק כפי שנעזב - כלומר
+  // עם הכפתורים מושבתים ומסתובבים. משחזרים אותם למצב מנוחה.
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    document.querySelectorAll("[data-busy-form] button[disabled]").forEach(
+      function (button) {
+        if (button.dataset.idleHtml) button.innerHTML = button.dataset.idleHtml;
+        button.disabled = false;
+      }
+    );
+  });
+})();
+
 // שורות חוזרות בטופס המק"ט - התאמות לרכב ומק"טים מקבילים
 document.addEventListener("click", function (event) {
   const addButton = event.target.closest("[data-add-row]");

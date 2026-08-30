@@ -71,6 +71,14 @@ def test_both_buttons_share_one_form(client):
     assert html.count('name="plate"') == 1
 
 
+def test_buttons_carry_a_waiting_label(client):
+    """זיהוי הרכב פונה למאגר חיצוני - הכפתור חייב להראות שמשהו קורה."""
+    html = client.get("/").get_data(as_text=True)
+    assert "data-busy-form" in html
+    assert 'data-busy-label="מזהה רכב..."' in html
+    assert "data-busy-label" in html.split('value="part"')[1][:200]
+
+
 def test_demo_rejects_unknown_plate(client):
     response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)
