@@ -27,8 +27,10 @@
     <div class="card-header">הרכב שזוהה</div>
     <div class="card-body">
       {# מספר הרישוי לא חוזר כאן - הוא כבר על המסך, בשדה של שלב 1 #}
-      <h5 class="mb-1">{{ vehicle.make }} {{ vehicle.model }}</h5>
-      <p class="text-muted small mb-3">{{ vehicle.trim }}</p>
+      <h5 class="mb-1">
+        {{ vehicle.make }} {{ vehicle.model }}
+        {% if vehicle.trim %}<span class="text-muted fs-6">{{ vehicle.trim }}</span>{% endif %}
+      </h5>
       {% set details = [
         ("שנת ייצור", vehicle.year),
         ("קוד דגם", vehicle.model_code),
@@ -45,24 +47,47 @@
         ("קבוצת זיהום", vehicle.pollution_group),
         ("רמת אבזור בטיחותי", vehicle.safety_level),
       ] %}
-      {# שורה ריקה לא מוסיפה מידע, ולכן שדה חסר פשוט לא מופיע #}
-      <dl class="row mb-0 small">
-        {% for label, value in details %}{% if value %}
-        <dt class="col-5">{{ label }}</dt><dd class="col-7">{{ value }}</dd>
-        {% endif %}{% endfor %}
-      </dl>
+      {% set shown = details | selectattr(1) | list %}
+      {# שלוש העובדות שמשפיעות על התאמת חלף, בשורה אחת. השאר הם פרטי
+         רישוי - נכונים וזמינים, אבל לא מה שמחפשים כאן ועכשיו. #}
+      <p class="text-muted small mb-2">
+        {% for value in [vehicle.year, vehicle.fuel, vehicle.engine_code] if value %}
+        {%- if not loop.first %} · {% endif %}{{ value }}
+        {%- endfor %}
+      </p>
+      {# details נטיב ולא collapse של Bootstrap: פחות חלקים, ועובד גם
+         אם ה-JS לא נטען. שדה בלי ערך לא מופיע, כמו קודם. #}
+      <details class="small">
+        <summary class="text-primary" style="cursor: pointer">
+          כל פרטי הרכב ({{ shown | length }})
+        </summary>
+        <div class="row g-2 mt-1">
+          {% for label, value in shown %}
+          <div class="col-6 col-md-4">
+            <div class="text-muted" style="font-size: .75rem">{{ label }}</div>
+            <div class="text-break">{{ value }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </details>
       {% if vehicle.source != 'data.gov.il' %}
       <div class="alert alert-secondary small mt-3 mb-0">
         נתוני דמו מקומיים. עם גישה לרשת השאילתה רצה חיה מול מאגר משרד התחבורה.
       </div>
       {% endif %}
-      {# הכיסוי מוצג רק לפני חיפוש חלק; אחריו הוא חוזר בתוך התוצאות הריקות #}
-      {% if coverage and not searched %}
+      {# הכיסוי מוצג תמיד, גם אחרי חיפוש: כל תגית היא קישור לחלפים מאותו
+         סוג לרכב הזה, וכך הרצועה היא ניווט ולא רק חיווי. קישור ולא כפתור
+         JS - כדי שהתוצאה תהיה ניתנת לשיתוף ו"אחורי" יחזיר לרשימה. #}
+      {% if coverage %}
       <hr>
       <div class="small fw-bold mb-2">מה קיים בקטלוג לרכב הזה:</div>
       <div class="d-flex flex-wrap gap-1">
         {% for key, count in coverage.items() %}
-        <span class="badge bg-light text-dark border">{{ key | part_type_name }} ({{ count }})</span>
+        <a class="badge text-decoration-none
+                  {% if key == selected_type %}bg-primary{% else %}bg-light text-dark border{% endif %}"
+           href="{{ url_for('identify.index', plate=plate, part_type=key, _anchor='results') }}">
+          {{ key | part_type_name }} ({{ count }})
+        </a>
         {% endfor %}
       </div>
       {% endif %}
@@ -130,7 +155,7 @@
 </div>
 {% endif %}
 
-<div class="card">
+<div class="card" id="results">
   <div class="card-header d-flex justify-content-between">
     <span>מק"טים מתאימים</span>
     <span class="text-muted small">{{ matches | length }} תוצאות</span>
@@ -169,17 +194,11 @@
     </table>
   </div>
   {% else %}
+  {# רשימת הכיסוי לא חוזרת כאן: היא מוצגת עכשיו תמיד בכרטיס הרכב שלמעלה #}
   <div class="card-body text-muted">
     אין מק"ט מסוג זה בקטלוג עבור הרכב הזה.
     {% if coverage %}
-    <div class="mt-3">
-      <div class="small fw-bold mb-2">מה כן קיים בקטלוג לרכב הזה:</div>
-      <div class="d-flex flex-wrap gap-1">
-        {% for key, count in coverage.items() %}
-        <span class="badge bg-light text-dark border">{{ key | part_type_name }} ({{ count }})</span>
-        {% endfor %}
-      </div>
-    </div>
+    <div class="small mt-2">מה כן קיים מופיע ברצועה שבכרטיס הרכב.</div>
     {% endif %}
   </div>
   {% endif %}

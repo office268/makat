@@ -283,3 +283,62 @@ def test_api_link_is_hidden_from_anonymous_visitors(client):
 
 def test_api_link_shows_for_a_signed_in_user(auth_client):
     assert ">API</a>" in auth_client.get("/").get_data(as_text=True)
+
+
+def test_vehicle_details_start_folded(client):
+    """כרטיס הרכב פותח בזהות ובשלוש עובדות; השאר מאחורי פתיחה אחת."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "<details" in html
+    assert "כל פרטי הרכב" in html
+    assert "COROLLA" in html                       # הזהות מחוץ ל-details
+    assert "1ZR-FE" in html                        # קוד מנוע בשורת התקציר
+
+
+def test_folded_details_still_hold_everything(client):
+    """"נגיש" ולא "נמחק": כל שדה שהיה מוצג עדיין בדף."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    body = html.split("<details")[1]
+    for value in ("ZRE172L", "DEMO0000000000001", "2016"):
+        assert value in body, value
+    assert "מספר שלדה" in body
+
+
+def test_coverage_badges_are_links_to_that_part_type(client):
+    """לחיצה על "מגב" צריכה להראות את המגבים, ולכן התגית היא קישור."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "part_type=brake_pads_front" in html
+    assert "plate=12345678" in html
+    assert "#results" in html
+
+
+def test_a_coverage_link_runs_the_search(client):
+    """אותה הצטלבות כמו הכפתור, רק דרך הכתובת."""
+    response = client.get("/?plate=12345678&part_type=brake_pads_front")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "COROLLA" in html          # הרכב זוהה
+    assert "TEST-001" in html         # והחלפים מאותו סוג מוצגים
+    assert 'מק"טים מתאימים' in html
+
+
+def test_the_chosen_type_is_marked_in_the_strip(client):
+    html = client.get("/?plate=12345678&part_type=brake_pads_front").get_data(as_text=True)
+    strip = html.split("מה קיים בקטלוג לרכב הזה")[1].split("</div>")[0:6]
+    assert any("bg-primary" in chunk for chunk in strip)
+
+
+def test_a_plate_link_without_a_type_only_identifies(client):
+    """קישור עם מספר רישוי בלבד הוא שלב 1, לא חיפוש חלק."""
+    html = client.get("/?plate=12345678").get_data(as_text=True)
+    assert "COROLLA" in html
+    assert "TEST-001" not in html
+    assert 'מק"טים מתאימים' not in html
+
+
+def test_the_home_page_without_a_plate_is_unchanged(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'name="plate"' in html
+    assert "הרכב שזוהה" not in html
