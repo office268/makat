@@ -73,12 +73,20 @@ def shared_app():
 
 @pytest.fixture
 def client(app):
-    """לקוח שכבר עבר את מסך הפתיחה - מצבו של כל מי שנמצא בתוך האפליקציה."""
-    import time
+    """לקוח שכבר בתוך האפליקציה.
 
+    בקשותיו נושאות מפנה מהאתר עצמו, כמו כל ניווט פנימי - זה מה שמבדיל
+    אותו ממי שרק עכשיו פותח את האפליקציה ומקבל את מסך הפתיחה.
+    """
     test_client = app.test_client()
-    with test_client.session_transaction() as flask_session:
-        flask_session["seen_at"] = int(time.time())
+    navigate = test_client.open
+
+    def from_inside(*args, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("Referer", "http://localhost/parts")
+        return navigate(*args, headers=headers, **kwargs)
+
+    test_client.open = from_inside
     return test_client
 
 

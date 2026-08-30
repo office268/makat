@@ -18,7 +18,7 @@
 </head>
 {# מסך פנימי או מסך עם תוצאות חיפוש לא חוזר למסך הפתיחה - המשתמש
    לא אמור לאבד את מה שכבר על המסך. ראה static/js/app.js #}
-<body{% if not searched|default(false) %} data-splash-idle="{{ splash_idle_seconds }}"
+<body{% if not searched|default(false) %} data-splash-away="{{ splash_away_seconds }}"
       data-splash-url="{{ splash_url }}"{% endif %}>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark-blue">
   <div class="container-fluid">
