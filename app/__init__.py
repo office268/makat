@@ -67,6 +67,7 @@ def create_app(config_object=Config):
     from . import auth_models  # noqa: F401 - נדרש כדי ש-Alembic יראה את הטבלאות
     from . import activity  # noqa: F401
     from . import vehicle_catalog  # noqa: F401
+    from . import fleet_stats  # noqa: F401
     from . import parts_discovery  # noqa: F401
     from .auth import auth_bp, login_manager
 
