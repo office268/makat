@@ -136,7 +136,10 @@
 </p>
 
 {% if searched %}
-{% if candidates %}
+{# בבחירה ידנית אין מה לזהות - המשתמש בחר בעצמו, והתגית שנלחצה כבר
+   מודגשת ברצועה שלמעלה. הכרטיס נשאר לזיהוי מטקסט או מתמונה, שם השיטה
+   ואחוז הביטחון הם מידע אמיתי. #}
+{% if candidates and candidates[0].method != "manual" %}
 <div class="card mb-3">
   <div class="card-header">סוג החלק שזוהה</div>
   <div class="card-body py-2">
