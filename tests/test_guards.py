@@ -83,3 +83,15 @@ def test_writes_work_when_guard_is_off(client, app):
     assert client.post(
         "/api/parts", json={"part_number": "OPEN-1", "name_he": "חלק"}
     ).status_code == 201
+
+
+def test_admin_discovery_writes_are_blocked(ro_client):
+    """הנעילה רצה לפני בדיקת ההרשאות, ולכן 302 כאן מוכיח שהיא תפסה.
+
+    משתמש שאינו superadmin היה מקבל 403 מהמסך עצמו; ההפניה מגיעה
+    מהנעילה בלבד.
+    """
+    client, _ = ro_client
+    for path in ["/admin/discovery/start", "/admin/discovery/step",
+                 "/admin/discovery/verify", "/admin/discovery/delete"]:
+        assert client.post(path).status_code == 302, path

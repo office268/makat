@@ -373,3 +373,189 @@ def test_starting_with_nothing_to_plan_says_so(app, client, monkeypatch):
     response = client.post("/admin/discovery/start", data={})
     assert response.status_code == 400
     assert "לא נמצאו דגמים" in response.get_json()["error"]
+
+
+# ---- סקירה: מה נכנס לקטלוג ומה חשוד בו ----
+
+def _discovered(number="DISC-1", make="טויוטה", model="COROLLA",
+                part_type="oil_filter", maker="MANN-FILTER", note=None,
+                oe_number="", oe_brand=""):
+    """מק"ט כאילו הגיע מהחיפוש, בלי לעבור דרך המודל."""
+    from app.models import CrossReference, Fitment
+    from app.services import get_or_create_manufacturer
+
+    part = Part(part_number=number, name_he="חלק", part_type=part_type,
+                notes=note if note is not None else f"{pd.SOURCE_NOTE} https://example.test/x")
+    if maker:
+        part.manufacturer = get_or_create_manufacturer(maker)
+    if make:
+        part.fitments.append(Fitment(make=make, model=model))
+    if oe_number:
+        part.cross_refs.append(
+            CrossReference(ref_type="OEM", ref_number=oe_number, ref_brand=oe_brand)
+        )
+    db.session.add(part)
+    db.session.commit()
+    return part
+
+
+def test_discovered_parts_are_the_ones_marked(app):
+    """הרשימה היא בדיוק מה שהחיפוש נגע בו, לא כל הקטלוג."""
+    with app.app_context():
+        _discovered("DISC-1")
+        db.session.add(Part(part_number="HAND-1", name_he="ידני",
+                            notes="נתוני הדגמה - נמשכו מקטלוג מקוון"))
+        db.session.commit()
+        assert [p.part_number for p in pd.discovered_parts()] == ["DISC-1"]
+
+
+def test_a_clean_part_raises_no_flag(app):
+    with app.app_context():
+        assert pd.review_flags(_discovered()) == []
+
+
+def test_a_part_without_a_fitment_is_flagged(app):
+    """הכשל השקט: בקטלוג, ולא יימצא לעולם בחיפוש לפי רישוי."""
+    with app.app_context():
+        flags = pd.review_flags(_discovered("NOFIT", make=None))
+        assert any("בלי התאמה" in flag["text"] for flag in flags)
+        # אימות מול הרשת לא יכול לפתור חוסר התאמה, ולכן זה מסומן כמבני
+        assert pd.structural(flags) and pd.suspect(flags)
+
+
+def test_an_oe_number_of_another_marque_is_flagged(app):
+    """בדיוק מה שנתפס ביד: מק"ט מקביל של הונדה על חלף של קיה."""
+    with app.app_context():
+        flags = pd.review_flags(_discovered(
+            "KIA-1", make="קיה", model="SPORTAGE",
+            oe_number="15400-PH1-F03", oe_brand="Honda"))
+        assert any("יצרן אחר" in flag["text"] and "honda" in flag["text"]
+                   for flag in flags)
+        # את זה המודל דווקא יכול להכריע, ולכן הוא לא מבני
+        assert pd.suspect(flags) and not pd.structural(flags)
+
+
+def test_the_matching_marque_is_not_flagged(app):
+    with app.app_context():
+        assert pd.review_flags(_discovered(
+            "TOY-1", oe_number="90915-YZZJ1", oe_brand="Toyota")) == []
+
+
+def test_missing_maker_and_unknown_type_are_flagged(app):
+    with app.app_context():
+        flags = pd.review_flags(_discovered("BAD-1", maker=None, part_type="לא-קיים"))
+        assert any("בלי יצרן" in flag["text"] for flag in flags)
+        assert any("סוג חלק לא מוכר" in flag["text"] for flag in flags)
+
+
+def test_a_part_that_predates_the_search_is_flagged(app):
+    """מחיקה של כזה מוחקת גם עבודה ידנית, ולכן זה נאמר במפורש."""
+    with app.app_context():
+        part = _discovered("BOTH-1", note=f"נתוני הדגמה - AUTODOC | {pd.SOURCE_NOTE}")
+        flags = pd.review_flags(part)
+        assert any("היה בקטלוג" in flag["text"] for flag in flags)
+        # אזהרה, לא סיבה למחוק - ולכן השורה לא נבחרת מראש
+        assert not pd.suspect(flags)
+
+
+def test_the_source_url_comes_out_of_the_note(app):
+    with app.app_context():
+        assert pd.source_url_of(_discovered()) == "https://example.test/x"
+        assert pd.source_url_of(_discovered("NOURL", note=pd.SOURCE_NOTE)) is None
+
+
+def test_saving_does_not_overwrite_an_existing_note(app):
+    """מק"ט שנבנה ביד ועודכן בחיפוש שומר על סימון "נתוני הדגמה" שלו."""
+    with app.app_context():
+        db.session.add(Part(part_number="KEEP-1", name_he="ידני",
+                            part_type="oil_filter", notes="נתוני הדגמה - AUTODOC"))
+        db.session.commit()
+        rows, _ = pd.validate([candidate(number="KEEP-1")],
+                              "טויוטה", "COROLLA", "oil_filter")
+        created, updated = pd.save(rows)
+        part = Part.query.filter_by(part_number="KEEP-1").one()
+        assert (created, updated) == (0, 1)
+        assert "נתוני הדגמה" in part.notes
+        assert pd.SOURCE_MARK in part.notes
+
+
+def test_the_review_screen_lists_and_flags(app, client):
+    with app.app_context():
+        _discovered("SHOW-1")
+        _discovered("SHOW-2", make=None)
+    _login_superadmin(app, client)
+    html = client.get("/admin/discovery/review").get_data(as_text=True)
+    assert "SHOW-1" in html and "SHOW-2" in html
+    assert "1 עם סימן שאלה" in html
+
+
+def test_deleting_removes_the_part_and_its_fitments(app, client):
+    from app.models import Fitment
+
+    with app.app_context():
+        part = _discovered("DROP-1")
+        part_id = part.id
+    _login_superadmin(app, client)
+    payload = client.post("/admin/discovery/delete",
+                          data={"part_id": part_id}).get_json()
+    assert payload["deleted"] == ["DROP-1"]
+    with app.app_context():
+        assert Part.query.filter_by(part_number="DROP-1").first() is None
+        assert Fitment.query.filter_by(part_id=part_id).count() == 0
+
+
+def test_review_and_delete_need_a_superadmin(auth_client):
+    assert auth_client.get("/admin/discovery/review").status_code == 403
+    for path in ("/admin/discovery/delete", "/admin/discovery/verify"):
+        assert auth_client.post(path).status_code == 403
+
+
+def test_verify_asks_the_model_about_one_part(app, client, monkeypatch):
+    """אימות מחזיר פסק דין וסיבה, ומק"ט אחד לכל בקשה."""
+    monkeypatch.setattr(pd, "discovery_available", lambda: True)
+    seen = []
+
+    class FakeClient:
+        class messages:
+            @staticmethod
+            def create(**kwargs):
+                seen.append(kwargs["messages"][0]["content"])
+
+                class Block:
+                    type = "text"
+                    text = ('{"verdict": "not_fits", "reason": "OE של הונדה",'
+                            ' "source_url": "https://example.test/y"}')
+
+                class Response:
+                    content = [Block()]
+
+                return Response()
+
+    with app.app_context():
+        part = _discovered("VER-1", make="קיה", model="SPORTAGE")
+        part_id = part.id
+        verdict = pd.verify(part, client=FakeClient())
+    assert verdict["verdict"] == "not_fits"
+    assert verdict["reason"] == "OE של הונדה"
+    assert "SPORTAGE" in seen[0] and "VER-1" in seen[0]
+
+    _login_superadmin(app, client)
+    monkeypatch.setattr(pd, "verify", lambda part, client=None: {
+        "verdict": "fits", "reason": "", "source_url": ""})
+    assert client.post("/admin/discovery/verify",
+                       data={"part_id": part_id}).get_json()["verdict"] == "fits"
+
+
+def test_verify_reports_a_failure_instead_of_a_500(app, client, monkeypatch):
+    monkeypatch.setattr(pd, "discovery_available", lambda: True)
+    with app.app_context():
+        part_id = _discovered("VER-2").id
+    _login_superadmin(app, client)
+
+    def explode(part, client=None):
+        raise RuntimeError("מכסה נגמרה")
+
+    monkeypatch.setattr(pd, "verify", explode)
+    response = client.post("/admin/discovery/verify", data={"part_id": part_id})
+    assert response.status_code == 502
+    assert "מכסה" in response.get_json()["error"]

@@ -87,3 +87,41 @@ def test_stats_counts(app, org_id):
     anonymous = stats(None)
     assert anonymous["parts"] == 1      # הקטלוג משותף
     assert anonymous["in_stock"] == 0   # המלאי לא נחשף
+
+
+def test_model_match_ignores_spaces_and_hyphens(app, org_id):
+    """כתיב הדגם לא זהה בין המקורות, וזה לא אמור להסתיר מק"ט.
+
+    מאגר משרד התחבורה כותב "RAV 4" או "RAV4", "C-HR" או "CHR", ורשימות
+    החלפים כותבות את השני. התאמה שנשמרה בכתיב אחד חייבת להימצא גם
+    כשהרכב חוזר מהמאגר בכתיב השני.
+    """
+    from app.models import Fitment, Part, db
+    from app.services import parts_for_vehicle
+
+    with app.app_context():
+        part = Part(part_number="SPACE-1", name_he="מסנן שמן", part_type="oil_filter")
+        part.fitments = [Fitment(make="טויוטה", model="RAV4"),
+                         Fitment(make="טויוטה", model="C-HR")]
+        db.session.add(part)
+        db.session.commit()
+
+        for model in ("RAV4", "RAV 4", "rav 4", "C-HR", "CHR", "c hr"):
+            vehicle = {"make": "טויוטה יפן", "model": model, "year": 2020}
+            found = parts_for_vehicle(vehicle, "oil_filter")
+            assert [p.part_number for p in found] == ["SPACE-1"], model
+
+
+def test_partial_model_search_still_works(app, org_id):
+    """הכיווץ לא הופך את החיפוש למדויק - חיפוש חלקי ממשיך למצוא."""
+    from app.models import Fitment, Part, db
+    from app.services import parts_for_vehicle
+
+    with app.app_context():
+        part = Part(part_number="PART-1", name_he="מסנן", part_type="oil_filter")
+        part.fitments = [Fitment(make="מאזדה", model="MAZDA 3")]
+        db.session.add(part)
+        db.session.commit()
+
+        typed_by_hand = {"make": "מאזדה יפן", "model": "3", "year": 2018}
+        assert parts_for_vehicle(typed_by_hand, "oil_filter")

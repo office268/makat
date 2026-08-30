@@ -71,6 +71,21 @@ def _to_bool(value):
     return str(value).strip().lower() in {"1", "true", "yes", "כן", "y"}
 
 
+def _squash_text(value):
+    """שם דגם בצורה שבה משווים אותו: בלי רווחים, בלי מקפים, אותיות קטנות.
+
+    מאגר משרד התחבורה ורשימות החלפים לא מסכימים על הכתיב - "RAV 4" מול
+    "RAV4", "C-HR" מול "CHR". רווח ומקף אינם מידע, ומק"ט שנמצא בקטלוג
+    אבל לא נמצא בחיפוש לפי מספר רישוי הוא כשל שקט.
+    """
+    return (value or "").replace(" ", "").replace("-", "").lower()
+
+
+def _squash(column):
+    """אותו כיווץ, בצד של בסיס הנתונים. replace ו-lower קיימים בשניהם."""
+    return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
+
+
 def search_parts(
     q=None,
     part_type=None,
@@ -133,7 +148,7 @@ def search_parts(
         if make:
             fit = fit.filter(Fitment.make.ilike(make))
         if model:
-            fit = fit.filter(Fitment.model.ilike(f"%{model}%"))
+            fit = fit.filter(_squash(Fitment.model).like(f"%{_squash_text(model)}%"))
         if engine:
             fit = fit.filter(
                 or_(

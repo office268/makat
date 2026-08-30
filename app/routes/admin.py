@@ -8,7 +8,7 @@ from flask_login import current_user
 
 from .. import parts_discovery
 from ..auth import superadmin_required
-from ..models import Part
+from ..models import Part, db
 from ..taxonomy import all_types, type_name
 from ..vehicle_catalog import VehicleModel, active_job, latest_job
 from ..vehicle_import import cancel_job, run_chunk, start_job
@@ -147,3 +147,60 @@ def discovery_cancel():
     return jsonify(
         _discovery_payload(parts_discovery.cancel_job(parts_discovery.active_job()))
     )
+
+
+# ---------------------------------------------------------------------------
+# סקירת מה שהגילוי הכניס לקטלוג
+# ---------------------------------------------------------------------------
+
+
+@admin_bp.get("/discovery/review")
+@superadmin_required
+def discovery_review():
+    """מה נכנס לקטלוג מהחיפוש האוטומטי, ומה נראה חשוד."""
+    parts = parts_discovery.discovered_parts()
+    rows = []
+    for part in parts:
+        flags = parts_discovery.review_flags(part)
+        rows.append({
+            "part": part,
+            "flags": flags,
+            "suspect": parts_discovery.suspect(flags),
+            "structural": parts_discovery.structural(flags),
+            "source_url": parts_discovery.source_url_of(part),
+        })
+    return render_template(
+        "admin/discovery_review.html",
+        rows=rows,
+        flagged=sum(1 for row in rows if row["suspect"]),
+        available=parts_discovery.discovery_available(),
+        catalog_size=Part.query.count(),
+    )
+
+
+@admin_bp.post("/discovery/verify")
+@superadmin_required
+def discovery_verify():
+    """אימות מק"ט אחד מול הרשת. מק"ט אחד לכל בקשה, כמו הגילוי עצמו."""
+    if not parts_discovery.discovery_available():
+        return jsonify({"error": "לא הוגדר ANTHROPIC_API_KEY בשרת."}), 400
+    part = db.session.get(Part, request.form.get("part_id", type=int))
+    if part is None:
+        return jsonify({"error": 'המק"ט לא נמצא.'}), 404
+    try:
+        return jsonify(parts_discovery.verify(part))
+    except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
+        return jsonify({"error": str(exc)}), 502
+
+
+@admin_bp.post("/discovery/delete")
+@superadmin_required
+def discovery_delete():
+    """מחיקת מק"טים שנפסלו בסקירה. ההתאמות נמחקות איתם ב-cascade."""
+    ids = request.form.getlist("part_id", type=int)
+    deleted = []
+    for part in Part.query.filter(Part.id.in_(ids)).all() if ids else []:
+        deleted.append(part.part_number)
+        db.session.delete(part)
+    db.session.commit()
+    return jsonify({"deleted": deleted, "catalog_size": Part.query.count()})
