@@ -20,15 +20,15 @@
       {{ csrf_field() }}
       <div class="card-body">
         <label class="form-label fw-bold" for="make">יצרן הרכב</label>
-        <select class="form-select mb-3" name="make" id="make" required>
-          <option value="">— בחר יצרן —</option>
+        <select class="form-select mb-3" name="make" id="make">
+          <option value="">כל היצרנים — לפי הנפוצים</option>
           {% for mk in known_makes %}<option value="{{ mk }}">{{ mk }}</option>{% endfor %}
         </select>
 
         <label class="form-label fw-bold" for="model">דגם</label>
         {# הדגמים נטענים לפי היצרן שנבחר, מקטלוג משרד התחבורה #}
-        <select class="form-select mb-3" name="model" id="model" required disabled>
-          <option value="">— בחר קודם יצרן —</option>
+        <select class="form-select mb-3" name="model" id="model" disabled>
+          <option value="">כל הדגמים — לפי הנפוצים</option>
         </select>
 
         <div class="d-flex justify-content-between align-items-center">
@@ -54,10 +54,9 @@
             התחל חיפוש
           </button>
         </div>
-        {# כל סוג חלק הוא קריאה נפרדת בתשלום, ולכן המספר מוצג לפני הלחיצה #}
-        <p class="form-text mb-0" id="cost-note">
-          חיפוש נפרד לכל סוג חלק שנבחר. כל אחד הוא קריאה ל-Claude שעולה כסף.
-        </p>
+        {# כל מטרה היא קריאה נפרדת בתשלום, ולכן התוכנית מוצגת לפני הלחיצה #}
+        <p class="form-text mb-1" id="cost-note">מחשב…</p>
+        <ul class="form-text mb-0 ps-3" id="plan-sample"></ul>
       </div>
     </form>
   </div>
@@ -120,55 +119,79 @@
     modelSelect.disabled = true;
     modelSelect.innerHTML = '<option value="">טוען…</option>';
     if (!make) {
-      modelSelect.innerHTML = '<option value="">— בחר קודם יצרן —</option>';
+      modelSelect.innerHTML = '<option value="">כל הדגמים — לפי הנפוצים</option>';
+      refreshPlan();
       return;
     }
     try {
       const response = await fetch(
         "/api/vehicle-models?models_only=1&make=" + encodeURIComponent(make));
       const models = response.ok ? await response.json() : [];
-      modelSelect.innerHTML = models.length
-        ? '<option value="">— בחר דגם —</option>'
-        : '<option value="">אין דגמים לקטלוג הזה</option>';
+      modelSelect.innerHTML = '<option value="">כל הדגמים — לפי הנפוצים</option>';
       models.forEach(function (name) {
         const option = document.createElement("option");
         option.value = name;
         option.textContent = name;
         modelSelect.appendChild(option);
       });
-      modelSelect.disabled = models.length === 0;
+      modelSelect.disabled = false;
     } catch (error) {
       modelSelect.innerHTML = '<option value="">שגיאה בטעינת הדגמים</option>';
     }
+    refreshPlan();
   });
+
+  modelSelect.addEventListener("change", refreshPlan);
 
   // ---- בחירת הכל, וספירת החיפושים שיירוצו ----
   const selectAll = document.getElementById("select-all");
   const boxes = [...document.querySelectorAll('#part-types input[name="part_type"]')];
   const costNote = document.getElementById("cost-note");
-  const BASE_NOTE = costNote.textContent.trim();
+  const planList = document.getElementById("plan-sample");
+  let planTimer = null;
 
-  function refreshCost() {
+  // התוכנית מחושבת בשרת, כי שדה ריק מתמלא מקטלוג דגמי הרכב
+  // ורק השרת יודע מי הדגמים הנפוצים
+  async function refreshPlan() {
     const chosen = boxes.filter((box) => box.checked).length;
     selectAll.checked = chosen === boxes.length && chosen > 0;
     selectAll.indeterminate = chosen > 0 && chosen < boxes.length;
-    if (!chosen) {
-      costNote.textContent = BASE_NOTE;
-      costNote.className = "form-text mb-0";
-      return;
-    }
-    costNote.textContent = `${chosen} חיפושים ירוצו — קריאה נפרדת ל-Claude לכל אחד.`;
-    // כשמסמנים הכל זה עשרות קריאות בתשלום, ועדיף לדעת לפני ולא אחרי
-    costNote.className = chosen > 10
-      ? "form-text mb-0 text-danger fw-bold" : "form-text mb-0";
+
+    clearTimeout(planTimer);
+    planTimer = setTimeout(async function () {
+      const params = new URLSearchParams(new FormData(form));
+      params.delete("csrf_token");
+      try {
+        const response = await fetch("{{ url_for('admin.discovery_plan') }}?" + params);
+        if (!response.ok) return;
+        const plan = await response.json();
+        costNote.textContent = plan.count
+          ? `${plan.count} חיפושים ירוצו — קריאה נפרדת ל-Claude לכל אחד.` +
+            (plan.capped ? ` נחתך לתקרה של ${plan.max}.` : "")
+          : "לא נמצאו דגמים לחיפוש.";
+        costNote.className = plan.count > 10
+          ? "form-text mb-1 text-danger fw-bold" : "form-text mb-1";
+        planList.innerHTML = "";
+        plan.sample.forEach(function (line) {
+          const item = document.createElement("li");
+          item.textContent = line;
+          planList.appendChild(item);
+        });
+        if (plan.count > plan.sample.length) {
+          const more = document.createElement("li");
+          more.textContent = `ועוד ${plan.count - plan.sample.length}…`;
+          planList.appendChild(more);
+        }
+      } catch (error) { /* התצוגה המקדימה היא נוחות בלבד */ }
+    }, 150);
   }
 
   selectAll.addEventListener("change", function () {
     boxes.forEach((box) => { box.checked = selectAll.checked; });
-    refreshCost();
+    refreshPlan();
   });
-  boxes.forEach((box) => box.addEventListener("change", refreshCost));
-  refreshCost();
+  boxes.forEach((box) => box.addEventListener("change", refreshPlan));
+  refreshPlan();
 
   async function post(url, body) {
     const headers = {"X-Requested-With": "XMLHttpRequest"};

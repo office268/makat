@@ -237,6 +237,47 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+# שדה ריק = מדגם קטן והגיוני, לא סריקה של כל המאגר. בלי התקרות האלה
+# "הכל ריק" היה 27,948 דגמים כפול 42 סוגים - מיליון קריאות בתשלום.
+DEFAULT_MAKES = int(os.environ.get("DISCOVERY_DEFAULT_MAKES", 2))
+DEFAULT_MODELS = int(os.environ.get("DISCOVERY_DEFAULT_MODELS", 2))
+MAX_TARGETS = int(os.environ.get("DISCOVERY_MAX_TARGETS", 40))
+
+# החלפים שמוסך באמת מחליף, כשלא נבחר סוג
+DEFAULT_PART_TYPES = [
+    "oil_filter", "air_filter", "cabin_filter",
+    "fuel_filter", "wiper_blade", "brake_pads_front",
+]
+
+
+def plan_targets(make=None, model=None, part_types=None):
+    """מה ירוץ בפועל. מחזיר (מטרות, האם נחתך בתקרה).
+
+    שדה ריק מתמלא מקטלוג משרד התחבורה לפי מספר הווריאנטים, כי זה
+    הפרוקסי היחיד לפופולריות שיש. התוצאה נחתכת ב-MAX_TARGETS כדי
+    שלחיצה אחת לא תייצר חשבון בלתי צפוי.
+    """
+    from .vehicle_catalog import popular_makes, popular_models
+
+    make = (make or "").strip() or None
+    model = (model or "").strip() or None
+    types = [t for t in (part_types or []) if t in PART_TYPES] or DEFAULT_PART_TYPES
+
+    if make and model:
+        pairs = [(make, model)]
+    elif make:
+        pairs = popular_models(make, limit=DEFAULT_MODELS)
+    elif model:
+        pairs = []  # דגם בלי יצרן - לא ניתן להתאמה חד-משמעית
+    else:
+        pairs = []
+        for candidate_make in popular_makes(limit=DEFAULT_MAKES):
+            pairs.extend(popular_models(candidate_make, limit=DEFAULT_MODELS))
+
+    targets = [[mk, md, t] for mk, md in pairs for t in types]
+    return targets[:MAX_TARGETS], len(targets) > MAX_TARGETS
+
+
 class DiscoveryJob(db.Model):
     """הרצת גילוי אחת. המטרות בתור, אחת לכל בקשה.
 

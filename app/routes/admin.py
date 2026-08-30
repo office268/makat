@@ -9,7 +9,7 @@ from flask_login import current_user
 from .. import parts_discovery
 from ..auth import superadmin_required
 from ..models import Part
-from ..taxonomy import all_types
+from ..taxonomy import all_types, type_name
 from ..vehicle_catalog import VehicleModel, active_job, latest_job
 from ..vehicle_import import cancel_job, run_chunk, start_job
 
@@ -91,22 +91,42 @@ def discovery_status():
     return jsonify(_discovery_payload(parts_discovery.latest_job()))
 
 
+def _requested_plan(source):
+    """המטרות שינבעו מהטופס. שדה ריק מתמלא בברירת מחדל."""
+    return parts_discovery.plan_targets(
+        source.get("make"), source.get("model"), source.getlist("part_type")
+    )
+
+
+@admin_bp.get("/discovery/plan")
+@superadmin_required
+def discovery_plan():
+    """כמה חיפושים יירוצו, ואילו - לפני שמתחייבים לתשלום."""
+    targets, capped = _requested_plan(request.args)
+    return jsonify({
+        "count": len(targets),
+        "capped": capped,
+        "max": parts_discovery.MAX_TARGETS,
+        "sample": [
+            f"{mk} {md} · {type_name(t)}" for mk, md, t in targets[:6]
+        ],
+    })
+
+
 @admin_bp.post("/discovery/start")
 @superadmin_required
 def discovery_start():
-    """מטרה לכל צירוף של דגם וסוג חלק שנבחרו."""
+    """מטרה לכל צירוף של דגם וסוג חלק. שדה ריק מתמלא בברירת מחדל."""
     if not parts_discovery.discovery_available():
         return jsonify({"error": "לא הוגדר ANTHROPIC_API_KEY בשרת."}), 400
 
-    make = (request.form.get("make") or "").strip()
-    model = (request.form.get("model") or "").strip()
-    types = [t for t in request.form.getlist("part_type") if t]
-    if not make or not model:
-        return jsonify({"error": "יש להזין יצרן ודגם."}), 400
-    if not types:
-        return jsonify({"error": "יש לבחור לפחות סוג חלק אחד."}), 400
+    targets, _ = _requested_plan(request.form)
+    if not targets:
+        return jsonify({
+            "error": "לא נמצאו דגמים לחיפוש. ייתכן שקטלוג דגמי הרכב ריק, "
+                     "או שנבחר דגם בלי יצרן."
+        }), 400
 
-    targets = [[make, model, part_type] for part_type in types]
     job = parts_discovery.start_job(targets, user_id=current_user.id)
     return jsonify(_discovery_payload(job))
 
