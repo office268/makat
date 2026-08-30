@@ -24,7 +24,7 @@
   <tbody>
   {% for part in results %}
   <tr>
-    <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
+    <td><a class="font-monospace fw-bold sku" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
     <td>{{ part.name_he }}</td>
     <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
     {% set op = part.for_org(org_id) %}

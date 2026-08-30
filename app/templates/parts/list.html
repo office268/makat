@@ -59,7 +59,7 @@
       <tbody>
         {% for part in parts %}
         <tr>
-          <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
+          <td><a class="font-monospace fw-bold sku" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
           <td>{{ part.name_he }}</td>
           <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
           <td class="small text-muted">
