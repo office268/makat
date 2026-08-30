@@ -417,3 +417,21 @@ def test_coverage_badges_show_a_spinner_while_loading(client):
     html = client.post("/", data={"plate": "12345678",
                                   "action": "vehicle"}).get_data(as_text=True)
     assert "data-busy-link" in html
+
+
+def test_the_identify_button_is_not_full_width(client):
+    """כפתור אחד לפעולה אחת - רוחב לפי התוכן, לא לרוחב הכרטיס."""
+    html = client.get("/").get_data(as_text=True)
+    block = html.split('name="action" value="vehicle"')[0][-200:]
+    assert "d-grid" not in block
+    assert "justify-content-center" in block
+
+
+def test_the_identify_button_carries_an_inline_icon(client):
+    """אייקון מוטבע ולא פונט מ-CDN: האפליקציה עובדת גם בלי רשת."""
+    html = client.get("/").get_data(as_text=True)
+    button = html.split('name="action" value="vehicle"')[1].split("</button>")[0]
+    assert "<svg" in button
+    assert 'fill="currentColor"' in button       # יורש את צבע הכפתור
+    assert 'aria-hidden="true"' in button        # הטקסט הוא השם הנגיש
+    assert "זהה רכב" in button

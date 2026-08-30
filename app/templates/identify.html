@@ -16,9 +16,22 @@
       <input class="form-control form-control-lg text-center plate-input" name="plate"
              value="{{ plate | plate }}" placeholder="12-345-678" inputmode="numeric"
              maxlength="10" required>
-      <div class="d-grid mt-3">
-        <button class="btn btn-outline-primary btn-lg" name="action" value="vehicle"
-                data-busy-label="מזהה רכב...">זהה רכב</button>
+      {# רוחב לפי התוכן ולא לרוחב הכרטיס: שדה אחד ופעולה אחת לא צריכים
+         כפתור שתופס את כל השורה. האייקון מוטבע ולא מספריית אייקונים -
+         האפליקציה עובדת גם במצב לא מקוון, ופונט מ-CDN היה נשבר שם. #}
+      <div class="d-flex justify-content-center mt-3">
+        <button class="btn btn-outline-primary btn-lg px-4" name="action" value="vehicle"
+                data-busy-label="מזהה רכב...">
+          <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"
+               class="ms-2 mb-1" aria-hidden="true">
+            <path d="M5 11l1.6-4.2A2 2 0 0 1 8.5 5.5h7a2 2 0 0 1 1.9 1.3L19 11h.5a1.5
+                     1.5 0 0 1 1.5 1.5V16a1 1 0 0 1-1 1h-1.1a2.4 2.4 0 0 1-4.8 0H9.9a2.4
+                     2.4 0 0 1-4.8 0H4a1 1 0 0 1-1-1v-3.5A1.5 1.5 0 0 1 4.5 11H5Zm2.2
+                     0h9.6l-1.2-3.2a.6.6 0 0 0-.6-.4h-6a.6.6 0 0 0-.6.4L7.2 11Z"/>
+            <circle cx="7.5" cy="16.2" r="1.2"/>
+            <circle cx="16.5" cy="16.2" r="1.2"/>
+          </svg>זהה רכב
+        </button>
       </div>
     </div>
   </div>
