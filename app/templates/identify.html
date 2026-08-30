@@ -4,156 +4,169 @@
 
 {% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
 
-<form method="post" enctype="multipart/form-data" class="card mb-4">
+{# שני שלבים, שני כפתורים, טופס אחד. שדה מספר הרישוי משותף לשניהם,
+   ולכן שני הכפתורים שולחים את אותו טופס ונבדלים ב-action - כך מספר
+   הרישוי תמיד עדכני, בלי שדה מוסתר שצריך לסנכרן. #}
+<form method="post" enctype="multipart/form-data" class="mb-4">
   {{ csrf_field() }}
-  <div class="card-body">
-    <div class="row g-3">
-      <div class="col-md-4">
-        <label class="form-label fw-bold">1. מספר רישוי</label>
-        <input class="form-control form-control-lg text-center plate-input" name="plate"
-               value="{{ plate }}" placeholder="12-345-678" inputmode="numeric" required>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <label class="form-label fw-bold">1. מספר רישוי</label>
+      <input class="form-control form-control-lg text-center plate-input" name="plate"
+             value="{{ plate }}" placeholder="12-345-678" inputmode="numeric" required>
+      <div class="d-grid mt-3">
+        <button class="btn btn-outline-primary btn-lg" name="action" value="vehicle">
+          זהה רכב
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {% if vehicle %}
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>הרכב שזוהה</span>
+      <span class="badge {% if vehicle.source == 'data.gov.il' %}bg-success{% else %}bg-secondary{% endif %}">
+        {{ vehicle.source }}
+      </span>
+    </div>
+    <div class="card-body">
+      <div class="plate-badge mb-3">{{ vehicle.plate_display }}</div>
+      <h5 class="mb-1">{{ vehicle.make }} {{ vehicle.model }}</h5>
+      <p class="text-muted small mb-3">{{ vehicle.trim }}</p>
+      <dl class="row mb-0 small">
+        <dt class="col-5">שנת ייצור</dt><dd class="col-7">{{ vehicle.year or '-' }}</dd>
+        <dt class="col-5">קוד מנוע</dt><dd class="col-7">{{ vehicle.engine_code or '-' }}</dd>
+        <dt class="col-5">סוג דלק</dt><dd class="col-7">{{ vehicle.fuel or '-' }}</dd>
+        <dt class="col-5">צבע</dt><dd class="col-7">{{ vehicle.color or '-' }}</dd>
+        <dt class="col-5">טסט עד</dt><dd class="col-7">{{ vehicle.test_valid_until or '-' }}</dd>
+      </dl>
+      {% if vehicle.source != 'data.gov.il' %}
+      <div class="alert alert-secondary small mt-3 mb-0">
+        נתוני דמו מקומיים. עם גישה לרשת השאילתה רצה חיה מול מאגר משרד התחבורה.
+      </div>
+      {% endif %}
+      {# הכיסוי מוצג רק לפני חיפוש חלק; אחריו הוא חוזר בתוך התוצאות הריקות #}
+      {% if coverage and not searched %}
+      <hr>
+      <div class="small fw-bold mb-2">מה קיים בקטלוג לרכב הזה:</div>
+      <div class="d-flex flex-wrap gap-1">
+        {% for key, count in coverage.items() %}
+        <span class="badge bg-light text-dark border">{{ key | part_type_name }} ({{ count }})</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body">
+      <label class="form-label fw-bold">2. החלק</label>
+      <input class="form-control" name="query" value="{{ query }}"
+             placeholder='למשל: רפידות קדמיות, פילטר שמן'>
+      <div class="mt-2">
+        <input class="form-control form-control-sm" type="file" name="photo" accept="image/*" capture="environment">
+        {% if vision_on %}
+        <div class="form-text text-success">✓ זיהוי מתמונה פעיל (Claude)</div>
+        {% endif %}
       </div>
 
-      <div class="col-md-4">
-        <label class="form-label fw-bold">2. החלק</label>
-        <input class="form-control" name="query" value="{{ query }}"
-               placeholder='למשל: רפידות קדמיות, פילטר שמן'>
-        <div class="mt-2">
-          <input class="form-control form-control-sm" type="file" name="photo" accept="image/*" capture="environment">
-          {% if vision_on %}
-          <div class="form-text text-success">✓ זיהוי מתמונה פעיל (Claude)</div>
-          {% endif %}
-        </div>
-      </div>
+      <label class="form-label fw-bold mt-3">או בחירה ידנית</label>
+      <select class="form-select" name="part_type">
+        <option value="">— לפי הזיהוי —</option>
+        {% for pt in part_types %}
+        <option value="{{ pt.key }}" {% if pt.key == selected_type %}selected{% endif %}>
+          {{ pt.name_he }}
+        </option>
+        {% endfor %}
+      </select>
 
-      <div class="col-md-3">
-        <label class="form-label fw-bold">או בחירה ידנית</label>
-        <select class="form-select" name="part_type">
-          <option value="">— לפי הזיהוי —</option>
-          {% for pt in part_types %}
-          <option value="{{ pt.key }}" {% if pt.key == selected_type %}selected{% endif %}>
-            {{ pt.name_he }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="col-md-1 d-grid align-items-end">
-        <button class="btn btn-primary btn-lg">חפש</button>
+      <div class="d-grid mt-3">
+        <button class="btn btn-primary btn-lg" name="action" value="part">חפש חלק</button>
       </div>
     </div>
   </div>
 </form>
 
-{% if vehicle %}
-<div class="row g-3">
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span>הרכב שזוהה</span>
-        <span class="badge {% if vehicle.source == 'data.gov.il' %}bg-success{% else %}bg-secondary{% endif %}">
-          {{ vehicle.source }}
+{% if searched %}
+{% if candidates %}
+<div class="card mb-3">
+  <div class="card-header">סוג החלק שזוהה</div>
+  <div class="card-body py-2">
+    {% for c in candidates %}
+    <div class="d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
+      <div>
+        <span class="fw-bold {% if loop.first %}text-primary{% endif %}">{{ c.name or 'לא זוהה' }}</span>
+        {% if c.category %}<span class="text-muted small">· {{ c.category }}</span>{% endif %}
+        {% if c.note %}<div class="text-danger small">{{ c.note }}</div>{% endif %}
+      </div>
+      <div class="text-nowrap">
+        <span class="badge bg-light text-dark">{{ c.method }}</span>
+        <span class="badge {% if c.confidence >= 0.8 %}bg-success{% elif c.confidence >= 0.5 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+          {{ (c.confidence * 100) | round | int }}%
         </span>
       </div>
-      <div class="card-body">
-        <div class="plate-badge mb-3">{{ vehicle.plate_display }}</div>
-        <h5 class="mb-1">{{ vehicle.make }} {{ vehicle.model }}</h5>
-        <p class="text-muted small mb-3">{{ vehicle.trim }}</p>
-        <dl class="row mb-0 small">
-          <dt class="col-5">שנת ייצור</dt><dd class="col-7">{{ vehicle.year or '-' }}</dd>
-          <dt class="col-5">קוד מנוע</dt><dd class="col-7">{{ vehicle.engine_code or '-' }}</dd>
-          <dt class="col-5">סוג דלק</dt><dd class="col-7">{{ vehicle.fuel or '-' }}</dd>
-          <dt class="col-5">צבע</dt><dd class="col-7">{{ vehicle.color or '-' }}</dd>
-          <dt class="col-5">טסט עד</dt><dd class="col-7">{{ vehicle.test_valid_until or '-' }}</dd>
-        </dl>
-        {% if vehicle.source != 'data.gov.il' %}
-        <div class="alert alert-secondary small mt-3 mb-0">
-          נתוני דמו מקומיים. עם גישה לרשת השאילתה רצה חיה מול מאגר משרד התחבורה.
-        </div>
-        {% endif %}
-      </div>
     </div>
+    {% endfor %}
   </div>
+</div>
+{% endif %}
 
-  <div class="col-lg-8">
-    {% if candidates %}
-    <div class="card mb-3">
-      <div class="card-header">סוג החלק שזוהה</div>
-      <div class="card-body py-2">
-        {% for c in candidates %}
-        <div class="d-flex justify-content-between align-items-center py-2 {% if not loop.last %}border-bottom{% endif %}">
-          <div>
-            <span class="fw-bold {% if loop.first %}text-primary{% endif %}">{{ c.name or 'לא זוהה' }}</span>
-            {% if c.category %}<span class="text-muted small">· {{ c.category }}</span>{% endif %}
-            {% if c.note %}<div class="text-danger small">{{ c.note }}</div>{% endif %}
-          </div>
-          <div class="text-nowrap">
-            <span class="badge bg-light text-dark">{{ c.method }}</span>
-            <span class="badge {% if c.confidence >= 0.8 %}bg-success{% elif c.confidence >= 0.5 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
-              {{ (c.confidence * 100) | round | int }}%
-            </span>
-          </div>
-        </div>
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>מק"טים מתאימים</span>
+    <span class="text-muted small">{{ matches | length }} תוצאות</span>
+  </div>
+  {% if matches %}
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>מק"ט</th><th>יצרן</th><th>מק"ט מקורי</th>
+          <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for part in matches %}
+        <tr>
+          <td><span class="font-monospace fw-bold">{{ part.part_number }}</span></td>
+          <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
+          <td class="font-monospace small text-muted">
+            {% for ref in part.cross_refs %}{{ ref.ref_number }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </td>
+          {% set op = part.for_org(org_id) %}
+          <td class="text-end fw-bold">
+            {% if op %}{{ op.price_with_vat | ils }}
+            {% else %}<span class="text-muted fw-normal small">התחבר לצפייה</span>{% endif %}
+          </td>
+          <td class="text-center">
+            {% if op %}
+            <span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_detail', part_id=part.id) }}">כרטיס</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-muted">
+    אין מק"ט מסוג זה בקטלוג עבור הרכב הזה.
+    {% if coverage %}
+    <div class="mt-3">
+      <div class="small fw-bold mb-2">מה כן קיים בקטלוג לרכב הזה:</div>
+      <div class="d-flex flex-wrap gap-1">
+        {% for key, count in coverage.items() %}
+        <span class="badge bg-light text-dark border">{{ key | part_type_name }} ({{ count }})</span>
         {% endfor %}
       </div>
     </div>
     {% endif %}
-
-    <div class="card">
-      <div class="card-header d-flex justify-content-between">
-        <span>מק"טים מתאימים</span>
-        <span class="text-muted small">{{ matches | length }} תוצאות</span>
-      </div>
-      {% if matches %}
-      <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle">
-          <thead class="table-light">
-            <tr>
-              <th>מק"ט</th><th>יצרן</th><th>מק"ט מקורי</th>
-              <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for part in matches %}
-            <tr>
-              <td><span class="font-monospace fw-bold">{{ part.part_number }}</span></td>
-              <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
-              <td class="font-monospace small text-muted">
-                {% for ref in part.cross_refs %}{{ ref.ref_number }}{% if not loop.last %}, {% endif %}{% endfor %}
-              </td>
-              {% set op = part.for_org(org_id) %}
-              <td class="text-end fw-bold">
-                {% if op %}{{ op.price_with_vat | ils }}
-                {% else %}<span class="text-muted fw-normal small">התחבר לצפייה</span>{% endif %}
-              </td>
-              <td class="text-center">
-                {% if op %}
-                <span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
-                {% else %}<span class="text-muted">—</span>{% endif %}
-              </td>
-              <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_detail', part_id=part.id) }}">כרטיס</a></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="card-body text-muted">
-        אין מק"ט מסוג זה בקטלוג עבור הרכב הזה.
-        {% if coverage %}
-        <div class="mt-3">
-          <div class="small fw-bold mb-2">מה כן קיים בקטלוג לרכב הזה:</div>
-          <div class="d-flex flex-wrap gap-1">
-            {% for key, count in coverage.items() %}
-            <span class="badge bg-light text-dark border">{{ key | part_type_name }} ({{ count }})</span>
-            {% endfor %}
-          </div>
-        </div>
-        {% endif %}
-      </div>
-      {% endif %}
-    </div>
   </div>
+  {% endif %}
 </div>
 {% endif %}
 

@@ -26,6 +26,7 @@ def index():
         "selected_type": None,
         "matches": [],
         "coverage": {},
+        "searched": False,
         "org_id": services.current_org_id(),
         "error": None,
     }
@@ -35,6 +36,9 @@ def index():
     plate = request.form.get("plate", "").strip()
     query = request.form.get("query", "").strip()
     chosen_type = request.form.get("part_type", "").strip() or None
+    # שני כפתורים על אותו טופס. ברירת המחדל היא החיפוש המלא, כדי
+    # ששילוב ישן של השדות (וה-API) ימשיך לעבוד בלי action
+    action = request.form.get("action", "").strip() or "part"
     context.update(plate=plate, query=query)
 
     # שלב 1 - הרכב
@@ -44,6 +48,9 @@ def index():
         return render_template("identify.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)
+
+    if action == "vehicle":
+        return render_template("identify.html", **context)
 
     # שלב 2 - סוג החלק
     image_bytes = None
@@ -55,6 +62,10 @@ def index():
             context["error"] = "הקובץ גדול מ-5MB."
             return render_template("identify.html", **context)
         media_type = upload.mimetype or "image/jpeg"
+
+    if not (chosen_type or query or image_bytes):
+        context["error"] = "יש לתאר את החלק, לצלם אותו או לבחור אותו מהרשימה."
+        return render_template("identify.html", **context)
 
     if chosen_type:
         candidates = [
@@ -84,6 +95,7 @@ def index():
     context["selected_type"] = selected
     context["matches"] = services.parts_for_vehicle(vehicle, selected)
     context["org_id"] = services.current_org_id()
+    context["searched"] = True
     return render_template("identify.html", **context)
 
 

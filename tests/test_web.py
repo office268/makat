@@ -24,6 +24,53 @@ def test_demo_flow_crosses_vehicle_and_part_type(client):
     assert "TEST-001" in html         # ההצטלבות מצאה את המק"ט
 
 
+def test_vehicle_button_stops_after_identifying_the_vehicle(client):
+    """שלב 1 לבדו: מזהה רכב ולא מריץ חיפוש חלק."""
+    response = client.post("/", data={"plate": "12345678", "action": "vehicle",
+                                      "query": "רפידות קדמיות"})
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "COROLLA" in html                     # הרכב זוהה
+    assert "TEST-001" not in html                # החיפוש לא רץ
+    assert 'מק"טים מתאימים' not in html
+
+
+def test_identified_vehicle_sits_under_step_one(client):
+    """הרכב שזוהה שייך לשלב שיצר אותו, ולכן הוא מוצג לפני שלב 2."""
+    for action in ("vehicle", "part"):
+        html = client.post("/", data={"plate": "12345678", "action": action,
+                                      "query": "רפידות קדמיות"}).get_data(as_text=True)
+        assert html.index("הרכב שזוהה") < html.index("2. החלק"), action
+        assert html.index("1. מספר רישוי") < html.index("הרכב שזוהה"), action
+        assert html.count("הרכב שזוהה") == 1, action
+
+
+def test_part_button_runs_the_full_search(client):
+    """שלב 2: אותו טופס, כפתור אחר - מזהה רכב ומצליב מול הקטלוג."""
+    response = client.post("/", data={"plate": "12345678", "action": "part",
+                                      "query": "רפידות קדמיות"})
+    html = response.get_data(as_text=True)
+    assert "COROLLA" in html
+    assert "TEST-001" in html
+    assert "הרכב זוהה. עכשיו שלב 2." not in html
+
+
+def test_part_search_without_a_part_says_so(client):
+    """כפתור החלק בלי לתאר חלק - הודעה מפורשת, לא מסך שקט."""
+    response = client.post("/", data={"plate": "12345678", "action": "part"})
+    html = response.get_data(as_text=True)
+    assert "יש לתאר את החלק" in html
+    assert "COROLLA" in html          # הרכב עדיין מוצג, לא מאבדים את השלב הראשון
+
+
+def test_both_buttons_share_one_form(client):
+    """שדה מספר הרישוי משותף, ולכן אין שדה מוסתר שיכול להתיישן."""
+    html = client.get("/").get_data(as_text=True)
+    assert 'name="action" value="vehicle"' in html
+    assert 'name="action" value="part"' in html
+    assert html.count('name="plate"') == 1
+
+
 def test_demo_rejects_unknown_plate(client):
     response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)
