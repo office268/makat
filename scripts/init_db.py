@@ -1,15 +1,10 @@
 """הכנת בסיס הנתונים לפני עליית האפליקציה.
 
 משתני סביבה:
-  RESET_CATALOG=1   מוחק את תוכן הקטלוג (הרסני; ארגונים ומשתמשים נשארים)
-  SEED_DEMO=1       טוען קטלוג דמו אם הקטלוג ריק
-  SEED_DEMO=force   בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
-
-
-משתני סביבה:
-  RESET_CATALOG=1   מוחק את תוכן הקטלוג (הרסני; ארגונים ומשתמשים נשארים)
-  SEED_DEMO=1       טוען קטלוג דמו אם הקטלוג ריק
-  SEED_DEMO=force   בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
+  RESET_CATALOG=1        מוחק את תוכן הקטלוג (הרסני; ארגונים ומשתמשים נשארים)
+  IMPORT_PARTS_CSV=path  טוען מק"טים מקובץ CSV (בטוח להרצה חוזרת)
+  SEED_DEMO=1            טוען קטלוג דמו אם הקטלוג ריק
+  SEED_DEMO=force        בונה מחדש את קטלוג הדמו גם אם יש בו נתונים
 
 
 רץ כ-preDeployCommand ב-Railway: פעם אחת לכל דיפלוי, לפני שה-workers עולים.
@@ -83,6 +78,13 @@ def main():
             print("RESET_CATALOG=1 - מוחק את תוכן הקטלוג...")
             clear_catalog(app)
             count = 0
+
+        csv_path = os.environ.get("IMPORT_PARTS_CSV", "").strip()
+        if csv_path:
+            from scripts.import_parts_csv import load
+
+            print(f"IMPORT_PARTS_CSV - טוען מק\"טים מ-{csv_path}...")
+            load(app, csv_path)
 
         seed_mode = os.environ.get("SEED_DEMO", "")
         if seed_mode == "force":
