@@ -261,3 +261,26 @@ def test_rio_and_208_answer_a_plate(app):
             coverage = services.catalog_coverage({"make": make, "model": model,
                                                   "year": year})
             assert len(coverage) >= 2, f"{model}: {coverage}"
+
+
+def test_brake_discs_are_a_real_category_now(app):
+    """דיסקים קדמיים לשבעה דגמים - עמודי הדיסקים מציינים סרן במפורש,
+    ולכן אין בהם את אי-הבהירות שפסלה רפידות בסבבים הראשונים."""
+    from app import services
+
+    _load(app)
+    with app.app_context():
+        found = {
+            model
+            for model in ("COROLLA", "OCTAVIA", "RAV4", "TUCSON", "OUTLANDER",
+                          "GOLF", "RIO")
+            if Part.query.join(Part.fitments)
+            .filter(Part.part_type == "brake_disc_front")
+            .filter_by(model=model).first()
+        }
+        assert found == {"COROLLA", "OCTAVIA", "RAV4", "TUCSON", "OUTLANDER",
+                         "GOLF", "RIO"}, found
+        # והם נמצאים גם בחיפוש לפי רכב, לא רק בקטלוג
+        assert services.parts_for_vehicle(
+            {"make": "טויוטה יפן", "model": "RAV4", "year": 2020},
+            "brake_disc_front")
