@@ -123,6 +123,11 @@ class Part(db.Model):
             None,
         )
 
+    @property
+    def oem_numbers(self):
+        """המק"טים המקוריים (OEM) של החלק, לפי סדר ההזנה."""
+        return [ref.ref_number for ref in self.cross_refs if ref.ref_type == "OEM"]
+
     def to_dict(self, full=False, organization_id=None):
         data = {
             "id": self.id,
