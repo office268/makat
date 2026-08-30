@@ -35,8 +35,9 @@ def test_vehicle_button_stops_after_identifying_the_vehicle(client):
     assert 'מק"טים מתאימים' not in html
 
 
-def test_identified_vehicle_sits_under_step_one(client):
+def test_identified_vehicle_sits_under_step_one(app, client):
     """הרכב שזוהה שייך לשלב שיצר אותו, ולכן הוא מוצג לפני שלב 2."""
+    app.config["SHOW_PART_STEP"] = True
     for action in ("vehicle", "part"):
         html = client.post("/", data={"plate": "12345678", "action": action,
                                       "query": "רפידות קדמיות"}).get_data(as_text=True)
@@ -63,16 +64,18 @@ def test_part_search_without_a_part_says_so(client):
     assert "COROLLA" in html          # הרכב עדיין מוצג, לא מאבדים את השלב הראשון
 
 
-def test_both_buttons_share_one_form(client):
+def test_both_buttons_share_one_form(app, client):
     """שדה מספר הרישוי משותף, ולכן אין שדה מוסתר שיכול להתיישן."""
+    app.config["SHOW_PART_STEP"] = True
     html = client.get("/").get_data(as_text=True)
     assert 'name="action" value="vehicle"' in html
     assert 'name="action" value="part"' in html
     assert html.count('name="plate"') == 1
 
 
-def test_buttons_carry_a_waiting_label(client):
+def test_buttons_carry_a_waiting_label(app, client):
     """זיהוי הרכב פונה למאגר חיצוני - הכפתור חייב להראות שמשהו קורה."""
+    app.config["SHOW_PART_STEP"] = True
     html = client.get("/").get_data(as_text=True)
     assert "data-busy-form" in html
     assert 'data-busy-label="מזהה רכב..."' in html
@@ -342,3 +345,34 @@ def test_the_home_page_without_a_plate_is_unchanged(client):
     html = client.get("/").get_data(as_text=True)
     assert 'name="plate"' in html
     assert "הרכב שזוהה" not in html
+
+
+def test_part_step_is_hidden_by_default(client):
+    """שלב 2 מוסתר כרגע - מוסתר, לא בוטל."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "2. החלק" not in html
+    assert 'name="action" value="part"' not in html
+    assert "או בחירה ידנית" not in html
+    # שלב 1 ורצועת הכיסוי - הדרך שנשארה לחלפים - עדיין שם
+    assert "1. מספר רישוי" in html
+    assert "מה קיים בקטלוג לרכב הזה" in html
+    assert "part_type=brake_pads_front" in html
+
+
+def test_hiding_the_step_did_not_break_the_search_behind_it(client):
+    """המסלול לא נגע: קישור הכיסוי וגם POST ישן ממשיכים להחזיר מק"טים."""
+    from_link = client.get("/?plate=12345678&part_type=brake_pads_front")
+    assert "TEST-001" in from_link.get_data(as_text=True)
+
+    from_post = client.post("/", data={"plate": "12345678", "action": "part",
+                                       "query": "רפידות קדמיות"})
+    assert "TEST-001" in from_post.get_data(as_text=True)
+
+
+def test_the_step_comes_back_with_a_flag(app, client):
+    """SHOW_PART_STEP=1 מחזיר את שלב 2 בלי שינוי קוד."""
+    app.config["SHOW_PART_STEP"] = True
+    html = client.get("/").get_data(as_text=True)
+    assert "2. החלק" in html
+    assert 'name="action" value="part"' in html
