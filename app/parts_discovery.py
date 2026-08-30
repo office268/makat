@@ -1,0 +1,402 @@
+"""גילוי מק"טים מהאינטרנט, באמצעות Claude עם חיפוש רשת.
+
+למה דרך מודל ולא גרידה ישירה: קטלוג מקוון מציג בעמוד של דגם גם חלקים
+שאינם שלו. בעמוד הקורולה נמצא מסנן שהתיאור שלו אומר CHERY AMULET,
+ובעמוד האוקטביה מסנן עם מספר OE של מרצדס. גרידה תמימה מכניסה את שניהם.
+המודל קורא את הדף ומחזיר רק את מה שהוא מזהה כשייך לרכב.
+
+התוצאות נכנסות לקטלוג ישירות, ולכן האימות כאן הוא ההגנה היחידה:
+כל מועמד עובר בדיקת מבנה, סוג חלק מוכר, ופסילה אם מוזכר בו יצרן רכב
+אחר מזה שביקשנו. כל מק"ט שנוסף מסומן ב-notes כמקורו, כדי שניתן יהיה
+לאתר ולמחוק את כל מה שהגיע מכאן.
+"""
+import json
+import os
+import re
+
+from .taxonomy import PART_TYPES, type_name
+
+DISCOVERY_MODEL = os.environ.get("DISCOVERY_MODEL", "claude-opus-5")
+# גרסת כלי חיפוש הרשת של Anthropic. ניתנת להחלפה בלי פריסה, כי היא
+# משתנה מעת לעת והשם השגוי נכשל בזמן הקריאה ולא בזמן העלייה.
+WEB_SEARCH_TOOL = os.environ.get("WEB_SEARCH_TOOL", "web_search_20250305")
+MAX_SEARCHES = int(os.environ.get("DISCOVERY_MAX_SEARCHES", 6))
+
+SOURCE_NOTE = "נוסף בחיפוש אינטרנט אוטומטי (Claude). מקור לא רשמי."
+
+# יצרני רכב מוכרים, לזיהוי מועמד ששייך לרכב אחר
+KNOWN_MARQUES = {
+    "toyota", "lexus", "honda", "mazda", "nissan", "mitsubishi", "suzuki",
+    "subaru", "hyundai", "kia", "ssangyong", "chery", "geely", "byd", "mg",
+    "vw", "volkswagen", "audi", "skoda", "seat", "porsche", "bmw", "mini",
+    "mercedes", "smart", "opel", "ford", "chevrolet", "cadillac", "jeep",
+    "chrysler", "dodge", "peugeot", "citroen", "citroën", "renault", "dacia",
+    "fiat", "alfa", "lancia", "volvo", "jaguar", "land rover", "tesla",
+}
+
+HEBREW_TO_MARQUE = {
+    "טויוטה": "toyota", "לקסוס": "lexus", "הונדה": "honda", "מאזדה": "mazda",
+    "ניסאן": "nissan", "מיצובישי": "mitsubishi", "סוזוקי": "suzuki",
+    "סובארו": "subaru", "יונדאי": "hyundai", "קיה": "kia", "פיג'ו": "peugeot",
+    "סיטרואן": "citroen", "רנו": "renault", "סקודה": "skoda", "סיאט": "seat",
+    "פולקסווגן": "volkswagen", "אאודי": "audi", "אודי": "audi", "פורד": "ford",
+    "אופל": "opel", "שברולט": "chevrolet", "מרצדס": "mercedes", "וולוו": "volvo",
+    "מאזדה3": "mazda",
+}
+
+
+def discovery_available():
+    """האם יש SDK ומפתח. מקביל ל-vision_available."""
+    try:
+        import anthropic  # noqa: F401
+    except ImportError:
+        return False
+    return bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    )
+
+
+def marque_of(make):
+    """שם היצרן בלועזית, מהעברית או כמו שהוא."""
+    key = (make or "").strip()
+    return HEBREW_TO_MARQUE.get(key, key.lower())
+
+
+def build_prompt(make, model, part_type):
+    """ההנחיה למודל. מבקשת JSON בלבד, ומפרטת מה לפסול."""
+    return f"""חפש באינטרנט מק"טים אמיתיים של {type_name(part_type)} לרכב:
+יצרן: {make} ({marque_of(make)})
+דגם: {model}
+
+החזר JSON בלבד, בלי טקסט נוסף, במבנה:
+{{"parts": [
+  {{"part_number": "מק\\"ט היצרן", "manufacturer": "שם יצרן החלק",
+    "oe_number": "מספר OE מקורי או ריק", "oe_brand": "יצרן ה-OE או ריק",
+    "price_eur": מספר או null, "source_url": "הכתובת שממנה נלקח",
+    "confidence": "high" או "low", "note": "הערה קצרה"}}
+]}}
+
+כללים מחייבים:
+- רק חלקים שאתה מזהה כמתאימים ל{make} {model}. קטלוג מקוון מציג בעמוד
+  של דגם גם חלקים של רכבים אחרים - אל תכלול אותם.
+- אם מספר ה-OE שייך ליצרן רכב אחר, אל תכלול את החלק.
+- אם אינך בטוח שהחלק מתאים לדגם, סמן confidence: "low".
+- אל תמציא מק"ט. אם לא מצאת, החזר רשימה ריקה.
+- עד 8 חלפים.
+"""
+
+
+def _json_from(text):
+    """מחלץ את אובייקט ה-JSON מהתשובה, גם אם עטוף בטקסט או ב-fence."""
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    if fenced:
+        text = fenced.group(1)
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:index + 1])
+                except ValueError:
+                    return None
+    return None
+
+
+def _mentions_other_marque(text, wanted):
+    """האם בטקסט מוזכר יצרן רכב אחר מזה שביקשנו.
+
+    זה השומר שתופס את המקרה שראינו בפועל: חלק של CHERY שהופיע
+    בעמוד של קורולה, והתיאור שלו הסגיר את זה.
+    """
+    low = (text or "").lower()
+    for marque in KNOWN_MARQUES:
+        if marque == wanted:
+            continue
+        if re.search(rf"(?<![a-z]){re.escape(marque)}(?![a-z])", low):
+            return marque
+    return None
+
+
+def validate(candidates, make, model, part_type):
+    """מחזיר (מאושרים, [(מק"ט, סיבת פסילה)]).
+
+    בלי סקירה אנושית זו ההגנה היחידה, ולכן היא מחמירה: ספק נפסל.
+    """
+    wanted = marque_of(make)
+    accepted, rejected = [], []
+    seen = set()
+
+    for raw in candidates or []:
+        if not isinstance(raw, dict):
+            rejected.append(("?", "רשומה שאינה אובייקט"))
+            continue
+        number = str(raw.get("part_number") or "").strip()
+        maker = str(raw.get("manufacturer") or "").strip()
+        note = str(raw.get("note") or "")
+
+        if not number:
+            rejected.append(("?", 'חסר מק"ט'))
+        elif len(number) > 80:
+            rejected.append((number[:40], 'מק"ט ארוך מדי'))
+        elif not maker:
+            rejected.append((number, "חסר יצרן חלק"))
+        elif part_type not in PART_TYPES:
+            rejected.append((number, f"סוג חלק לא מוכר: {part_type}"))
+        elif str(raw.get("confidence") or "").lower() != "high":
+            rejected.append((number, "המודל לא היה בטוח בהתאמה"))
+        elif number.lower() in seen:
+            rejected.append((number, "כפול בתשובה"))
+        else:
+            other = _mentions_other_marque(f"{note} {maker}", wanted)
+            if other:
+                rejected.append((number, f"מוזכר בו יצרן רכב אחר: {other}"))
+                continue
+            oe_brand = str(raw.get("oe_brand") or "")
+            other = _mentions_other_marque(oe_brand, wanted)
+            if other:
+                rejected.append((number, f"מספר OE של יצרן אחר: {other}"))
+                continue
+            seen.add(number.lower())
+            accepted.append({
+                "part_number": number,
+                "manufacturer": maker,
+                "part_type": part_type,
+                "oe_number": str(raw.get("oe_number") or "").strip(),
+                "oe_brand": oe_brand.strip(),
+                "price_eur": raw.get("price_eur"),
+                "source_url": str(raw.get("source_url") or "").strip()[:500],
+                "make": make,
+                "model": model,
+            })
+    return accepted, rejected
+
+
+def search(make, model, part_type, client=None):
+    """שואל את Claude ומחזיר מועמדים גולמיים. מרים חריגה בכשל."""
+    if client is None:
+        import anthropic
+
+        client = anthropic.Anthropic()
+
+    response = client.messages.create(
+        model=DISCOVERY_MODEL,
+        max_tokens=4000,
+        tools=[{
+            "type": WEB_SEARCH_TOOL,
+            "name": "web_search",
+            "max_uses": MAX_SEARCHES,
+        }],
+        messages=[{"role": "user", "content": build_prompt(make, model, part_type)}],
+    )
+    text = "".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    )
+    payload = _json_from(text)
+    if payload is None:
+        raise ValueError("התשובה מהמודל אינה JSON תקין")
+    return payload.get("parts") or []
+
+
+# --------------------------------------------------------------------------
+# עבודת גילוי: מטרה אחת (דגם × סוג חלק) לכל בקשה
+# --------------------------------------------------------------------------
+from datetime import datetime, timezone  # noqa: E402
+
+from .models import Part, db  # noqa: E402
+from .services import get_or_create_manufacturer, get_or_create_category  # noqa: E402
+from .models import CrossReference, Fitment  # noqa: E402
+
+CATEGORY_OF = {
+    "oil_filter": "מסננים", "air_filter": "מסננים", "cabin_filter": "מסננים",
+    "fuel_filter": "מסננים",
+}
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+class DiscoveryJob(db.Model):
+    """הרצת גילוי אחת. המטרות בתור, אחת לכל בקשה.
+
+    קריאה למודל עם חיפוש רשת יכולה לקחת עשרות שניות, ו-gunicorn הורג
+    בקשה אחרי 60. לכן אותו דפוס כמו ייבוא דגמי הרכב: הדפדפן מבקש מטרה
+    אחת בכל פעם, וההתקדמות יושבת ב-DB כדי ששני ה-workers יראו אותה.
+    """
+
+    __tablename__ = "discovery_jobs"
+
+    RUNNING, DONE, FAILED, CANCELLED = "running", "done", "failed", "cancelled"
+    STATUS_LABELS = {RUNNING: "בתהליך", DONE: "הושלם",
+                     FAILED: "נכשל", CANCELLED: "בוטל"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20), default=RUNNING, nullable=False, index=True)
+    targets = db.Column(db.Text, nullable=False)     # JSON: [[make, model, type], ...]
+    cursor = db.Column(db.Integer, default=0, nullable=False)
+    created = db.Column(db.Integer, default=0, nullable=False)
+    updated = db.Column(db.Integer, default=0, nullable=False)
+    rejected = db.Column(db.Integer, default=0, nullable=False)
+    log = db.Column(db.Text, default="")             # מה נוסף ומה נפסל, ולמה
+    error = db.Column(db.Text)
+    started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    started_at = db.Column(db.DateTime, default=_now)
+    updated_at = db.Column(db.DateTime, default=_now)
+    finished_at = db.Column(db.DateTime)
+
+    @property
+    def target_list(self):
+        try:
+            return json.loads(self.targets) or []
+        except ValueError:
+            return []
+
+    @property
+    def total(self):
+        return len(self.target_list)
+
+    @property
+    def is_running(self):
+        return self.status == self.RUNNING
+
+    @property
+    def progress_pct(self):
+        return min(100, round(self.cursor * 100 / self.total)) if self.total else 0
+
+    @property
+    def status_label(self):
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "status": self.status, "status_label": self.status_label,
+            "cursor": self.cursor, "total": self.total, "created": self.created,
+            "updated": self.updated, "rejected": self.rejected,
+            "progress_pct": self.progress_pct, "is_running": self.is_running,
+            "error": self.error, "log": (self.log or "").strip().split("\n")[-40:],
+        }
+
+
+def active_job():
+    return (
+        DiscoveryJob.query.filter_by(status=DiscoveryJob.RUNNING)
+        .order_by(DiscoveryJob.id.desc()).first()
+    )
+
+
+def latest_job():
+    return DiscoveryJob.query.order_by(DiscoveryJob.id.desc()).first()
+
+
+def start_job(targets, user_id=None):
+    """פותח הרצה. מטרה = (יצרן, דגם, סוג חלק)."""
+    existing = active_job()
+    if existing is not None:
+        return existing
+    job = DiscoveryJob(
+        targets=json.dumps(targets, ensure_ascii=False),
+        started_by_id=user_id,
+        log="",
+    )
+    db.session.add(job)
+    db.session.commit()
+    return job
+
+
+def cancel_job(job):
+    if job is not None and job.is_running:
+        job.status = DiscoveryJob.CANCELLED
+        job.finished_at = _now()
+        db.session.commit()
+    return job
+
+
+def save(accepted):
+    """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו)."""
+    created = updated = 0
+    for row in accepted:
+        part = Part.query.filter_by(part_number=row["part_number"]).first()
+        is_new = part is None
+        if is_new:
+            part = Part(part_number=row["part_number"])
+            db.session.add(part)
+            part.name_he = f'{type_name(row["part_type"])} {row["model"]}'
+            part.part_type = row["part_type"]
+            part.category = get_or_create_category(
+                CATEGORY_OF.get(row["part_type"], "כללי")
+            )
+        part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
+        part.notes = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
+
+        # התאמה חדשה מתווספת; קיימת לא משוכפלת
+        exists = any(
+            (f.make or "") == row["make"] and (f.model or "") == row["model"]
+            for f in part.fitments
+        )
+        if not exists:
+            part.fitments.append(Fitment(make=row["make"], model=row["model"]))
+        if row.get("oe_number") and not any(
+            r.ref_number == row["oe_number"] for r in part.cross_refs
+        ):
+            part.cross_refs.append(
+                CrossReference(
+                    ref_type="OEM", ref_number=row["oe_number"],
+                    ref_brand=row.get("oe_brand") or None,
+                )
+            )
+        created += 1 if is_new else 0
+        updated += 0 if is_new else 1
+    db.session.commit()
+    return created, updated
+
+
+def run_step(job, searcher=None):
+    """מטרה אחת: חיפוש, אימות, כתיבה. מחזיר את העבודה."""
+    if not job.is_running:
+        return job
+    targets = job.target_list
+    if job.cursor >= len(targets):
+        job.status = DiscoveryJob.DONE
+        job.finished_at = _now()
+        db.session.commit()
+        return job
+
+    make, model, part_type = targets[job.cursor]
+    lines = []
+    try:
+        raw = (searcher or search)(make, model, part_type)
+    except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
+        job.error = f"{make} {model} · {type_name(part_type)}: {exc}"
+        job.cursor += 1
+        job.updated_at = _now()
+        db.session.commit()
+        return job
+
+    accepted, rejected = validate(raw, make, model, part_type)
+    created, updated = save(accepted)
+    job.created += created
+    job.updated += updated
+    job.rejected += len(rejected)
+
+    header = f"{make} {model} · {type_name(part_type)}"
+    lines.append(f"{header}: נוספו {created}, עודכנו {updated}, נפסלו {len(rejected)}")
+    for number, reason in rejected[:5]:
+        lines.append(f"    ✗ {number} — {reason}")
+
+    job.log = ((job.log or "") + "\n".join(lines) + "\n")[-8000:]
+    job.error = None
+    job.cursor += 1
+    job.updated_at = _now()
+    if job.cursor >= len(targets):
+        job.status = DiscoveryJob.DONE
+        job.finished_at = _now()
+    db.session.commit()
+    return job

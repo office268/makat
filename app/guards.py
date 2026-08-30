@@ -23,6 +23,9 @@ MUTATING_ENDPOINTS = frozenset(
         "admin.vehicle_import_start",
         "admin.vehicle_import_step",
         "admin.vehicle_import_cancel",
+        "admin.discovery_start",
+        "admin.discovery_step",
+        "admin.discovery_cancel",
     }
 )
 
