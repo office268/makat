@@ -109,6 +109,38 @@ def test_vehicle_card_hides_empty_fields(client):
     assert "צמיג קדמי" not in html
 
 
+def test_catalog_browsable_without_searching(client):
+    """עיון בכל הקטלוג בלי להזין כלום - הרשימה, הספירה, וההתאמות."""
+    html = client.get("/parts").get_data(as_text=True)
+    assert "TEST-001" in html                 # המק"ט מה-fixture פשוט מוצג
+    assert 'קטלוג מק"טים' in html
+    assert "מתאים ל" in html                  # לאיזה רכב, לא רק שם
+    assert "COROLLA" in html                  # ההתאמה עצמה מוצגת
+
+
+def test_home_links_to_the_full_catalog(client):
+    """מהמסך הראשי אפשר להגיע לקטלוג בלי לחפש."""
+    html = client.get("/").get_data(as_text=True)
+    assert "עיון בכל הקטלוג" in html
+    assert 'href="/parts"' in html
+
+
+def test_filters_stay_open_when_a_filter_is_active(client):
+    """הסינון מקופל בטלפון, אבל לא כשהמשתמש כבר סינן משהו."""
+    plain = client.get("/parts").get_data(as_text=True)
+    filtered = client.get("/parts?q=TEST").get_data(as_text=True)
+    form_plain = plain.split('id="filters"')[0][-120:]
+    form_filtered = filtered.split('id="filters"')[0][-120:]
+    assert "show" not in form_plain
+    assert "show" in form_filtered
+
+
+def test_empty_filter_result_offers_a_way_back(client):
+    html = client.get("/parts?q=לאקייםבכלל").get_data(as_text=True)
+    assert "לא נמצאו מק\"טים לסינון הזה" in html
+    assert "להצגת כל הקטלוג" in html
+
+
 def test_demo_rejects_unknown_plate(client):
     response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)

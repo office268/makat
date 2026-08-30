@@ -100,6 +100,12 @@
   </div>
 </form>
 
+<p class="text-center">
+  <a href="{{ url_for('web.parts_list') }}">
+    או עיון בכל הקטלוג{% if catalog_size %} ({{ "{:,}".format(catalog_size) }} מק"טים){% endif %}
+  </a>
+</p>
+
 {% if searched %}
 {% if candidates %}
 <div class="card mb-3">

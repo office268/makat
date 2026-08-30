@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, redirect, render_template, request, url_fo
 
 from .. import identify as identifier
 from .. import services, vehicles
+from ..models import Part
 from ..taxonomy import all_types, type_name
 
 identify_bp = Blueprint("identify", __name__)
@@ -18,6 +19,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 def index():
     context = {
         "part_types": all_types(),
+        "catalog_size": Part.query.count(),
         "vision_on": identifier.vision_available(),
         "plate": "",
         "query": "",
