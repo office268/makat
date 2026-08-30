@@ -39,3 +39,13 @@ footer a { color: var(--brand); }
   text-overflow: ellipsis;
 }
 .table-nowrap .cell-truncate.cell-wide { max-width: 32ch; }
+
+/* פקודת הרצה בתוך דף בעברית: היא אנגלית מתחילתה ועד סופה, ולכן היא
+   מסומנת dir="ltr" ונקראת משמאל לימין. בטלפון היא ארוכה מרוחב המסך,
+   ו-pre רגיל היה חותך אותה בקצה - הגלילה האופקית שם קיימת אבל אף אחד
+   לא מנחש שהיא שם. לכן היא נשברת בין מילים ומוצגת במלואה. */
+.command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
