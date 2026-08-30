@@ -237,3 +237,27 @@ def test_a_hyphenated_model_is_found_either_way(app):
         for model in ("C-HR", "CHR", "C HR"):
             assert services.parts_for_vehicle(
                 {"make": "טויוטה יפן", "model": model, "year": 2019}), model
+
+
+def test_parts_shared_across_makes_carry_every_fitment(app):
+    """מק"ט אחד שמופיע בעמוד של שני דגמים - שורה אחת, שתי התאמות."""
+    _load(app)
+    with app.app_context():
+        # FEBI 32223 נושא OE 1109.AL, ומופיע בעמוד ה-5008 ובעמוד ה-208
+        peugeot = Part.query.filter_by(part_number="32223").one()
+        assert {f.model for f in peugeot.fitments} == {"5008", "208"}
+        # אותו מסנן אוויר, OE 17801-0T060, ב-C-HR וב-RAV4
+        toyota = Part.query.filter_by(part_number="FA-2017S").one()
+        assert {f.model for f in toyota.fitments} == {"C-HR", "RAV4"}
+
+
+def test_rio_and_208_answer_a_plate(app):
+    from app import services
+
+    _load(app)
+    with app.app_context():
+        for make, model, year in [("קיה קוריאה", "RIO", 2019),
+                                  ("פיג'ו צרפת", "208", 2017)]:
+            coverage = services.catalog_coverage({"make": make, "model": model,
+                                                  "year": year})
+            assert len(coverage) >= 2, f"{model}: {coverage}"
