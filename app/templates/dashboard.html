@@ -62,7 +62,7 @@
         {% for part in recent %}
         <li class="list-group-item d-flex justify-content-between align-items-center">
           <span>
-            <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold">{{ part.part_number }}</a>
+            <a href="{{ url_for('web.part_detail', part_id=part.id) }}" class="fw-bold sku">{{ part.part_number }}</a>
             <span class="text-muted">{{ part.name_he }}</span>
           </span>
           {% set op = part.for_org(org_id) %}
@@ -81,7 +81,7 @@
         {% for link in low_stock %}
         <li class="list-group-item d-flex justify-content-between align-items-center">
           <span>
-            <a href="{{ url_for('web.part_detail', part_id=link.part.id) }}" class="fw-bold">{{ link.part.part_number }}</a>
+            <a href="{{ url_for('web.part_detail', part_id=link.part.id) }}" class="fw-bold sku">{{ link.part.part_number }}</a>
             <span class="text-muted">{{ link.part.name_he }}</span>
           </span>
           <span class="badge bg-warning text-dark">במלאי: {{ link.stock_qty }} / מינ' {{ link.min_stock }}</span>
