@@ -18,7 +18,7 @@ def _load(app):
 def test_file_imports_without_errors(app):
     created, updated, errors = _load(app)
     assert errors == []
-    assert created >= 10
+    assert created >= 40
 
 
 def test_plate_to_part_number_actually_resolves(app):
@@ -49,6 +49,34 @@ def test_every_row_is_marked_as_demo_data(app):
         parts = Part.query.all()
         assert parts
         assert all("נתוני הדגמה" in (p.notes or "") for p in parts)
+
+
+def test_shared_part_number_keeps_every_fitment(app):
+    """מק"ט אחד מתאים לכמה דגמים, ולכן שורה אחת נושאת את כל ההתאמות.
+
+    שתי שורות עם אותו מק"ט היו דורסות זו את זו - הייבוא מחליף את
+    אוסף ההתאמות, ולא מוסיף לו.
+    """
+    _load(app)
+    with app.app_context():
+        part = Part.query.filter_by(part_number="W 67/1").one()
+        assert {f.model for f in part.fitments} == {"PICANTO", "QASHQAI", "CLIO"}
+
+
+def test_catalog_covers_the_common_israeli_models(app):
+    _load(app)
+    with app.app_context():
+        expected = [
+            ("פיג'ו צרפת", "5008", 2020), ("טויוטה יפן", "COROLLA", 2016),
+            ("טויוטה יפן", "YARIS", 2018), ("יונדאי קוריאה", "i20", 2021),
+            ("קיה קוריאה", "PICANTO", 2019), ("קיה קוריאה", "SPORTAGE", 2020),
+            ("מאזדה יפן", "3", 2017), ("סקודה צ'כיה", "OCTAVIA", 2019),
+            ("ניסאן יפן", "QASHQAI", 2018), ("רנו צרפת", "CLIO", 2020),
+            ("יונדאי קוריאה", "TUCSON", 2022),
+        ]
+        for make, model, year in expected:
+            vehicle = {"make": make, "model": model, "year": year}
+            assert services.catalog_coverage(vehicle), f"{make} {model} בלי חלפים"
 
 
 def test_oe_cross_references_came_through(app):
