@@ -153,13 +153,61 @@ def test_welcome_page_renders_the_car(client):
 def test_welcome_car_links_into_the_app(client):
     """הלחיצה על המכונית היא קישור אמיתי, גם בלי JavaScript."""
     html = client.get("/welcome").get_data(as_text=True)
-    assert 'id="enter-app" href="/"' in html
+    assert 'id="enter-app" href="/enter?next=/"' in html
 
 
 def test_welcome_honours_next_but_not_external_targets(client):
     html = client.get("/welcome?next=/parts").get_data(as_text=True)
-    assert 'id="enter-app" href="/parts"' in html
+    assert 'id="enter-app" href="/enter?next=/parts"' in html
 
     html = client.get("/welcome?next=https://evil.example/x").get_data(as_text=True)
     assert "evil.example" not in html
-    assert 'id="enter-app" href="/"' in html
+    assert 'id="enter-app" href="/enter?next=/"' in html
+
+
+# ---------- שער הכניסה ----------
+
+def test_visitor_meets_the_car_before_the_app(visitor):
+    """הדבר הראשון שרואים בפתיחת האפליקציה הוא המכונית."""
+    response = visitor.get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/welcome")
+
+
+def test_clicking_the_car_opens_the_app_and_does_not_ask_again(visitor):
+    enter = visitor.get("/enter?next=/")
+    assert enter.status_code == 302
+    assert enter.headers["Location"] == "/"
+    # מכאן והלאה נכנסים ישר לאפליקציה, בלי לעבור שוב במסך הפתיחה
+    assert visitor.get("/").status_code == 200
+
+
+def test_enter_ignores_external_targets(visitor):
+    response = visitor.get("/enter?next=https://evil.example/x")
+    assert response.headers["Location"] == "/"
+
+
+def test_shared_result_link_skips_the_splash(visitor):
+    """קישור עם מספר רישוי הוא תוצאה ששיתפו - אסור שיתאדה למסך פתיחה."""
+    assert visitor.get("/?plate=12345678").status_code == 200
+
+
+def test_search_post_is_never_gated(visitor):
+    response = visitor.post("/", data={"plate": "12345678", "query": "רפידות קדמיות"})
+    assert response.status_code == 200
+    assert "TEST-001" in response.get_data(as_text=True)
+
+
+def test_other_screens_open_directly(visitor):
+    """קישור עמוק שנשלח לעובד נפתח במקום שאליו הוא מצביע."""
+    for route in ["/parts", "/vehicles", "/login", "/signup", "/healthz"]:
+        assert visitor.get(route).status_code == 200, route
+
+
+def test_login_counts_as_entering(app, org):
+    """אחרי התחברות נוחתים באפליקציה, לא חוזרים למכונית."""
+    fresh = app.test_client()
+    response = fresh.post("/login", data={"email": "owner@t.test",
+                                          "password": "password123"})
+    assert response.headers["Location"] == "/"
+    assert fresh.get("/").status_code == 200
