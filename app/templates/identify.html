@@ -24,22 +24,32 @@
 
   {% if vehicle %}
   <div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>הרכב שזוהה</span>
-      <span class="badge {% if vehicle.source == 'data.gov.il' %}bg-success{% else %}bg-secondary{% endif %}">
-        {{ vehicle.source }}
-      </span>
-    </div>
+    <div class="card-header">הרכב שזוהה</div>
     <div class="card-body">
-      <div class="plate-badge mb-3">{{ vehicle.plate_display }}</div>
+      {# מספר הרישוי לא חוזר כאן - הוא כבר על המסך, בשדה של שלב 1 #}
       <h5 class="mb-1">{{ vehicle.make }} {{ vehicle.model }}</h5>
       <p class="text-muted small mb-3">{{ vehicle.trim }}</p>
+      {% set details = [
+        ("שנת ייצור", vehicle.year),
+        ("קוד דגם", vehicle.model_code),
+        ("קוד מנוע", vehicle.engine_code),
+        ("סוג דלק", vehicle.fuel),
+        ("צבע", vehicle.color),
+        ("מספר שלדה", vehicle.vin),
+        ("בעלות", vehicle.ownership),
+        ("עלה לכביש", vehicle.first_on_road),
+        ("מבחן אחרון", vehicle.last_test),
+        ("טסט עד", vehicle.test_valid_until),
+        ("צמיג קדמי", vehicle.tyre_front),
+        ("צמיג אחורי", vehicle.tyre_rear),
+        ("קבוצת זיהום", vehicle.pollution_group),
+        ("רמת אבזור בטיחותי", vehicle.safety_level),
+      ] %}
+      {# שורה ריקה לא מוסיפה מידע, ולכן שדה חסר פשוט לא מופיע #}
       <dl class="row mb-0 small">
-        <dt class="col-5">שנת ייצור</dt><dd class="col-7">{{ vehicle.year or '-' }}</dd>
-        <dt class="col-5">קוד מנוע</dt><dd class="col-7">{{ vehicle.engine_code or '-' }}</dd>
-        <dt class="col-5">סוג דלק</dt><dd class="col-7">{{ vehicle.fuel or '-' }}</dd>
-        <dt class="col-5">צבע</dt><dd class="col-7">{{ vehicle.color or '-' }}</dd>
-        <dt class="col-5">טסט עד</dt><dd class="col-7">{{ vehicle.test_valid_until or '-' }}</dd>
+        {% for label, value in details %}{% if value %}
+        <dt class="col-5">{{ label }}</dt><dd class="col-7">{{ value }}</dd>
+        {% endif %}{% endfor %}
       </dl>
       {% if vehicle.source != 'data.gov.il' %}
       <div class="alert alert-secondary small mt-3 mb-0">

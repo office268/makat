@@ -79,6 +79,36 @@ def test_buttons_carry_a_waiting_label(client):
     assert "data-busy-label" in html.split('value="part"')[1][:200]
 
 
+def test_vehicle_card_drops_source_and_duplicate_plate(client):
+    """המקור הוא פרט פנימי, ומספר הרישוי כבר מוצג בשדה של שלב 1."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "COROLLA" in html
+    assert "data.gov.il" not in html
+    assert "plate-badge" not in html
+    # 12345678 מוצג כ-123-45-678. הצורה המעוצבת הייתה העותק השני;
+    # 12-345-678 שכן מופיע הוא ה-placeholder של השדה, לא ערך.
+    assert "123-45-678" not in html
+    assert html.count('value="12345678"') == 1    # רק השדה של שלב 1
+
+
+def test_vehicle_card_shows_the_extra_fields_it_has(client):
+    """שדות שהמאגר מחזיק ולא הוצגו: קוד דגם ומספר שלדה."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "ZRE172L" in html                       # קוד דגם
+    assert "DEMO0000000000001" in html             # מספר שלדה
+    assert "מספר שלדה" in html
+
+
+def test_vehicle_card_hides_empty_fields(client):
+    """שדה שאין לו ערך לא מופיע כשורה ריקה."""
+    html = client.post("/", data={"plate": "12345678",
+                                  "action": "vehicle"}).get_data(as_text=True)
+    assert "בעלות" not in html          # לא קיים בקובץ הדוגמאות
+    assert "צמיג קדמי" not in html
+
+
 def test_demo_rejects_unknown_plate(client):
     response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)

@@ -68,6 +68,15 @@ def _normalize_record(row, source):
         "color": (row.get("tzeva_rechev") or "").strip(),
         "vin": (row.get("misgeret") or "").strip(),
         "test_valid_until": (row.get("tokef_dt") or "").strip(),
+        # שדות נוספים שהמאגר מחזיק. מוצגים רק כשהם מלאים, ולכן שדה
+        # שלא קיים ברשומה פשוט לא מופיע במקום להציג שורה ריקה.
+        "ownership": (row.get("baalut") or "").strip(),
+        "first_on_road": (row.get("moed_aliya_lakvish") or "").strip(),
+        "last_test": (row.get("mivchan_acharon_dt") or "").strip(),
+        "tyre_front": (row.get("zmig_kidmi") or "").strip(),
+        "tyre_rear": (row.get("zmig_ahori") or "").strip(),
+        "pollution_group": str(row.get("kvutzat_zihum") or "").strip(),
+        "safety_level": str(row.get("ramat_eivzur_betihuty") or "").strip(),
         "source": source,
     }
 
