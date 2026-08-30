@@ -32,15 +32,22 @@ def index():
         "org_id": services.current_org_id(),
         "error": None,
     }
-    if request.method != "POST":
+    # GET עם מספר רישוי הוא תוצאה שאפשר לשתף, לסמן ולחזור אליה עם "אחורי" -
+    # וזה מה שמאפשר לתגיות הכיסוי להיות קישורים רגילים ולא כפתורי JS.
+    source = request.form if request.method == "POST" else request.args
+    plate = source.get("plate", "").strip()
+    if request.method != "POST" and not plate:
         return render_template("identify.html", **context)
 
-    plate = request.form.get("plate", "").strip()
-    query = request.form.get("query", "").strip()
-    chosen_type = request.form.get("part_type", "").strip() or None
-    # שני כפתורים על אותו טופס. ברירת המחדל היא החיפוש המלא, כדי
-    # ששילוב ישן של השדות (וה-API) ימשיך לעבוד בלי action
-    action = request.form.get("action", "").strip() or "part"
+    query = source.get("query", "").strip()
+    chosen_type = source.get("part_type", "").strip() or None
+    if request.method == "POST":
+        # שני כפתורים על אותו טופס. ברירת המחדל היא החיפוש המלא, כדי
+        # ששילוב ישן של השדות (וה-API) ימשיך לעבוד בלי action
+        action = request.form.get("action", "").strip() or "part"
+    else:
+        # בקישור אין כפתור: סוג חלק בכתובת אומר "חפש", בלעדיו רק לזהות
+        action = "part" if chosen_type else "vehicle"
     context.update(plate=plate, query=query)
 
     # שלב 1 - הרכב
