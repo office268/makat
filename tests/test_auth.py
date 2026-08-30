@@ -138,3 +138,28 @@ def test_login_redirect_ignores_external_next(client, org):
     response = client.post("/login?next=https://evil.example/x",
                            data={"email": "owner@t.test", "password": "password123"})
     assert "evil.example" not in response.headers.get("Location", "")
+
+
+# ---------- מסך הפתיחה ----------
+
+def test_welcome_page_renders_the_car(client):
+    response = client.get("/welcome")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'id="car-canvas"' in html
+    assert "js/car3d.js" in html
+
+
+def test_welcome_car_links_into_the_app(client):
+    """הלחיצה על המכונית היא קישור אמיתי, גם בלי JavaScript."""
+    html = client.get("/welcome").get_data(as_text=True)
+    assert 'id="enter-app" href="/"' in html
+
+
+def test_welcome_honours_next_but_not_external_targets(client):
+    html = client.get("/welcome?next=/parts").get_data(as_text=True)
+    assert 'id="enter-app" href="/parts"' in html
+
+    html = client.get("/welcome?next=https://evil.example/x").get_data(as_text=True)
+    assert "evil.example" not in html
+    assert 'id="enter-app" href="/"' in html
