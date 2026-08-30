@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}לוג השימוש{% endblock %}
+{% block content %}
+
+{% set max_day = (daily | map(attribute='count') | max) or 1 %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+  <div>
+    <h1 class="h5 mb-0">לוג השימוש</h1>
+    <div class="text-muted small">
+      {% if all_orgs %}כל הארגונים{% else %}{{ current_user.organization.name }}{% endif %}
+      &middot; {{ stats.total }} אירועים בטווח שנבחר
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if current_user.is_superadmin %}
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('activity.index', **dict(request.args, scope='' if all_orgs else 'all', page=1)) }}">
+      {{ 'הארגון שלי בלבד' if all_orgs else 'כל הארגונים' }}
+    </a>
+    {% endif %}
+    <a class="btn btn-sm btn-outline-primary"
+       href="{{ url_for('activity.export_csv', **request.args) }}">⬇ ייצוא CSV</a>
+  </div>
+</div>
+
+{% if not enabled %}
+<div class="alert alert-warning">
+  כתיבת הלוג כבויה בסביבה הזו (ACTIVITY_LOG_ENABLED=0) — מוצג רק מה שנרשם קודם.
+</div>
+{% endif %}
+
+<div class="row g-2 mb-3">
+  {% set tiles = [
+    ('אירועים', stats.total, 'primary'),
+    ('משתמשים פעילים', stats.users, 'success'),
+    ('פעולות שינוי', stats.writes, 'info'),
+    ('שגיאות', stats.errors, 'danger'),
+    ('זמן תגובה ממוצע', stats.avg_ms ~ ' ms', 'secondary'),
+  ] %}
+  {% for label, value, tone in tiles %}
+  <div class="col-6 col-lg">
+    <div class="card stat-card border-{{ tone }} h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">{{ label }}</div>
+        <div class="h5 mb-0">{{ value }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<form class="card mb-3" method="get">
+  {% if all_orgs %}<input type="hidden" name="scope" value="all">{% endif %}
+  <div class="card-body row g-2 align-items-center">
+    <div class="col-md-4">
+      <input class="form-control" name="q" value="{{ query }}"
+             placeholder="חיפוש בנתיב, בתיאור, בדוא״ל או בפרטים">
+    </div>
+    <div class="col-md-3">
+      <select class="form-select" name="action">
+        <option value="">כל הפעולות</option>
+        {% for item in actions %}
+        <option value="{{ item.action }}" {% if item.action == selected_action %}selected{% endif %}>
+          {{ item.label }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <select class="form-select" name="user_id">
+        <option value="">כל המשתמשים</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {% if user.id == selected_user %}selected{% endif %}>
+          {{ user.full_name or user.email }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select class="form-select" name="only">
+        <option value="">הכל</option>
+        <option value="writes" {% if only == 'writes' %}selected{% endif %}>שינויים בלבד</option>
+        <option value="errors" {% if only == 'errors' %}selected{% endif %}>שגיאות בלבד</option>
+      </select>
+    </div>
+    <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+      <div class="btn-group btn-group-sm" role="group">
+        {% for value, label in ranges %}
+        <a class="btn btn-outline-secondary {% if value == days %}active{% endif %}"
+           href="{{ url_for('activity.index', **dict(request.args, days=value, page=1)) }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+      <button class="btn btn-sm btn-primary">סינון</button>
+      <a class="btn btn-sm btn-link" href="{{ url_for('activity.index') }}">ניקוי</a>
+      <span class="text-muted small ms-auto">
+        אירוע אחרון: {{ stats.last_at | localtime if stats.last_at else '—' }}
+      </span>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header py-2 small">שימוש יומי (14 ימים אחרונים)</div>
+      <div class="card-body">
+        <div class="d-flex align-items-end gap-1" style="height:90px">
+          {% for point in daily %}
+          <div class="flex-fill d-flex flex-column justify-content-end align-items-center h-100"
+               title="{{ point.day.strftime('%d/%m/%Y') }}: {{ point.count }}">
+            <div class="w-100 bg-primary rounded-top"
+                 style="height: {{ (point.count / max_day * 100) | round | int }}%; min-height: 2px"></div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="d-flex justify-content-between text-muted small mt-1">
+          <span>{{ daily[0].day.strftime('%d/%m') }}</span>
+          <span>{{ daily[-1].day.strftime('%d/%m') }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3">
+    <div class="card h-100">
+      <div class="card-header py-2 small">הפעולות הנפוצות</div>
+      <ul class="list-group list-group-flush small">
+        {% for item in top_actions %}
+        <li class="list-group-item d-flex justify-content-between py-1">
+          <a class="text-decoration-none text-body"
+             href="{{ url_for('activity.index', **dict(request.args, action=item.action, page=1)) }}">
+            {{ item.label }}
+          </a>
+          <span class="badge bg-light text-dark">{{ item.count }}</span>
+        </li>
+        {% else %}
+        <li class="list-group-item text-muted py-2">אין נתונים בטווח הזה</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-3">
+    <div class="card h-100">
+      <div class="card-header py-2 small">מי הכי פעיל</div>
+      <ul class="list-group list-group-flush small">
+        {% for item in top_users %}
+        <li class="list-group-item d-flex justify-content-between py-1">
+          <span dir="ltr">{{ item.email }}</span>
+          <span class="badge bg-light text-dark">{{ item.count }}</span>
+        </li>
+        {% else %}
+        <li class="list-group-item text-muted py-2">אין נתונים בטווח הזה</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+    <thead class="table-light"><tr>
+      <th style="width:11rem">מתי</th>
+      <th>משתמש</th>
+      <th>פעולה</th>
+      <th>פרטים</th>
+      <th style="width:5rem">סטטוס</th>
+      <th style="width:5rem">משך</th>
+    </tr></thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr class="{% if entry.is_error %}table-warning{% endif %}">
+        <td class="small text-nowrap">{{ entry.created_at | localtime }}</td>
+        <td class="small">
+          <span dir="ltr">{{ entry.actor }}</span>
+          {% if entry.user_role %}
+          <span class="text-muted">
+            · {{ {'owner':'בעלים','manager':'מנהל','mechanic':'מכונאי'}.get(entry.user_role, entry.user_role) }}
+          </span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="fw-semibold">{{ entry.label }}</span>
+          <div class="text-muted small font-monospace" dir="ltr">
+            {{ entry.method }} {{ entry.path }}
+          </div>
+        </td>
+        <td class="small">
+          {{ entry.summary or '' }}
+          {% set details = entry.details_dict %}
+          {% if details %}
+          <details>
+            <summary class="text-muted">פרטים</summary>
+            <ul class="list-unstyled mb-0 mt-1">
+              {% for key, value in details.items() %}
+              <li><span class="text-muted">{{ key }}:</span>
+                <span dir="auto">{{ value }}</span></li>
+              {% endfor %}
+              {% if entry.ip %}<li><span class="text-muted">ip:</span> <span dir="ltr">{{ entry.ip }}</span></li>{% endif %}
+            </ul>
+          </details>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge {% if entry.is_error %}bg-danger{% else %}bg-success{% endif %}">
+            {{ entry.status_code }}
+          </span>
+        </td>
+        <td class="small text-muted">{{ entry.duration_ms }} ms</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">
+        אין אירועים בטווח ובסינון שנבחרו.
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="card-footer small text-muted">
+    הזמנים בשעון {{ config.DISPLAY_TIMEZONE }}. אירועים נשמרים {{ retention_days }} ימים.
+    ערכי שדות של טפסים (סיסמאות למשל) לא נשמרים בלוג.
+    {% if not all_orgs %}
+    שימוש אנונימי במסך הזיהוי אינו משויך לארגון ולכן אינו מופיע כאן.
+    {% endif %}
+  </div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  {% for page_num in pagination.iter_pages() %}
+    {% if page_num %}
+      <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+        <a class="page-link"
+           href="{{ url_for('activity.index', **dict(request.args, page=page_num)) }}">{{ page_num }}</a></li>
+    {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+  {% endfor %}
+</ul></nav>
+{% endif %}
+{% endblock %}

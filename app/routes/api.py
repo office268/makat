@@ -1,7 +1,7 @@
 """REST API - JSON לכל נתוני הקטלוג."""
 from flask import Blueprint, current_app, jsonify, request
 
-from .. import services
+from .. import activity, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 
@@ -85,6 +85,12 @@ def create_part():
     part = services.part_from_row(payload, organization_id=org_id)
     db.session.add(part)
     db.session.commit()
+    activity.note(
+        summary=f"{part.part_number} · {part.name_he}",
+        entity_type="part",
+        entity_id=part.id,
+        part_number=part.part_number,
+    )
     return jsonify(part.to_dict(full=True, organization_id=org_id)), 201
 
 
@@ -109,6 +115,12 @@ def update_part(part_id):
         return jsonify({"error": f'המק"ט {number} כבר משויך לחלק אחר'}), 409
     services.part_from_row(merged, part, organization_id=org_id)
     db.session.commit()
+    activity.note(
+        summary=f"{part.part_number} · {part.name_he}",
+        entity_type="part",
+        entity_id=part.id,
+        fields=sorted(payload.keys())[:20],
+    )
     return jsonify(part.to_dict(full=True, organization_id=org_id))
 
 
@@ -118,8 +130,15 @@ def delete_part(part_id):
     part = db.session.get(Part, part_id)
     if part is None:
         return jsonify({"error": 'מק"ט לא נמצא'}), 404
+    number = part.part_number
     db.session.delete(part)
     db.session.commit()
+    activity.note(
+        summary=f'מחיקת מק"ט {number}',
+        entity_type="part",
+        entity_id=part_id,
+        part_number=number,
+    )
     return jsonify({"deleted": part_id})
 
 
