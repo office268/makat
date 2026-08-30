@@ -482,3 +482,27 @@ def test_an_oe_reference_belongs_to_the_car_it_fits(app):
                 orphan.append((part.part_number, brands, sorted(makes)))
         assert unknown == [], unknown[:5]
         assert orphan == [], orphan[:5]
+
+
+def test_most_parts_carry_an_original_number(app):
+    """בלי מק"ט מקורי אי אפשר להשוות חליפי מול מחירון היבואן.
+
+    הכיסוי לא חייב להיות מלא - מגב אוניברסלי באמת אין לו מק"ט
+    מקורי אחד - אבל נפילה חדה ממנו פירושה שמשהו בצנרת נשבר."""
+    _load(app)
+    with app.app_context():
+        parts = Part.query.all()
+        withoe = [p for p in parts if p.cross_refs]
+        assert len(withoe) / len(parts) > 0.75, f"{len(withoe)}/{len(parts)}"
+
+
+def test_no_original_number_repeats_inside_one_part(app):
+    """אותו מק"ט מקורי פעמיים על אותו חלף מפיל את הייבוא.
+
+    טבלת ה-OE במקור מכילה כפילויות, והן הפילו חמש שורות עד שנוסף
+    ניקוי - לכן זו בדיקה ולא הערה."""
+    _load(app)
+    with app.app_context():
+        for part in Part.query.all():
+            nums = [r.ref_number for r in part.cross_refs]
+            assert len(nums) == len(set(nums)), part.part_number
