@@ -60,8 +60,15 @@
   </div>
   <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead class="table-light"><tr>
-      <th class="text-center">#</th><th>יצרן</th><th>דגם</th><th>קוד דגם</th>
-      <th>שנות ייצור</th><th class="text-end">רכבים</th><th>נתח מהצי</th>
+      <th class="text-center">#</th><th>יצרן</th><th>דגם</th>
+      {# בטלפון תשע עמודות לא נכנסות, ואלה השתיים שפחות משנות בהחלטת מלאי #}
+      <th class="d-none d-lg-table-cell">קוד דגם</th>
+      <th class="d-none d-md-table-cell">שנות ייצור</th>
+      <th class="text-end">רכבים</th><th>נתח מהצי</th>
+      <th class="text-end" title="מק"טים בקטלוג שמתאימים לדגם הזה">חלפים במאגר</th>
+      <th class="text-end"
+          title="מתוכם חלפים מתכלים: רפידות, דיסקים, מסננים, רצועות, מצתים ומגבים">
+        מתוכם מתכלים</th>
     </tr></thead>
     <tbody>
     {% for row in rows %}
@@ -72,8 +79,8 @@
         {# הדגם הוא הכניסה לחיפוש החלפים - זה מה שעושים עם המספר הזה #}
         <a href="{{ url_for('web.vehicles', make=row.search_make, model=row.model) }}">{{ row.model }}</a>
       </td>
-      <td class="font-monospace small text-muted">{{ row.model_code or '—' }}</td>
-      <td class="small">{{ row.years or '—' }}</td>
+      <td class="font-monospace small text-muted d-none d-lg-table-cell">{{ row.model_code or '—' }}</td>
+      <td class="small d-none d-md-table-cell">{{ row.years or '—' }}</td>
       <td class="text-end fw-bold">{{ "{:,}".format(row.vehicles) }}</td>
       <td style="min-width: 8rem">
         {% set share = row.share(totals.vehicles) %}
@@ -84,9 +91,21 @@
         </div>
         <span class="small text-muted">{{ "%.2f" | format(share) }}%</span>
       </td>
+      {% set counts = part_counts.get(row.id, (0, 0)) %}
+      <td class="text-end">
+        {% if counts[0] %}
+        <a href="{{ url_for('web.vehicles', make=row.search_make, model=row.model) }}">
+          {{ "{:,}".format(counts[0]) }}</a>
+        {% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-end">
+        {% if counts[1] %}
+        <span class="badge bg-success-subtle text-success-emphasis">{{ counts[1] }}</span>
+        {% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="text-center text-muted py-4">לא נמצאו דגמים מתאימים.</td></tr>
+    <tr><td colspan="9" class="text-center text-muted py-4">לא נמצאו דגמים מתאימים.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>

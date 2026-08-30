@@ -5,6 +5,19 @@
 """
 
 # key: (שם בעברית, שם באנגלית, קטגוריה, מילים נרדפות לחיפוש טקסט)
+# החלפים המתכלים: מה שמתחלף שוב ושוב בכל רכב, בלי תלות בתקלה. זו
+# הקבוצה שכדאי להחזיק במלאי לדגם נפוץ, ולכן היא נספרת בנפרד במסך
+# "רכבים על הכביש". רשימה סגורה ומכוונת - לא כל חלק שנשחק עם הזמן.
+WEAR_TYPES = frozenset({
+    "brake_disc_front", "brake_disc_rear",
+    "brake_pads_front", "brake_pads_rear",
+    "oil_filter", "air_filter", "fuel_filter", "cabin_filter",
+    "timing_belt", "serpentine_belt",
+    "spark_plug",
+    "wiper_blade",
+})
+
+
 PART_TYPES = {
     "brake_disc_front": ("דיסק בלם קדמי", "Front Brake Disc", "בלמים",
                          ["דיסק קדמי", "דיסקים קדמיים", "צלחת בלם קדמית", "דיסק ברקס קדמי"]),
