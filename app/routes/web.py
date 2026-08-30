@@ -78,8 +78,19 @@ def parts_list():
     per_page = current_app.config["PER_PAGE"]
     query = services.search_parts(**filters)
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    # מה שהמשתמש בחר, להבדיל ממה שתמיד נשלח (מיון, ארגון, active_only)
+    is_filtered = any(
+        filters[key]
+        for key in ("q", "category_id", "manufacturer_id", "make", "model",
+                    "year", "engine", "in_stock", "low_stock")
+    )
     return render_template(
-        "parts/list.html", pagination=pagination, parts=pagination.items, filters=filters
+        "parts/list.html",
+        pagination=pagination,
+        parts=pagination.items,
+        filters=filters,
+        is_filtered=is_filtered,
+        total_parts=Part.query.count(),
     )
 
 

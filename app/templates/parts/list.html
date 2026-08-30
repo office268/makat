@@ -1,7 +1,24 @@
 {% extends "base.html" %}
 {% block title %}קטלוג מק"טים{% endblock %}
 {% block content %}
-<form class="card mb-3" method="get">
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h5 mb-0">
+    קטלוג מק"טים
+    <span class="text-muted fw-normal">
+      {% if is_filtered %}{{ pagination.total }} מתוך {{ total_parts }}
+      {% else %}{{ total_parts }} מק"טים{% endif %}
+    </span>
+  </h1>
+  {# בטלפון הסינון דחף את הרשימה מתחת לקיפול, והרשימה היא מה שבאו לראות #}
+  <button class="btn btn-sm btn-outline-secondary d-lg-none" type="button"
+          data-bs-toggle="collapse" data-bs-target="#filters">
+    סינון{% if is_filtered %} ✓{% endif %}
+  </button>
+</div>
+
+<form class="card mb-3 collapse d-lg-block {% if is_filtered %}show{% endif %}"
+      id="filters" method="get">
   <div class="card-body row g-2">
     <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q or '' }}" placeholder='מק"ט, שם, ברקוד או מק"ט מקביל'></div>
     <div class="col-md-2">
@@ -36,7 +53,7 @@
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light"><tr>
-        <th>מק"ט</th><th>שם</th><th>יצרן</th><th>קטגוריה</th>
+        <th>מק"ט</th><th>שם</th><th>יצרן</th><th>מתאים ל</th>
         <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th>
       </tr></thead>
       <tbody>
@@ -45,7 +62,13 @@
           <td><a class="font-monospace fw-bold" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
           <td>{{ part.name_he }}</td>
           <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
-          <td class="small text-muted">{{ part.category.full_name if part.category else '-' }}</td>
+          <td class="small text-muted">
+            {% for fit in part.fitments[:3] %}
+              {{ fit.make }} {{ fit.model }}{% if fit.year_from %} {{ fit.year_from }}–{{ fit.year_to or '' }}{% endif %}
+              {%- if not loop.last %} · {% endif %}
+            {% else %}—{% endfor %}
+            {% if part.fitments | length > 3 %} ועוד {{ part.fitments | length - 3 }}{% endif %}
+          </td>
           {% set op = part.for_org(org_id) %}
           <td class="text-end">{{ op.price_with_vat | ils if op else '—' }}</td>
           <td class="text-center">
@@ -54,7 +77,12 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="text-muted text-center py-4">לא נמצאו מק"טים.</td></tr>
+        <tr><td colspan="6" class="text-muted text-center py-4">
+          {% if is_filtered %}
+            לא נמצאו מק"טים לסינון הזה.
+            <a href="{{ url_for('web.parts_list') }}">להצגת כל הקטלוג</a>
+          {% else %}הקטלוג ריק.{% endif %}
+        </td></tr>
         {% endfor %}
       </tbody>
     </table>
