@@ -26,6 +26,8 @@ MUTATING_ENDPOINTS = frozenset(
         "admin.discovery_start",
         "admin.discovery_step",
         "admin.discovery_cancel",
+        "admin.discovery_verify",
+        "admin.discovery_delete",
     }
 )
 

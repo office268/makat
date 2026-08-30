@@ -269,3 +269,17 @@ def test_home_stays_usable_with_an_empty_catalog(app, client):
     html = client.get("/").get_data(as_text=True)
     assert client.get("/").status_code == 200
     assert 'name="plate"' in html
+
+
+# שתי בדיקות ולא אחת: conftest מחזיק app context אחד לכל הבדיקה,
+# ו-Flask-Login מחזיק את המשתמש ב-g - כך שהתחברות באותה בדיקה דולפת
+# גם ללקוח חדש. בדיקה שלא מתחברת בכלל היא היחידה שבאמת אנונימית.
+def test_api_link_is_hidden_from_anonymous_visitors(client):
+    """הממשק קיים לשילוב במערכות של המוסך, לא כהצעה למבקר מזדמן."""
+    html = client.get("/").get_data(as_text=True)
+    assert ">API</a>" not in html
+    assert 'קטלוג מק"טים לחלקי רכב' in html      # שאר הכותרת התחתונה נשארה
+
+
+def test_api_link_shows_for_a_signed_in_user(auth_client):
+    assert ">API</a>" in auth_client.get("/").get_data(as_text=True)

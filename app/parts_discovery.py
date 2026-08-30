@@ -23,6 +23,8 @@ WEB_SEARCH_TOOL = os.environ.get("WEB_SEARCH_TOOL", "web_search_20250305")
 MAX_SEARCHES = int(os.environ.get("DISCOVERY_MAX_SEARCHES", 6))
 
 SOURCE_NOTE = "נוסף בחיפוש אינטרנט אוטומטי (Claude). מקור לא רשמי."
+# תת-מחרוזת יציבה של ההערה, לאיתור כל מה שהגיע מכאן גם אם הנוסח ישתנה
+SOURCE_MARK = "נוסף בחיפוש אינטרנט אוטומטי"
 
 # יצרני רכב מוכרים, לזיהוי מועמד ששייך לרכב אחר
 KNOWN_MARQUES = {
@@ -388,7 +390,13 @@ def save(accepted):
                 CATEGORY_OF.get(row["part_type"], "כללי")
             )
         part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
-        part.notes = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
+        # מק"ט קיים שומר את ההערה שלו. דריסה הייתה מוחקת את סימון
+        # "נתוני הדגמה" ומציגה חלף שנבנה ביד כאילו הגיע מהחיפוש.
+        source = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
+        if is_new:
+            part.notes = source
+        elif SOURCE_MARK not in (part.notes or ""):
+            part.notes = f'{part.notes or ""} | {source}'.strip(" |")
 
         # התאמה חדשה מתווספת; קיימת לא משוכפלת
         wanted_make = fitment_make(row["make"])
@@ -457,3 +465,132 @@ def run_step(job, searcher=None):
         job.finished_at = _now()
     db.session.commit()
     return job
+
+
+# --------------------------------------------------------------------------
+# סקירה: מה נכנס לקטלוג, ומה נראה חשוד
+# --------------------------------------------------------------------------
+
+def discovered_parts():
+    """כל מק"ט שהחיפוש האוטומטי הכניס או נגע בו, החדש קודם."""
+    return (
+        Part.query.filter(Part.notes.like(f"%{SOURCE_MARK}%"))
+        .order_by(Part.id.desc())
+        .all()
+    )
+
+
+def source_url_of(part):
+    """הכתובת שהמודל דיווח עליה, מתוך ההערה."""
+    for chunk in (part.notes or "").split():
+        if chunk.startswith("http"):
+            return chunk
+    return None
+
+
+def _flag(text, level="suspect", structural=False):
+    """דגל אחד.
+
+    level="suspect" הוא סיבה למחוק, ולכן השורה נבחרת מראש.
+    level="caution" הוא בדיוק ההפך - סיבה להיזהר לפני מחיקה.
+
+    structural=True מסמן ליקוי שאימות מול הרשת לא יכול לפתור: גם אם
+    המק"ט אמיתי לגמרי, חלף בלי התאמה לרכב לא יימצא בחיפוש לפי רישוי.
+    """
+    return {"text": text, "level": level, "structural": structural}
+
+
+def review_flags(part):
+    """מה חשוד במק"ט הזה. רשימה ריקה = לא נמצא שום דבר לתפוס.
+
+    כל הבדיקות כאן חינמיות ומקומיות. הן לא מחליפות שיפוט אנושי -
+    הן מסמנות את מה שאפשר לתפוס בלי לצאת לרשת.
+    """
+    flags = []
+    if not part.fitments:
+        flags.append(_flag("בלי התאמה לרכב - לא יימצא בחיפוש לפי מספר רישוי",
+                           structural=True))
+    if part.manufacturer is None:
+        flags.append(_flag("בלי יצרן חלק", structural=True))
+    if part.part_type not in PART_TYPES:
+        flags.append(_flag(f"סוג חלק לא מוכר: {part.part_type or '—'}",
+                           structural=True))
+
+    # אותו שומר של הגילוי, עכשיו על מה שכבר נשמר בקטלוג
+    wanted = {marque_of(fit.make) for fit in part.fitments if fit.make}
+    for ref in part.cross_refs:
+        text = f"{ref.ref_brand or ''} {ref.ref_number or ''}"
+        # מוזכר יצרן רכב כלשהו שאינו אחד מאלה שהחלף מותאם להם
+        other = _mentions_other_marque(text, None)
+        if other and other not in wanted:
+            flags.append(_flag(f'מק"ט מקביל של יצרן אחר: {other}'))
+
+    if "נתוני הדגמה" in (part.notes or ""):
+        flags.append(_flag("היה בקטלוג לפני החיפוש - מחיקה תסיר גם עבודה ידנית",
+                           level="caution"))
+    return flags
+
+
+def suspect(flags):
+    """האם יש כאן סיבה למחוק, להבדיל מסיבה להיזהר."""
+    return any(flag["level"] == "suspect" for flag in flags)
+
+
+def structural(flags):
+    """האם יש ליקוי שאימות מול הרשת לא יכול לסגור."""
+    return any(flag["structural"] for flag in flags)
+
+
+def build_verify_prompt(part):
+    """הנחיית האימות: לא לחפש חלף, אלא לשפוט חלף אחד שכבר נכנס."""
+    fits = ", ".join(
+        f"{fit.make} {fit.model}".strip() for fit in part.fitments
+    ) or "לא נרשמה התאמה"
+    refs = ", ".join(ref.ref_number for ref in part.cross_refs) or "אין"
+    maker = part.manufacturer.name if part.manufacturer else "לא ידוע"
+    return f"""בדוק באינטרנט האם החלף הזה באמת מתאים לרכב שרשום לו:
+
+מק"ט: {part.part_number}
+יצרן החלק: {maker}
+סוג: {type_name(part.part_type)}
+מתאים לפי הקטלוג: {fits}
+מק"טים מקוריים שנרשמו: {refs}
+
+החזר JSON בלבד, בלי טקסט נוסף:
+{{"verdict": "fits" או "not_fits" או "unsure",
+  "reason": "משפט אחד בעברית - למה",
+  "source_url": "הכתובת שעליה הסתמכת, או ריק"}}
+
+כללים:
+- "not_fits" אם מצאת שהחלף שייך ליצרן רכב אחר, או שהמספר המקורי שייך
+  ליצרן אחר, או שהוא לא מתאים לדגם שנרשם.
+- "unsure" אם לא מצאת מקור אמין. אל תנחש.
+- "fits" רק אם מצאת אישור ממשי להתאמה.
+"""
+
+
+def verify(part, client=None):
+    """שואל את המודל על מק"ט אחד. מחזיר dict. מרים חריגה בכשל."""
+    if client is None:
+        import anthropic
+
+        client = anthropic.Anthropic()
+
+    response = client.messages.create(
+        model=DISCOVERY_MODEL,
+        max_tokens=1500,
+        tools=[{"type": WEB_SEARCH_TOOL, "name": "web_search", "max_uses": MAX_SEARCHES}],
+        messages=[{"role": "user", "content": build_verify_prompt(part)}],
+    )
+    text = "".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    )
+    payload = _json_from(text)
+    if payload is None:
+        raise ValueError("התשובה מהמודל אינה JSON תקין")
+    verdict = str(payload.get("verdict") or "").lower()
+    return {
+        "verdict": verdict if verdict in {"fits", "not_fits", "unsure"} else "unsure",
+        "reason": str(payload.get("reason") or "").strip()[:300],
+        "source_url": str(payload.get("source_url") or "").strip()[:500],
+    }

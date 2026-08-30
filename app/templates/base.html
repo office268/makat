@@ -63,6 +63,9 @@
             <li><a class="dropdown-item" href="{{ url_for('admin.discovery') }}">
               גילוי מק"טים מהאינטרנט
             </a></li>
+            <li><a class="dropdown-item" href="{{ url_for('admin.discovery_review') }}">
+              סקירת מה שהתגלה
+            </a></li>
             {% endif %}
             <li><hr class="dropdown-divider"></li>
             <li>
@@ -96,7 +99,11 @@
 </main>
 
 <footer class="text-center text-muted py-4 small">
-  קטלוג מק"טים לחלקי רכב &middot; <a href="{{ url_for('api.list_parts') }}">API</a>
+  קטלוג מק"טים לחלקי רכב
+  {# הממשק קיים לשילוב במערכות של המוסך, ואין למה להציע אותו למי שלא נכנס #}
+  {%- if current_user.is_authenticated %}
+  &middot; <a href="{{ url_for('api.list_parts') }}">API</a>
+  {%- endif %}
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

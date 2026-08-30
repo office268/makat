@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}סקירת מק"טים שהתגלו{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-1">
+  <h1 class="h4 mb-0">סקירת מק"טים שהתגלו</h1>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.discovery') }}">
+    למסך הגילוי
+  </a>
+</div>
+<p class="text-muted small mb-3">
+  החיפוש האוטומטי מכניס לקטלוג בלי סקירה אנושית. כאן רואים בדיוק מה נכנס,
+  מה נראה חשוד, ומוחקים את מה שלא מתאים.
+</p>
+
+{% if rows %}
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <span class="badge bg-secondary">{{ rows | length }} מק"טים מהחיפוש</span>
+  <span class="badge {% if flagged %}bg-warning text-dark{% else %}bg-success{% endif %}">
+    {{ flagged }} עם סימן שאלה
+  </span>
+  <span class="text-muted small">בקטלוג <span id="catalog-size">{{ catalog_size }}</span> מק"טים</span>
+  <div class="ms-auto d-flex gap-2">
+    {# האימות עולה כסף - קריאה נפרדת לכל מק"ט, ולכן הוא לא רץ מעצמו #}
+    <button class="btn btn-sm btn-outline-primary" id="btn-verify"
+            {% if not available %}disabled title="לא הוגדר ANTHROPIC_API_KEY"{% endif %}>
+      אמת את המסומנים מול הרשת
+    </button>
+    <button class="btn btn-sm btn-danger" id="btn-delete" disabled>
+      מחק את המסומנים
+    </button>
+  </div>
+</div>
+
+<div class="alert alert-warning small d-none" id="notice"></div>
+
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead class="table-light">
+      <tr>
+        <th style="width: 2rem">
+          <input class="form-check-input" type="checkbox" id="select-all"
+                 title="סמן הכל">
+        </th>
+        <th>מק"ט</th>
+        <th>יצרן</th>
+        <th>סוג</th>
+        <th>מתאים ל</th>
+        <th>מה נמצא</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {# ליקוי מבני נשאר מסומן גם אחרי אישור מהמודל: מק"ט אמיתי בלי
+         התאמה לרכב עדיין לא יימצא בחיפוש לפי מספר רישוי #}
+      <tr data-part-id="{{ row.part.id }}" data-number="{{ row.part.part_number }}"
+          {% if row.structural %}data-structural="1"{% endif %}>
+        <td>
+          <input class="form-check-input row-pick" type="checkbox"
+                 value="{{ row.part.id }}" {% if row.suspect %}checked{% endif %}>
+        </td>
+        <td>
+          <a class="font-monospace fw-bold" target="_blank"
+             href="{{ url_for('web.part_detail', part_id=row.part.id) }}">{{ row.part.part_number }}</a>
+          {% if row.source_url %}
+          <div><a class="small text-muted" href="{{ row.source_url }}"
+                  target="_blank" rel="noopener noreferrer">המקור</a></div>
+          {% endif %}
+        </td>
+        <td class="small">{{ row.part.manufacturer.name if row.part.manufacturer else '—' }}</td>
+        <td class="small">{{ row.part.part_type | part_type_name }}</td>
+        <td class="small">
+          {% for fit in row.part.fitments %}
+          <div>{{ fit.make }} {{ fit.model }}</div>
+          {% else %}<span class="text-danger">—</span>{% endfor %}
+        </td>
+        <td class="small">
+          {% for flag in row.flags %}
+          <div class="{% if flag.level == 'caution' %}text-info-emphasis{% else %}text-warning-emphasis{% endif %}">
+            {% if flag.level == 'caution' %}ℹ{% else %}⚠{% endif %} {{ flag.text }}
+          </div>
+          {% else %}
+          <span class="text-muted">לא נמצא סימן שאלה מקומי</span>
+          {% endfor %}
+          <div class="verdict mt-1"></div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="card"><div class="card-body text-muted">
+  עוד לא נכנסו מק"טים מהחיפוש האוטומטי.
+</div></div>
+{% endif %}
+
+{% if rows %}
+<script>
+(function () {
+  const token = document.querySelector('meta[name="csrf-token"]');
+  const boxes = [...document.querySelectorAll(".row-pick")];
+  const selectAll = document.getElementById("select-all");
+  const deleteButton = document.getElementById("btn-delete");
+  const verifyButton = document.getElementById("btn-verify");
+  const notice = document.getElementById("notice");
+  const sizeBox = document.getElementById("catalog-size");
+
+  function picked() {
+    return boxes.filter((box) => box.checked);
+  }
+
+  function amount(count) {
+    return count === 1 ? 'מק"ט אחד' : `${count} מק"טים`;
+  }
+
+  function refresh() {
+    const count = picked().length;
+    selectAll.checked = count === boxes.length && count > 0;
+    selectAll.indeterminate = count > 0 && count < boxes.length;
+    deleteButton.disabled = count === 0;
+    deleteButton.textContent = count ? `מחק ${amount(count)}` : "מחק את המסומנים";
+    verifyButton.textContent = count ? `אמת ${amount(count)} מול הרשת`
+                                     : "אמת את המסומנים מול הרשת";
+  }
+
+  boxes.forEach((box) => box.addEventListener("change", refresh));
+  selectAll.addEventListener("change", function () {
+    boxes.forEach((box) => { box.checked = selectAll.checked; });
+    refresh();
+  });
+  refresh();
+
+  function show(message) {
+    notice.textContent = message;
+    notice.classList.remove("d-none");
+  }
+
+  async function post(url, body) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers, body: body});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  // מק"ט אחד לכל בקשה: קריאה עם חיפוש רשת יכולה לקחת עשרות שניות,
+  // וה-timeout של השרת הוא 60. התוצאה לא נשמרת - היא נועדה להחלטה עכשיו.
+  verifyButton.addEventListener("click", async function () {
+    const rows = picked().map((box) => box.closest("tr"));
+    if (!rows.length) return;
+    verifyButton.disabled = true;
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const cell = row.querySelector(".verdict");
+      cell.className = "verdict mt-1 text-muted";
+      cell.textContent = `בודק… (${index + 1}/${rows.length})`;
+      const body = new FormData();
+      body.append("part_id", row.dataset.partId);
+      try {
+        const data = await post("{{ url_for('admin.discovery_verify') }}", body);
+        const label = data.verdict === "fits" ? "✓ מתאים"
+          : data.verdict === "not_fits" ? "✗ לא מתאים" : "? לא ודאי";
+        cell.className = "verdict mt-1 " + (data.verdict === "fits" ? "text-success"
+          : data.verdict === "not_fits" ? "text-danger fw-bold" : "text-muted");
+        cell.textContent = `${label} — ${data.reason || ""}`;
+        // מה שנפסל נשאר מסומן למחיקה; מה שאושר יורד מהסימון - אלא אם
+        // הליקוי מבני, ואז אישור המק"ט לא פותר אותו
+        row.querySelector(".row-pick").checked =
+          data.verdict !== "fits" || row.dataset.structural === "1";
+      } catch (error) {
+        cell.className = "verdict mt-1 text-danger";
+        cell.textContent = "האימות נכשל: " + error.message;
+      }
+      refresh();
+    }
+    verifyButton.disabled = false;
+  });
+
+  deleteButton.addEventListener("click", async function () {
+    const rows = picked().map((box) => box.closest("tr"));
+    if (!rows.length) return;
+    const names = rows.map((row) => row.dataset.number).join(", ");
+    if (!confirm(`למחוק ${amount(rows.length)} מהקטלוג?\n\n${names}`)) return;
+    deleteButton.disabled = true;
+    const body = new FormData();
+    rows.forEach((row) => body.append("part_id", row.dataset.partId));
+    try {
+      const data = await post("{{ url_for('admin.discovery_delete') }}", body);
+      rows.forEach((row) => row.remove());
+      boxes.length = 0;
+      boxes.push(...document.querySelectorAll(".row-pick"));
+      sizeBox.textContent = data.catalog_size;
+      show(`נמחקו ${amount(data.deleted.length)}: ${data.deleted.join(", ")}`);
+      notice.className = "alert alert-success small";
+    } catch (error) {
+      show(error.message);
+      notice.className = "alert alert-warning small";
+    }
+    refresh();
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
