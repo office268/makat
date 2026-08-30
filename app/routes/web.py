@@ -11,7 +11,7 @@ from flask import (
     url_for,
 )
 
-from .. import services
+from .. import activity, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 from ..taxonomy import all_types
@@ -84,6 +84,13 @@ def parts_list():
         for key in ("q", "category_id", "manufacturer_id", "make", "model",
                     "year", "engine", "in_stock", "low_stock")
     )
+    activity.note(
+        summary=(f'חיפוש "{filters["q"]}"' if filters["q"] else 'רשימת מק"טים')
+        + f" · {pagination.total} תוצאות",
+        results=pagination.total,
+        page=page,
+        filtered=is_filtered,
+    )
     return render_template(
         "parts/list.html",
         pagination=pagination,
@@ -101,6 +108,12 @@ def part_detail(part_id):
     if part is None:
         abort(404)
     org_id = services.current_org_id()
+    activity.note(
+        summary=f"{part.part_number} · {part.name_he}",
+        entity_type="part",
+        entity_id=part.id,
+        part_number=part.part_number,
+    )
     return render_template(
         "parts/detail.html",
         part=part,
@@ -116,7 +129,14 @@ def part_lookup():
     number = request.args.get("number", "").strip()
     part = services.find_by_number(number)
     if part:
+        activity.note(
+            summary=f"{number} → {part.part_number}",
+            entity_type="part",
+            entity_id=part.id,
+            found=True,
+        )
         return redirect(url_for("web.part_detail", part_id=part.id))
+    activity.note(summary=f"{number} - לא נמצא", found=False)
     flash(f'לא נמצא מק"ט "{number}" בקטלוג', "warning")
     return redirect(url_for("web.parts_list", q=number))
 
@@ -141,6 +161,12 @@ def part_create():
             )
             db.session.add(part)
             db.session.commit()
+            activity.note(
+                summary=f"{part.part_number} · {part.name_he}",
+                entity_type="part",
+                entity_id=part.id,
+                part_number=part.part_number,
+            )
             flash(f'המק"ט {part.part_number} נוסף בהצלחה', "success")
             if request.form.get("save_and_new"):
                 return redirect(url_for("web.part_create"))
@@ -173,6 +199,12 @@ def part_edit(part_id):
                 rows=request.form.to_dict(flat=False),
             )
             db.session.commit()
+            activity.note(
+                summary=f"{part.part_number} · {part.name_he}",
+                entity_type="part",
+                entity_id=part.id,
+                part_number=part.part_number,
+            )
             flash("השינויים נשמרו", "success")
             return redirect(url_for("web.part_detail", part_id=part.id))
     return render_template(
@@ -193,6 +225,12 @@ def part_delete(part_id):
     number = part.part_number
     db.session.delete(part)
     db.session.commit()
+    activity.note(
+        summary=f'מחיקת מק"ט {number}',
+        entity_type="part",
+        entity_id=part_id,
+        part_number=number,
+    )
     flash(f'המק"ט {number} נמחק', "info")
     return redirect(url_for("web.parts_list"))
 
@@ -206,6 +244,13 @@ def vehicles():
     results = []
     if make or model or year:
         results = services.search_parts(make=make, model=model, year=year).all()
+        activity.note(
+            summary=f"{make or ''} {model or ''} {year or ''} · {len(results)} תוצאות".strip(),
+            make=make,
+            model=model,
+            year=year,
+            results=len(results),
+        )
     return render_template(
         "vehicles.html",
         results=results,
@@ -248,6 +293,7 @@ def export_csv():
     """ייצוא תוצאות החיפוש הנוכחיות ל-CSV."""
     org_id = services.current_org_id()
     parts = services.search_parts(**_filters_from_request()).all()
+    activity.note(summary=f'ייצוא {len(parts)} מק"טים', rows=len(parts))
     return Response(
         services.export_csv(parts, organization_id=org_id),
         mimetype="text/csv; charset=utf-8",
@@ -269,6 +315,16 @@ def import_csv():
                 file.stream, organization_id=services.current_org_id()
             )
             result = {"created": created, "updated": updated, "errors": errors}
+            activity.note(
+                summary=(
+                    f"{file.filename}: {created} חדשים, {updated} עודכנו"
+                    + (f", {len(errors)} שגיאות" if errors else "")
+                ),
+                filename=file.filename,
+                created=created,
+                updated=updated,
+                errors=len(errors),
+            )
             flash(f"יובאו {created} מק\"טים חדשים, עודכנו {updated}", "success")
     return render_template("import.html", result=result, columns=services.CSV_COLUMNS)
 

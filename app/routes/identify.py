@@ -5,6 +5,7 @@
 """
 from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 
+from .. import activity
 from .. import identify as identifier
 from .. import services, vehicles
 from ..models import Part
@@ -53,10 +54,25 @@ def index():
     # שלב 1 - הרכב
     vehicle = vehicles.lookup(plate)
     if not vehicle:
+        activity.note(
+            action="identify.vehicle_lookup",
+            summary=f'{plate} - לא נמצא',
+            plate=plate,
+            found=False,
+        )
         context["error"] = f'לא נמצא רכב עבור מספר רישוי "{plate}".'
         return render_template("identify.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)
+    activity.note(
+        action="identify.vehicle_lookup",
+        summary=f"{plate} · {vehicle.get('make')} {vehicle.get('model')}",
+        plate=plate,
+        make=vehicle.get("make"),
+        model=vehicle.get("model"),
+        year=vehicle.get("year"),
+        covered_types=len(context["coverage"]),
+    )
 
     if action == "vehicle":
         return render_template("identify.html", **context)
@@ -105,6 +121,16 @@ def index():
     context["matches"] = services.parts_for_vehicle(vehicle, selected)
     context["org_id"] = services.current_org_id()
     context["searched"] = True
+    activity.note(
+        action="identify.part_search",
+        summary=f"{plate} · {type_name(selected)} · {len(context['matches'])} תוצאות",
+        plate=plate,
+        part_type=selected,
+        results=len(context["matches"]),
+        method=candidates[0].get("method"),
+        query=query or None,
+        photo=bool(image_bytes),
+    )
     return render_template("identify.html", **context)
 
 
@@ -120,7 +146,13 @@ def api_vehicle(plate):
     """שליפת רכב לפי מספר רישוי."""
     vehicle = vehicles.lookup(plate)
     if not vehicle:
+        activity.note(summary=f"{plate} - לא נמצא", plate=plate, found=False)
         return jsonify({"error": f"לא נמצא רכב עבור {plate}"}), 404
+    activity.note(
+        summary=f"{plate} · {vehicle.get('make')} {vehicle.get('model')}",
+        plate=plate,
+        found=True,
+    )
     return jsonify(vehicle)
 
 
@@ -155,4 +187,14 @@ def api_identify():
                     vehicle, candidates[0]["part_type"]
                 )
             ]
+    activity.note(
+        summary=(
+            f"{candidates[0]['part_type'] if candidates else 'לא זוהה'}"
+            f" · {len(payload['matches'])} תוצאות"
+        ),
+        plate=plate or None,
+        query=query or None,
+        photo=bool(image_bytes),
+        results=len(payload["matches"]),
+    )
     return jsonify(payload)

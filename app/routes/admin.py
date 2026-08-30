@@ -6,7 +6,7 @@
 from flask import Blueprint, jsonify, render_template, request
 from flask_login import current_user
 
-from .. import parts_discovery
+from .. import activity, parts_discovery
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
@@ -42,7 +42,10 @@ def vehicle_import_status():
 @admin_bp.post("/vehicle-import/start")
 @superadmin_required
 def vehicle_import_start():
-    return jsonify(_payload(start_job(user_id=current_user.id)))
+    job = start_job(user_id=current_user.id)
+    activity.note(summary="ייבוא קטלוג דגמי רכב הופעל", entity_type="job",
+                  entity_id=job.id if job else None)
+    return jsonify(_payload(job))
 
 
 @admin_bp.post("/vehicle-import/step")
@@ -58,6 +61,7 @@ def vehicle_import_step():
 @admin_bp.post("/vehicle-import/cancel")
 @superadmin_required
 def vehicle_import_cancel():
+    activity.note(summary="ייבוא קטלוג דגמי רכב בוטל")
     return jsonify(_payload(cancel_job(active_job())))
 
 
@@ -128,6 +132,12 @@ def discovery_start():
         }), 400
 
     job = parts_discovery.start_job(targets, user_id=current_user.id)
+    activity.note(
+        summary=f"גילוי מק\"טים הופעל · {len(targets)} מטרות",
+        entity_type="job",
+        entity_id=job.id if job else None,
+        targets=len(targets),
+    )
     return jsonify(_discovery_payload(job))
 
 
@@ -144,6 +154,7 @@ def discovery_step():
 @admin_bp.post("/discovery/cancel")
 @superadmin_required
 def discovery_cancel():
+    activity.note(summary='גילוי מק"טים בוטל')
     return jsonify(
         _discovery_payload(parts_discovery.cancel_job(parts_discovery.active_job()))
     )
@@ -187,6 +198,12 @@ def discovery_verify():
     part = db.session.get(Part, request.form.get("part_id", type=int))
     if part is None:
         return jsonify({"error": 'המק"ט לא נמצא.'}), 404
+    activity.note(
+        summary=f"אימות {part.part_number}",
+        entity_type="part",
+        entity_id=part.id,
+        part_number=part.part_number,
+    )
     try:
         return jsonify(parts_discovery.verify(part))
     except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
@@ -203,4 +220,9 @@ def discovery_delete():
         deleted.append(part.part_number)
         db.session.delete(part)
     db.session.commit()
+    activity.note(
+        summary=f'נמחקו {len(deleted)} מק"טים שנפסלו בסקירה',
+        deleted=deleted[:20],
+        count=len(deleted),
+    )
     return jsonify({"deleted": deleted, "catalog_size": Part.query.count()})

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user
 
-from .. import mailer
+from .. import activity, mailer
 from ..auth import EMAIL_RE, MIN_PASSWORD, role_required
 from ..auth_models import Invitation, User
 from ..models import db
@@ -70,6 +70,13 @@ def invite():
         db.session.add(invitation)
         db.session.commit()
 
+        activity.note(
+            summary=f"{email} ({invitation.role_label})",
+            entity_type="invitation",
+            entity_id=invitation.id,
+            invited_email=email,
+            role=role,
+        )
         accept_url = url_for("team.accept", token=invitation.token, _external=True)
         if mailer.send_invitation(invitation, accept_url, current_user):
             flash(f"נשלחה הזמנה אל {email}.", "success")
@@ -88,6 +95,9 @@ def revoke(invitation_id):
     invitation = db.session.get(Invitation, invitation_id)
     if invitation is None or invitation.organization_id != current_user.organization_id:
         abort(404)
+    activity.note(
+        summary=invitation.email, entity_type="invitation", entity_id=invitation.id
+    )
     db.session.delete(invitation)
     db.session.commit()
     flash("ההזמנה בוטלה.", "info")
@@ -106,8 +116,15 @@ def change_role(user_id):
     elif user.role == "owner" and _owner_count() <= 1:
         flash("חייב להישאר לפחות בעלים אחד בארגון.", "warning")
     else:
+        previous = user.role_label
         user.role = role
         db.session.commit()
+        activity.note(
+            summary=f"{user.email}: {previous} → {user.role_label}",
+            entity_type="user",
+            entity_id=user.id,
+            role=role,
+        )
         flash(f"{user.email} הוגדר כ{user.role_label}.", "success")
     return redirect(url_for("team.index"))
 
@@ -123,6 +140,12 @@ def toggle_active(user_id):
     else:
         user.active = not user.active
         db.session.commit()
+        activity.note(
+            summary=f"{user.email} {'הופעל' if user.active else 'הושבת'}",
+            entity_type="user",
+            entity_id=user.id,
+            active=user.active,
+        )
         flash(
             f"{user.email} {'הופעל' if user.active else 'הושבת'}.",
             "success" if user.active else "info",
@@ -168,6 +191,12 @@ def accept(token):
             db.session.add(user)
             db.session.commit()
             login_user(user)
+            activity.note(
+                summary=f"{user.email} הצטרף כ{user.role_label}",
+                entity_type="user",
+                entity_id=user.id,
+                invitation_id=invitation.id,
+            )
             flash(f"ברוך הבא ל{user.organization.name}!", "success")
             return redirect(url_for("identify.index"))
 

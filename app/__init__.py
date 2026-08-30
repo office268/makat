@@ -10,6 +10,7 @@ from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from .activity import register_activity_log
 from .config import Config
 from .guards import register_read_only_guard
 from .models import db
@@ -64,6 +65,7 @@ def create_app(config_object=Config):
     _check_secret_key(app)
 
     from . import auth_models  # noqa: F401 - נדרש כדי ש-Alembic יראה את הטבלאות
+    from . import activity  # noqa: F401
     from . import vehicle_catalog  # noqa: F401
     from . import parts_discovery  # noqa: F401
     from .auth import auth_bp, login_manager
@@ -72,6 +74,7 @@ def create_app(config_object=Config):
     if app.config["CSRF_ENABLED"]:
         csrf.init_app(app)
 
+    from .routes.activity import activity_bp
     from .routes.admin import admin_bp
     from .routes.api import api_bp
     from .routes.identify import identify_bp
@@ -84,6 +87,7 @@ def create_app(config_object=Config):
     app.register_blueprint(team_bp)
     app.register_blueprint(identify_bp)
     app.register_blueprint(pwa_bp)
+    app.register_blueprint(activity_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
 
@@ -92,6 +96,7 @@ def create_app(config_object=Config):
         csrf.exempt(api_bp)
 
     register_read_only_guard(app)
+    register_activity_log(app)
 
     @app.template_global("csrf_field")
     def csrf_field():
@@ -132,6 +137,14 @@ def create_app(config_object=Config):
 
         return format_plate(value)
 
+    @app.template_filter("localtime")
+    def localtime(value, fmt="%d/%m/%Y %H:%M:%S"):
+        """זמן שנשמר ב-UTC, מוצג בשעון המקומי."""
+        from .activity import to_local
+
+        local = to_local(value, app.config["DISPLAY_TIMEZONE"])
+        return local.strftime(fmt) if local else "—"
+
     @app.template_filter("ils")
     def ils(value):
         """עיצוב מחיר בשקלים."""
@@ -164,6 +177,14 @@ def create_app(config_object=Config):
         """יוצר את טבלאות בסיס הנתונים."""
         db.create_all()
         print("הטבלאות נוצרו.")
+
+    @app.cli.command("prune-activity")
+    def prune_activity_command():  # pragma: no cover - פקודת CLI
+        """מוחק אירועים ישנים מלוג השימוש (לפי ACTIVITY_LOG_RETENTION_DAYS)."""
+        from .activity import prune
+
+        days = app.config["ACTIVITY_LOG_RETENTION_DAYS"]
+        print(f"נמחקו {prune(days)} אירועים ישנים מ-{days} ימים.")
 
     @app.cli.command("seed")
     def seed_command():  # pragma: no cover - פקודת CLI
