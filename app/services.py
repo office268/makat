@@ -624,7 +624,7 @@ def parts_for_vehicle(vehicle, part_type=None):
 
 
 def catalog_coverage(vehicle):
-    """אילו סוגי חלקים קיימים בקטלוג עבור הרכב הזה - לשקיפות בדמו."""
+    """אילו סוגי חלקים קיימים בקטלוג עבור הרכב הזה - לשקיפות במסך הזיהוי."""
     parts = parts_for_vehicle(vehicle)
     seen = {}
     for part in parts:

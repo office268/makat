@@ -12,8 +12,9 @@ from app.models import CrossReference, Fitment, OrgPart, Part, db  # noqa: E402
 from app.services import get_or_create_category, get_or_create_manufacturer  # noqa: E402
 
 
-@pytest.fixture
-def app():
+def _build_app():
+    """בונה אפליקציה עם הקטלוג המשותף. מוחזר כגנרטור כדי ששני
+    ה-fixtures - זה שלכל בדיקה וזה שלכל קובץ - יחלקו את אותו קוד."""
     application = create_app(TestConfig)
     with application.app_context():
         db.drop_all()
@@ -54,6 +55,20 @@ def app():
         yield application
         db.session.remove()
         db.drop_all()
+
+
+@pytest.fixture
+def app():
+    yield from _build_app()
+
+
+@pytest.fixture(scope="module")
+def shared_app():
+    """אותה אפליקציה, פעם אחת לכל קובץ בדיקות.
+
+    קובץ ההדגמה גדל לאלפי שורות, וייבוא שלו לוקח כתשע שניות. קובץ
+    שרק קורא מהקטלוג לא צריך לשלם את זה בכל בדיקה בנפרד."""
+    yield from _build_app()
 
 
 @pytest.fixture
