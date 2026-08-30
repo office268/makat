@@ -1,18 +1,32 @@
 """קובץ הקטלוג: הוא מה שנטען בפרודקשן, ולכן זה מה שנבדק."""
 import pathlib
 
+import pytest
+
 from app import services
 from app.models import Part, db
 
 CSV = pathlib.Path(__file__).resolve().parent.parent / "data" / "parts_catalog.csv"
 
+_IMPORTED = {}
+
+
+@pytest.fixture(scope="module")
+def app(shared_app):
+    """כל הבדיקות בקובץ הזה רק קוראות מהקטלוג, ולכן חולקות אפליקציה
+    אחת - אחרת כל בדיקה מייבאת מחדש אלפי שורות."""
+    return shared_app
+
 
 def _load(app):
-    with app.app_context():
-        Part.query.delete()
-        db.session.commit()
-        with CSV.open(encoding="utf-8-sig") as fh:
-            return services.import_csv(fh)
+    """מייבא את קובץ הקטלוג פעם אחת לכל אפליקציה, ומחזיר את אותה תוצאה."""
+    if app not in _IMPORTED:
+        with app.app_context():
+            Part.query.delete()
+            db.session.commit()
+            with CSV.open(encoding="utf-8-sig") as fh:
+                _IMPORTED[app] = services.import_csv(fh)
+    return _IMPORTED[app]
 
 
 def test_file_imports_without_errors(app):
@@ -371,3 +385,61 @@ def test_a_wiper_pair_is_never_split_between_two_lengths(app):
             found = services.parts_for_vehicle(
                 {"make": make, "model": model, "year": 2020}, "wiper_blade")
             assert len(found) >= 2, f"{model}: {found}"
+
+
+def test_every_part_type_exists_in_the_taxonomy(app):
+    """סוג חלק שלא בטקסונומיה נעלם מהמסך בלי להתלונן.
+
+    החיפוש והתגיות עובדים לפי PART_TYPES; שורה עם סוג שאינו שם
+    תיובא בהצלחה ופשוט לא תופיע לאף רכב. לכן זו בדיקה ולא הערה."""
+    from app.taxonomy import PART_TYPES
+
+    _load(app)
+    with app.app_context():
+        used = {p.part_type for p in Part.query.all()}
+        assert used <= set(PART_TYPES), used - set(PART_TYPES)
+
+
+def test_body_parts_carry_the_side_the_source_stated(app):
+    """בחלק פח הצד הוא חצי מהזיהוי: כנף ימין אינה כנף שמאל.
+
+    לכל סוג שיש לו צד נבדק שהצד מולא, למעט פריטים שהמקור עצמו
+    מסמן "both sides" - שם היעדר הצד הוא המידע הנכון."""
+    _load(app)
+    with app.app_context():
+        sided = {"taillight", "fender", "side_mirror", "mirror_glass",
+                 "mirror_cover"}
+        parts = Part.query.filter(Part.part_type.in_(sided)).all()
+        assert parts
+        missing = [p.part_number for p in parts if not p.side]
+        assert missing == [], missing
+        assert {p.side for p in parts} == {"ימין", "שמאל"}
+
+
+def test_a_facelift_part_is_narrowed_not_stretched(app):
+    """פנס שמסומן "Model Year from 2016" נכנס על 2016 ואילך.
+
+    הקורולה בקטלוג היא 2013-2019, ולכן הפיתוי הוא לרשום את הפנס על
+    כל הטווח. ההתאמה נחתכת לפי מה שהפריט מצהיר, וכך רכב מ-2014 לא
+    מקבל פנס של הפייסליפט."""
+    _load(app)
+    with app.app_context():
+        heads = (Part.query.join(Part.fitments)
+                 .filter(Part.part_type.in_(("headlight_left", "headlight_right")))
+                 .filter_by(model="COROLLA").all())
+        assert heads
+        starts = {f.year_from for p in heads for f in p.fitments
+                  if f.model == "COROLLA"}
+        assert starts != {2013}, "אף פנס לא נחתך - כנראה חלון הייצור לא נקרא"
+        assert min(starts) >= 2013 and max(starts) <= 2019, starts
+
+
+def test_body_parts_reach_all_three_brands(app):
+    """פח וקוסמטיקה נאספו לשלושת המותגים, לא רק לאחד."""
+    _load(app)
+    with app.app_context():
+        body = {"front_bumper", "rear_bumper", "fender", "side_mirror",
+                "headlight_left", "headlight_right", "taillight", "fog_light"}
+        makes = {f.make for p in Part.query.filter(Part.part_type.in_(body))
+                 for f in p.fitments}
+        assert {"טויוטה", "מאזדה", "קיה"} <= makes, makes
