@@ -376,3 +376,21 @@ def test_the_step_comes_back_with_a_flag(app, client):
     html = client.get("/").get_data(as_text=True)
     assert "2. החלק" in html
     assert 'name="action" value="part"' in html
+
+
+def test_a_manual_pick_shows_no_identification_card(client):
+    """לחצת על תגית - אין מה "לזהות", וגם לא 100% שמאשר את עצמו."""
+    html = client.get("/?plate=12345678&part_type=brake_pads_front").get_data(as_text=True)
+    assert "TEST-001" in html               # התוצאות כן
+    assert "סוג החלק שזוהה" not in html     # כרטיס הזיהוי לא
+    assert "manual" not in html
+
+
+def test_a_real_identification_still_shows_its_card(app, client):
+    """זיהוי מטקסט הוא מידע אמיתי - השיטה ואחוז הביטחון נשארים."""
+    app.config["SHOW_PART_STEP"] = True
+    html = client.post("/", data={"plate": "12345678", "action": "part",
+                                  "query": "רפידות קדמיות"}).get_data(as_text=True)
+    assert "סוג החלק שזוהה" in html
+    assert "text" in html
+    assert "TEST-001" in html
