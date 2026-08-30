@@ -487,11 +487,14 @@ def test_an_oe_reference_belongs_to_the_car_it_fits(app):
 def test_most_parts_carry_an_original_number(app):
     """בלי מק"ט מקורי אי אפשר להשוות חליפי מול מחירון היבואן.
 
-    הכיסוי לא חייב להיות מלא - מגב אוניברסלי באמת אין לו מק"ט
-    מקורי אחד - אבל נפילה חדה ממנו פירושה שמשהו בצנרת נשבר."""
+    הכיסוי נמדד רק על חלקים שאין להם צד. בחלקי פח ותאורה, שבהם
+    ימין ושמאל הם שני מק"טים מקוריים שונים, מק"ט נכנס רק בהתאמה
+    ישירה - ולכן הכיסוי שם נמוך בכוונה, ולא מעיד על תקלה."""
     _load(app)
     with app.app_context():
-        parts = Part.query.all()
+        sided = {"side_mirror", "mirror_glass", "mirror_cover", "taillight",
+                 "fender", "fog_light", "headlight_left", "headlight_right"}
+        parts = [p for p in Part.query.all() if p.part_type not in sided]
         withoe = [p for p in parts if p.cross_refs]
         assert len(withoe) / len(parts) > 0.75, f"{len(withoe)}/{len(parts)}"
 
@@ -506,3 +509,38 @@ def test_no_original_number_repeats_inside_one_part(app):
         for part in Part.query.all():
             nums = [r.ref_number for r in part.cross_refs]
             assert len(nums) == len(set(nums)), part.part_number
+
+
+def test_left_and_right_never_share_an_original_number(app):
+    """ימין ושמאל הם שני מק"טים מקוריים שונים, תמיד.
+
+    הסקה ברמת הקבוצה נתנה למראות ימין את המק"ט של שמאל, כי מפתח
+    הקבוצה היה יצרן+דגם+סוג חלק בלי הצד. 23 שורות. מאז חלק שיש לו
+    צד מקבל מק"ט מקורי רק בהתאמה ישירה - עדיף בלי מאשר של הצד השני."""
+    _load(app)
+    with app.app_context():
+        by_side = {}
+        for part in Part.query.filter(Part.side.isnot(None)):
+            for ref in part.cross_refs:
+                key = (part.part_type, ref.ref_number)
+                if by_side.setdefault(key, part.side) != part.side:
+                    raise AssertionError(
+                        f"{ref.ref_number} מופיע גם בימין וגם בשמאל "
+                        f"({part.part_type}, {part.part_number})")
+
+
+def test_a_part_that_fits_two_makes_carries_both_originals(app):
+    """מוסך שמסתכל על C-HR צריך את המק"ט של טויוטה.
+
+    מצת אחד מתאים גם לטויוטה וגם למאזדה, ובגרסה הראשונה הוא קיבל
+    רק את המק"ט של המותג שנמצא ראשון - כך שברכב השני הוא הציג מספר
+    מקורי של יצרן אחר."""
+    _load(app)
+    with app.app_context():
+        mixed = 0
+        for part in Part.query.all():
+            makes = {f.make for f in part.fitments}
+            brands = {r.ref_brand for r in part.cross_refs if r.ref_brand}
+            if len(makes) > 1 and len(brands) > 1:
+                mixed += 1
+        assert mixed >= 10, mixed

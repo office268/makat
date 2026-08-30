@@ -122,6 +122,13 @@ def test_catalog_browsable_without_searching(client):
     assert "COROLLA" in html                  # ההתאמה עצמה מוצגת
 
 
+def test_catalog_shows_the_original_part_number(client):
+    """המק"ט המקורי הוא מה שהלקוח מביא מהמוסך, ולכן הוא בטבלה עצמה."""
+    html = client.get("/parts").get_data(as_text=True)
+    assert 'מק"ט מקורי' in html
+    assert "04465-02220" in html          # ה-OEM של המק"ט מה-fixture
+
+
 def test_home_does_not_offer_the_whole_catalog(client):
     """המסך הראשי הוא זיהוי לפי רכב. הקטלוג המלא נשאר בתפריט."""
     html = client.get("/").get_data(as_text=True)

@@ -10,6 +10,7 @@ from flask import (
     request,
     url_for,
 )
+from sqlalchemy.orm import selectinload
 
 from .. import activity, fleet_stats, services
 from ..auth import role_required
@@ -76,7 +77,11 @@ def parts_list():
     filters = _filters_from_request()
     page = request.args.get("page", 1, type=int)
     per_page = current_app.config["PER_PAGE"]
-    query = services.search_parts(**filters)
+    # הטבלה מציגה מק"ט מקורי והתאמות לכל שורה, ובלי טעינה מראש כל שורה
+    # הייתה שאילתה נוספת.
+    query = services.search_parts(**filters).options(
+        selectinload(Part.cross_refs), selectinload(Part.fitments)
+    )
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     # מה שהמשתמש בחר, להבדיל ממה שתמיד נשלח (מיון, ארגון, active_only)
     is_filtered = any(
@@ -270,10 +275,14 @@ def stats():
     q = request.args.get("q", "").strip() or None
     make = request.args.get("make", "").strip() or None
     page = request.args.get("page", 1, type=int)
-    pagination = fleet_stats.search(q=q, make=make).paginate(
+    # הצילום החי נקבע פעם אחת ומועבר לכל השאילתות: אחרת ספירה שרצה
+    # ברקע הייתה יכולה להתפרסם באמצע הבקשה, והמסך היה מציג טבלה מצילום
+    # אחד וסכומים מצילום אחר
+    taken_at = fleet_stats.live_taken_at()
+    pagination = fleet_stats.search(q=q, make=make, taken_at=taken_at).paginate(
         page=page, per_page=current_app.config["PER_PAGE"], error_out=False
     )
-    totals = fleet_stats.summary()
+    totals = fleet_stats.summary(taken_at=taken_at)
     activity.note(
         summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
         results=pagination.total,
@@ -285,8 +294,8 @@ def stats():
         rows=pagination.items,
         totals=totals,
         # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
-        filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make),
-        makes=fleet_stats.makes(),
+        filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make, taken_at=taken_at),
+        makes=fleet_stats.makes(taken_at=taken_at),
         selected={"q": q, "make": make},
     )
 
