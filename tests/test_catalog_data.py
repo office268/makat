@@ -1,4 +1,4 @@
-"""קובץ ההדגמה: הוא קיים כדי שהזרימה תעבוד, ולכן זה מה שנבדק."""
+"""קובץ הקטלוג: הוא מה שנטען בפרודקשן, ולכן זה מה שנבדק."""
 import pathlib
 
 import pytest
@@ -6,7 +6,7 @@ import pytest
 from app import services
 from app.models import Part, db
 
-CSV = pathlib.Path(__file__).resolve().parent.parent / "data" / "demo_parts.csv"
+CSV = pathlib.Path(__file__).resolve().parent.parent / "data" / "parts_catalog.csv"
 
 _IMPORTED = {}
 
@@ -19,7 +19,7 @@ def app(shared_app):
 
 
 def _load(app):
-    """מייבא את קובץ ההדגמה פעם אחת לכל אפליקציה, ומחזיר את אותה תוצאה."""
+    """מייבא את קובץ הקטלוג פעם אחת לכל אפליקציה, ומחזיר את אותה תוצאה."""
     if app not in _IMPORTED:
         with app.app_context():
             Part.query.delete()
@@ -56,13 +56,13 @@ def test_year_range_is_real_not_decorative(app):
         assert services.parts_for_vehicle(old, "oil_filter") == []
 
 
-def test_every_row_is_marked_as_demo_data(app):
+def test_every_row_carries_its_source(app):
     """מקור הנתונים לא רשמי, ולכן כל שורה נושאת את זה בגלוי."""
     _load(app)
     with app.app_context():
         parts = Part.query.all()
         assert parts
-        assert all("נתוני הדגמה" in (p.notes or "") for p in parts)
+        assert all("מקור: קטלוג מקוון" in (p.notes or "") for p in parts)
 
 
 def test_shared_part_number_keeps_every_fitment(app):
@@ -103,7 +103,7 @@ def test_catalog_spans_several_part_types(app):
 
 
 def test_corolla_answers_more_than_one_question(app):
-    """הדגם המוביל בהדגמה - כמה סוגי חלקים על אותו רכב."""
+    """הדגם המוביל בקטלוג - כמה סוגי חלקים על אותו רכב."""
     _load(app)
     with app.app_context():
         corolla = {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016}
@@ -119,8 +119,8 @@ def test_oe_cross_references_came_through(app):
         assert [r.ref_number for r in part.cross_refs] == ["90915-YZZJ1"]
 
 
-def test_every_demo_plate_finds_parts(app):
-    """כל רכב בקובץ הדמו חייב להחזיר חלפים.
+def test_every_sample_plate_finds_parts(app):
+    """כל רכב בקובץ רכבי הדוגמה חייב להחזיר חלפים.
 
     מספרי הרישוי האלה הם מה שמישהו מקליד כשהוא מנסה את המערכת. רכב
     שמזוהה ואז מחזיר מסך ריק גרוע מרכב שלא מזוהה - נראה כאילו הכל
@@ -443,3 +443,42 @@ def test_body_parts_reach_all_three_brands(app):
         makes = {f.make for p in Part.query.filter(Part.part_type.in_(body))
                  for f in p.fitments}
         assert {"טויוטה", "מאזדה", "קיה"} <= makes, makes
+
+
+def test_an_oe_reference_belongs_to_the_car_it_fits(app):
+    """מק"ט מקורי של מותג זר לגמרי הוא טעות מסוכנת.
+
+    זו התבנית שנתפסה ידנית בסבבים הראשונים - OE של הונדה על עמוד של
+    קיה. הכלל אינו "כל ההפניות למותגים שבהתאמות": חלף אחד באמת נושא
+    מק"טים של כמה יצרנים כשהמנוע או הפלטפורמה משותפים, למשל מסנן
+    האוויר של C-HR שנושא גם מק"טים של פיג'ו וסיטרואן. מה שנדרש הוא
+    שלפחות הפניה אחת תהיה של מותג שהחלף באמת מתאים לו, ושכל מותג
+    יהיה יצרן רכב - מותג שאינו כזה הוא המספר המסחרי של החלף עצמו."""
+    _load(app)
+    with app.app_context():
+        he = {"Toyota": "טויוטה", "Mazda": "מאזדה", "Kia": "קיה",
+              "Hyundai": "יונדאי", "Peugeot": "פיג'ו", "Citroen": "סיטרואן",
+              "Skoda": "סקודה", "VW": "פולקסווגן", "Nissan": "ניסאן",
+              "Honda": "הונדה", "Suzuki": "סוזוקי", "Renault": "רנו",
+              "Mitsubishi": "מיצובישי"}
+        unknown, orphan = [], []
+        for part in Part.query.all():
+            brands = [(ref.ref_brand or "").strip() for ref in part.cross_refs]
+            brands = [b for b in brands if b]
+            if not brands:
+                continue
+            makes = {f.make for f in part.fitments}
+            for raw in brands:
+                if raw not in he:
+                    unknown.append((part.part_number, raw))
+            # יונדאי וקיה הן קבוצה אחת ומספרות חלפים באותה סדרה,
+            # ולכן OE של יונדאי על חלף של קיה אינו זר
+            group = set()
+            for m in makes:
+                group.add(m)
+                if m in ("קיה", "יונדאי"):
+                    group |= {"קיה", "יונדאי"}
+            if not any(he.get(b) in group for b in brands):
+                orphan.append((part.part_number, brands, sorted(makes)))
+        assert unknown == [], unknown[:5]
+        assert orphan == [], orphan[:5]
