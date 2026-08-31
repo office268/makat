@@ -86,6 +86,74 @@ def _squash(column):
     return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
 
 
+def normalize_make(name):
+    """שם יצרן בצורה שבה משווים אותו בין המרשם לקטלוג.
+
+    המרשם כותב "מזדה" והקטלוג "מאזדה" - אותו יצרן, אֵם קריאה אחת הבדל,
+    והשוואה מילולית פשוט לא מוצאת אותו. לכן נופלות א' ואותיות כפולות
+    (וו -> ו), וההשוואה נעשית על מה שנשאר.
+
+    זו נורמליזציה זהירה בכוונה: על שנים-עשר היצרנים שבקטלוג היא אינה
+    ממזגת שניים לאחד, ולכן היא מגשרת על כתיב בלי להמציא התאמות.
+    """
+    text = (name or "").strip().lower().replace("א", "")
+    collapsed = []
+    for char in text:
+        if not collapsed or collapsed[-1] != char:
+            collapsed.append(char)
+    return "".join(collapsed)
+
+
+def _catalog_make(make):
+    """שם היצרן ככתיבתו בקטלוג, אם הוא מוכר שם בכתיב אחר."""
+    wanted = normalize_make(make)
+    if not wanted:
+        return make
+    for (name,) in db.session.query(Fitment.make).distinct():
+        if name and normalize_make(name) == wanted:
+            return name
+    return make
+
+
+# שם דגם קצר מדי מזהה כל דבר: "3" נמצא בתוך "I30" ובתוך "MAZDA 3" גם
+# יחד. משלוש אותיות ומעלה ההתאמה כבר אומרת משהו.
+MIN_MODEL_PREFIX = 3
+
+
+def _model_matches(model):
+    """התאמת שם דגם בין המרשם לקטלוג, בשני הכיוונים.
+
+    לפעמים שם הקטלוג ארוך יותר ("COROLLA VERSO" מול "COROLLA"), ולפעמים
+    דווקא שם המרשם ("COROLLA HSD SDN" מול "COROLLA"). בדיקה בכיוון אחד
+    בלבד הפילה את המקרה השני: 265 מק"טים לקורולה לא נמצאו לרכב שבמרשם
+    נקרא COROLLA HSD SDN - לא בדוח, וגרוע מזה, גם בזיהוי לפי מספר רישוי.
+
+    לכן: או ששם המרשם מוכל בשם הקטלוג, או ששם המרשם *מתחיל* בשם הקטלוג.
+    ההכלה ההפוכה מוגבלת לתחילת המחרוזת ולשמות באורך סביר, אחרת שם קצר
+    היה נדבק לכל דגם שמכיל את אותן אותיות.
+    """
+    squashed = _squash_text(model)
+    catalog = _squash(Fitment.model)
+    return or_(
+        catalog.like(f"%{squashed}%"),
+        and_(
+            func.length(catalog) >= MIN_MODEL_PREFIX,
+            db.literal(squashed).like(catalog.concat("%")),
+        ),
+    )
+
+
+def model_matches_name(registry_model, catalog_model):
+    """אותו כלל בדיוק, בצד פייתון. מימוש אחד לוגי, שני ניסוחים."""
+    wanted = _squash_text(registry_model)
+    catalog = _squash_text(catalog_model)
+    if not wanted or not catalog:
+        return False
+    return wanted in catalog or (
+        len(catalog) >= MIN_MODEL_PREFIX and wanted.startswith(catalog)
+    )
+
+
 def _engine_matches(terms):
     """התאמה שמצהירה על אחד המנועים המבוקשים.
 
@@ -177,9 +245,10 @@ def search_parts(
     if make or model or year or engine:
         fit = db.session.query(Fitment.part_id)
         if make:
-            fit = fit.filter(Fitment.make.ilike(make))
+            # הרכב מגיע בכתיב המרשם, ההתאמות נכתבו בכתיב הקטלוג
+            fit = fit.filter(Fitment.make.ilike(_catalog_make(make)))
         if model:
-            fit = fit.filter(_squash(Fitment.model).like(f"%{_squash_text(model)}%"))
+            fit = fit.filter(_model_matches(model))
         if engine:
             fit = fit.filter(or_(_engine_matches(engine), _engine_unspecified()))
         if year:
@@ -249,7 +318,7 @@ def _fitment_index():
     )
     index = {}
     for make, model, part_id, part_type in rows:
-        key = ((make or "").strip().lower(), _squash_text(model))
+        key = (normalize_make(make), _squash_text(model))
         total, wear = index.setdefault(key, (set(), set()))
         total.add(part_id)
         if part_type in WEAR_TYPES:
@@ -267,11 +336,10 @@ def part_counts_for(pairs):
     index = _fitment_index()
     counts = {}
     for make, model in set(pairs):
-        wanted_make = (make or "").strip().lower()
-        wanted_model = _squash_text(model)
+        wanted_make = normalize_make(make)
         total, wear = set(), set()
         for (fit_make, fit_model), (part_ids, wear_ids) in index.items():
-            if fit_make == wanted_make and wanted_model in fit_model:
+            if fit_make == wanted_make and model_matches_name(model, fit_model):
                 total |= part_ids
                 wear |= wear_ids
         counts[(make, model)] = (len(total), len(wear))
