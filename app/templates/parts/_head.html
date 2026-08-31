@@ -1,0 +1,74 @@
+{# כותרת עמודה: השם, אייקון המיון ואייקון הסינון.
+
+   משותפת לשתי הטבלאות. הן מציגות תאים שונים לגמרי, אבל הכותרת - מה
+   שנלחץ כדי למיין ולסנן - חייבת להתנהג אותו דבר בשתיהן, אחרת אותה
+   לחיצה עושה שני דברים שונים בשני מסכים.
+
+   endpoint הוא המסלול שאליו הלחיצה חוזרת, כדי שמיון בטבלת המכירה
+   יישאר בטבלת המכירה. #}
+
+{# אייקונים מוטבעים ולא פונט מ-CDN: הטבלה נראית אותו דבר גם בלי רשת.
+   אייקון המיון מספר גם מה מצב העמודה - שני חצים דהויים כשהיא לא
+   ממוינת, וחץ אחד מודגש בכיוון שנבחר. #}
+{% macro sort_icon(state) -%}
+<svg class="col-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+  <path d="M8 3.2 11 7H5z" fill="currentColor" opacity="{{ '1' if state == 'asc' else '.3' }}"/>
+  <path d="M8 12.8 5 9h6z" fill="currentColor" opacity="{{ '1' if state == 'desc' else '.3' }}"/>
+</svg>
+{%- endmacro %}
+
+{% macro filter_icon(active) -%}
+<svg class="col-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false">
+  <path d="M2 3h12L9.5 8.6V13l-3 1.2V8.6z" fill="{{ 'currentColor' if active else 'none' }}"
+        stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"
+        opacity="{{ '1' if active else '.55' }}"/>
+</svg>
+{%- endmacro %}
+
+{% macro column_head(column, sorted_key, sort_direction, endpoint) -%}
+  {%- set filtered = request.args.get(column.param) if column.filterable else None -%}
+  {%- set next = 'desc' if (sorted_key == column.key and sort_direction == 'asc') else 'asc' -%}
+  <div class="col-head {{ 'justify-content-end' if column.align == 'text-end' else 'justify-content-center' if column.align == 'text-center' }}">
+    {% if column.sortable %}
+    <a class="col-sort" data-table-nav
+       href="{{ url_for(endpoint, **dict(request.args, sort=column.key ~ ':' ~ next, page=1)) }}"
+       title="מיון לפי {{ column.label }}">
+      {{ column.label }}{{ sort_icon(sorted_key == column.key and sort_direction or 'none') }}
+      {% if sorted_key == column.key %}
+      <span class="visually-hidden">{{ 'ממוין עולה' if sort_direction == 'asc' else 'ממוין יורד' }}</span>
+      {% endif %}
+    </a>
+    {% else %}{{ column.label }}{% endif %}
+
+    {% if column.filterable %}
+    {# פתוחה כשיש סינון פעיל: אחרת הערך שסונן היה נעלם מהעין.
+       details ולא חלונית צפה - חלונית הייתה נחתכת בגלילה האופקית של
+       הטבלה, וזו נפתחת בתוך הכותרת עצמה. #}
+    <details class="col-filter" {% if filtered %}open{% endif %}>
+      <summary title="סינון לפי {{ column.label }}"
+               aria-label="סינון לפי {{ column.label }}">
+        {{ filter_icon(filtered) }}
+      </summary>
+      <div class="col-filter-field">
+        {% if column.kind == 'select' %}
+        <select class="form-select form-select-sm" form="filters" name="{{ column.param }}"
+                aria-label="סינון לפי {{ column.label }}">
+          <option value="">הכל</option>
+          {% for value, label in column.options() %}
+          <option value="{{ value }}" {% if filtered == value | string %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input class="form-control form-control-sm" form="filters" name="{{ column.param }}"
+               value="{{ filtered or '' }}"
+               placeholder="{{ column.hint or ('>10' if column.kind == 'number' else 'מכיל') }}"
+               title="{% if column.kind == 'number' %}מספר, טווח (10-20) או השוואה (>10){% else %}מכיל{% endif %}"
+               aria-label="סינון לפי {{ column.label }}">
+        {% endif %}
+        <button class="btn btn-sm btn-primary" form="filters"
+                aria-label="החלת הסינון">סנן</button>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+{%- endmacro %}

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}מבט מכירה{% endblock %}
+
+{% import "parts/_head.html" as head %}
+
+{# הטבלה הזאת עונה על השאלה שנשאלת מעבר לדלפק: "יש לך כזה לרכב הזה,
+   וכמה?". לכן כל תא מאחד כמה נתונים - הרכב על כל פרטיו בתא אחד, החלק
+   והמיקום שלו בתא אחד, והמלאי והמחיר של כל הקבוצה ולא של מק"ט בודד.
+
+   נתון שאין - נשמט, ולא מוצג כשדה ריק. "טויוטה קורולה 2015–2020" בלי
+   נפח ובלי דלק קריא יותר מאותה שורה עם שני מקפים באמצע. #}
+{% macro cell(column, part, op) -%}
+  {%- set row = counts.get(part.id, {}) -%}
+  {%- if column.key == 'vehicle' -%}
+    {% set cars = [] %}
+    {% for fit in part.fitments %}
+      {%- set bits = [fit.make, fit.model, fit.engine_volume, fit.engine_code, fit.fuel] -%}
+      {%- set years = (fit.year_from ~ '–' ~ (fit.year_to or '')) if fit.year_from else None -%}
+      {%- set _ = cars.append((bits | select | join(' ')) ~ (' ' ~ years if years else '')) -%}
+    {% endfor %}
+    {% if cars %}
+    <div class="cell-truncate cell-wide" title="{{ cars | join(' · ') }}">
+      {{ cars[:2] | join(' · ') }}{% if cars | length > 2 %} ועוד {{ cars | length - 2 }}{% endif %}
+    </div>
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  {%- elif column.key == 'part_name' -%}
+    {% set full = [part.name_he, part.side] | select | join(' · ') %}
+    <a class="cell-truncate d-block" href="{{ url_for('web.part_detail', part_id=part.id) }}"
+       title="{{ full }}">{{ full }}</a>
+  {%- elif column.key == 'oe_all' -%}
+    {# כאן מוצגים כולם ולא הראשון בלבד: זה המספר שמזמינים לפיו #}
+    {% if part.oem_numbers %}
+    <div class="cell-truncate cell-wide sku" title="{{ part.oem_numbers | join(' · ') }}">
+      {{ part.oem_numbers | join(' · ') }}
+    </div>
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  {%- elif column.key == 'image' -%}
+    {% if part.image_url %}
+    <a href="{{ url_for('web.part_detail', part_id=part.id) }}">
+      <img class="cell-thumb" src="{{ part.image_url }}" alt="{{ part.name_he }}" loading="lazy">
+    </a>
+    {% else %}<span class="text-muted" title="אין תמונה למק&#34;ט הזה">—</span>{% endif %}
+  {%- elif column.key == 'demand' -%}
+    {# שני מספרי הצי יחד: כמה כאלה בכלל, וכמה מהם בגיל שקונה חלפים #}
+    {% set all_cars = row.get('fleet_vehicles') %}
+    {% set buying = row.get('fleet_prime') %}
+    {% if all_cars is none %}
+    <span class="text-muted" title="לא נטענה ספירת צי">—</span>
+    {% else %}
+    <span title="{{ "{:,}".format(all_cars) }} רכבים על הכביש, מהם {{ "{:,}".format(buying or 0) }} בטווח הקנייה">
+      {{ "{:,}".format(all_cars) }}
+      <span class="text-muted small">· {{ "{:,}".format(buying or 0) }} קונים</span>
+    </span>
+    {% endif %}
+  {%- elif column.key == 'substitutes' -%}
+    {% set value = row.get('substitutes', 0) %}
+    {% if value %}{{ value }}{% else %}<span class="text-muted">0</span>{% endif %}
+  {%- elif column.key == 'group_stock' -%}
+    {% set value = row.get('group_stock') %}
+    {% if value is none %}<span class="text-muted">—</span>
+    {% else %}
+    <span class="badge {{ 'bg-success' if value else 'bg-secondary' }}"
+          title="הכול יחד: המק&#34;ט הזה וכל תחליפיו">{{ value }}</span>
+    {% endif %}
+  {%- elif column.key == 'group_price' -%}
+    {% set original = row.get('original_price') %}
+    {% set low = row.get('cheapest') %}
+    {% set high = row.get('dearest') %}
+    {% if original %}<div class="small">מקורי {{ original | ils }}</div>{% endif %}
+    {% if low is not none %}
+    <div class="{{ 'text-muted small' if original }}"
+         title="הזול והיקר ביותר מבין המק&#34;ט הזה ותחליפיו">
+      {% if high and high != low %}{{ low | ils }} – {{ high | ils }}
+      {% else %}{{ low | ils }}{% endif %}
+    </div>
+    {% elif not original %}<span class="text-muted">—</span>{% endif %}
+  {%- else -%}
+    {{ column.text(part, op) }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h5 mb-0">
+    מבט מכירה
+    <span class="text-muted fw-normal">
+      {% if is_filtered %}{{ pagination.total }} מתוך {{ total_parts }}
+      {% else %}{{ total_parts }} מק"טים{% endif %}
+    </span>
+  </h1>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('web.parts_list') }}">לקטלוג המלא</a>
+</div>
+
+{# טופס הסינון של הכותרות. הוא ריק בכוונה: השדות עצמם יושבים בתוך
+   הכותרות ומצביעים לכאן דרך form="filters". #}
+<form id="filters" method="get" class="d-none">
+  <input type="hidden" name="sort" value="{{ filters.sort }}">
+</form>
+
+{% if is_filtered %}
+<div class="mb-3">
+  <a class="btn btn-sm btn-outline-secondary"
+     href="{{ url_for('web.parts_sales', sort=filters.sort) }}">ניקוי סינון</a>
+</div>
+{% endif %}
+
+<div class="card position-relative" data-busy-table>
+  <div class="table-busy" id="table-busy" hidden>
+    <div class="table-busy-bar"></div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          {% for column in columns %}
+          <th class="{{ column.align }}">
+            {{ head.column_head(column, sorted_key, sort_direction, "web.parts_sales") }}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for part in parts %}
+        {% set op = part.for_org(org_id) %}
+        <tr>
+          {% for column in columns %}
+          <td class="{{ column.align }}">{{ cell(column, part, op) }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ columns | length }}" class="text-muted text-center py-4">
+          {% if is_filtered %}
+            לא נמצאו מק"טים לסינון הזה.
+            <a href="{{ url_for('web.parts_sales') }}">להצגת הכול</a>
+          {% else %}הקטלוג ריק.{% endif %}
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  {% for page_num in pagination.iter_pages() %}
+    {% if page_num %}
+      <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+        <a class="page-link" data-table-nav
+           href="{{ url_for('web.parts_sales', **dict(request.args, page=page_num)) }}">{{ page_num }}</a></li>
+    {% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+  {% endfor %}
+</ul></nav>
+{% endif %}
+{% endblock %}

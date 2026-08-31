@@ -203,3 +203,13 @@ footer a { color: var(--brand); }
   overflow-wrap: anywhere;
   text-align: left;
 }
+
+/* התמונה בטבלת המכירה. גובה קבוע כדי שכל השורות יהיו באותו גובה -
+   שורות בגבהים משתנים הופכות סריקה של הטבלה לקופצנית. */
+.cell-thumb {
+  height: calc(40px * var(--app-pad-scale, 1));
+  width: auto;
+  max-width: 64px;
+  object-fit: contain;
+  border-radius: 4px;
+}

@@ -129,6 +129,50 @@ def parts_list():
     )
 
 
+@web_bp.route("/parts/sales")
+def parts_sales():
+    """מבט מכירה: שורה אחת לכל מק"ט, וכל תא מאחד כמה נתונים.
+
+    אותו קטלוג ואותו מנוע חיפוש כמו ‎/parts, בפריסת עמודות אחרת -
+    זו שעונה על מה ששואלים מעבר לדלפק ולא על מה שמנהלים במחסן.
+    manufacturer נטען מראש כי הוא נדרש כדי להחליט מי מקורי ומי תחליפי.
+    """
+    filters = _filters_from_request()
+    page = request.args.get("page", 1, type=int)
+    query = services.search_parts(**filters).options(
+        selectinload(Part.cross_refs),
+        selectinload(Part.fitments),
+        selectinload(Part.manufacturer),
+        selectinload(Part.org_links),
+    )
+    pagination = query.paginate(
+        page=page, per_page=current_app.config["PER_PAGE"], error_out=False
+    )
+    is_filtered = bool(filters["column_filters"]) or any(
+        filters[key] for key in ("q", "make", "model", "year", "engine")
+    )
+    activity.note(
+        summary=f"מבט מכירה · {pagination.total} תוצאות",
+        results=pagination.total,
+        page=page,
+        filtered=is_filtered,
+    )
+    sorted_column, direction = part_columns.parse_sort(filters["sort"])
+    columns = services.column_layout(services.SALES_TABLE)
+    return render_template(
+        "parts/sales.html",
+        pagination=pagination,
+        parts=pagination.items,
+        counts=services.column_counts(pagination.items, columns),
+        filters=filters,
+        is_filtered=is_filtered,
+        total_parts=Part.query.count(),
+        columns=columns,
+        sorted_key=sorted_column.key if sorted_column else None,
+        sort_direction=direction,
+    )
+
+
 @web_bp.route("/parts/<int:part_id>")
 def part_detail(part_id):
     """כרטיס מק"ט מלא."""
