@@ -198,6 +198,128 @@ def test_a_column_filter_marks_the_screen_as_filtered(client, catalog):
     assert "מתוך" in html                    # "1 מתוך 4"
 
 
+# ---------- הרכב שהחלק מתאים לו, וכמה יש ממנו ----------
+
+@pytest.fixture
+def vehicles(app, catalog):
+    """שני מק"טים נוספים לאותה קורולה, ואחד שהוא תחליף מוצהר.
+
+    AA-1 ו-CC-3 מהקטלוג מקבלים התאמה לקורולה, וכך יש לרכב הזה שלושה
+    חלפים במאגר (יחד עם TEST-001 של ה-fixture).
+    """
+    from app.models import CrossReference, Fitment
+
+    with app.app_context():
+        for number in ["AA-1", "CC-3"]:
+            part = Part.query.filter_by(part_number=number).first()
+            db.session.add(Fitment(part=part, make="טויוטה", model="COROLLA",
+                                   year_from=2015))
+        # BB-2 מצהיר על המק"ט של AA-1 כמקביל שלו: לפי הכלל של
+        # equivalent_parts הם תחליפים זה של זה, לשני הכיוונים
+        bb = Part.query.filter_by(part_number="BB-2").first()
+        db.session.add(CrossReference(part=bb, ref_number="AA-1", ref_type="OEM"))
+        db.session.commit()
+        yield
+
+
+def test_the_new_columns_are_on_the_shelf(client):
+    labels = {c.key: c.label for c in part_columns.COLUMNS}
+    assert labels["vehicle_make"] == "יצרן רכב"
+    assert labels["vehicle_model"] == "דגם רכב"
+    assert labels["catalog_parts"] == "חלפים במאגר"
+    assert labels["substitutes"] == "תחליפים"
+
+
+def test_the_vehicle_columns_show_make_and_model(app, client, vehicles):
+    with app.app_context():
+        services.save_column_layout(["part_number", "vehicle_make", "vehicle_model"])
+    html = client.get("/parts?f_part_number=TEST").get_data(as_text=True)
+    body = html.split("<tbody>")[1].split("</tbody>")[0]
+    assert "טויוטה" in body
+    assert "COROLLA" in body
+
+
+@pytest.mark.parametrize("param,value,expected", [
+    ("f_vehicle_make", "טויוטה", ["AA-1", "CC-3", "TEST-001"]),
+    ("f_vehicle_model", "COROLLA", ["AA-1", "CC-3", "TEST-001"]),
+    ("f_vehicle_model", "אין דגם כזה", []),
+])
+def test_the_vehicle_columns_filter(client, vehicles, param, value, expected):
+    assert sorted(numbers(client.get(f"/parts?{param}={value}"))) == expected
+
+
+def test_the_catalog_count_is_the_same_number_the_stats_screen_shows(app, vehicles):
+    """"חלפים במאגר" הוא מונח קיים במערכת - מק"טים בקטלוג שמתאימים לדגם.
+    המספר בעמודה חייב להיות אותו מספר, אחרת שני המסכים סותרים זה את זה."""
+    with app.app_context():
+        parts = Part.query.filter(Part.part_number.in_(["AA-1", "CC-3", "TEST-001"])).all()
+        counts = services.column_counts(parts, part_columns.COLUMNS)
+        from_service = services.vehicle_part_counts("טויוטה", "COROLLA")[0]
+        assert from_service == 3
+        for part in parts:
+            assert counts[part.id]["catalog_parts"] == 3
+
+
+def test_the_substitute_count_matches_the_list_on_the_part_card(app, vehicles):
+    """אותו כלל בדיוק כמו "מק"טים שקולים בקטלוג" שבכרטיס המק"ט.
+
+    כולל אי-הסימטריה שבו: BB-2 הצהיר על המק"ט של AA-1 כמקביל שלו,
+    ולכן AA-1 רואה את BB-2 כתחליף - אבל לא להפך. הכלל מחפש את
+    *המספרים שלי* אצל *המקבילים של האחרים*, ולא את המספרים שלהם אצלי.
+    העמודה מצטטת את הכלל הזה ולא ממציאה אחר, אחרת המספר בתא היה סותר
+    את הרשימה שנפתחת בלחיצה על המק"ט.
+    """
+    with app.app_context():
+        for number in ["AA-1", "BB-2", "CC-3"]:
+            part = Part.query.filter_by(part_number=number).first()
+            counts = services.column_counts([part], part_columns.COLUMNS)
+            assert counts[part.id]["substitutes"] == len(services.equivalent_parts(part)), number
+        aa = Part.query.filter_by(part_number="AA-1").first()
+        assert services.column_counts([aa], part_columns.COLUMNS)[aa.id]["substitutes"] == 1
+
+
+def test_a_part_with_nothing_attached_counts_zero(app, client, catalog):
+    with app.app_context():
+        db.session.add(Part(part_number="LONE-1", name_he="בודד"))
+        db.session.commit()
+        part = Part.query.filter_by(part_number="LONE-1").first()
+        counts = services.column_counts([part], part_columns.COLUMNS)
+        assert counts[part.id] == {"catalog_parts": 0, "substitutes": 0}
+
+
+@pytest.mark.parametrize("sort", [
+    "vehicle_make:asc", "vehicle_make:desc",
+    "vehicle_model:asc", "vehicle_model:desc",
+    "catalog_parts:desc", "substitutes:desc",
+])
+def test_the_new_columns_sort(client, vehicles, sort):
+    assert len(numbers(client.get(f"/parts?sort={sort}"))) == 4
+
+
+def test_the_counts_sort_by_the_number_they_show(client, app, vehicles):
+    """המק"טים של הקורולה (3 חלפים במאגר) לפני זה שאין לו רכב משלו."""
+    with app.app_context():
+        services.save_column_layout(["part_number", "catalog_parts"])
+    assert numbers(client.get("/parts?sort=catalog_parts:asc"))[0] == "BB-2"
+
+
+def test_the_counts_filter_as_numbers(client, vehicles):
+    assert sorted(numbers(client.get("/parts?f_catalog_parts=%3E2"))) == [
+        "AA-1", "CC-3", "TEST-001"]
+    # רק AA-1: הוא זה שמישהו אחר הצהיר על המספר שלו (ראה אי-הסימטריה למעלה)
+    assert sorted(numbers(client.get("/parts?f_substitutes=%3E0"))) == ["AA-1"]
+
+
+def test_the_counts_are_fetched_in_one_query_for_the_whole_page(app, client, vehicles):
+    """שאילתה לכל שורה הייתה 25 שאילתות לדף. וכשהעמודות אינן מוצגות -
+    אין שאילתה בכלל."""
+    with app.app_context():
+        parts = Part.query.all()
+        plain = [c for c in services.column_layout() if c.key != "catalog_parts"]
+        assert services.column_counts(parts, plain) == {}
+        assert len(services.column_counts(parts, part_columns.COLUMNS)) == len(parts)
+
+
 # ---------- הכותרת: שני אייקונים, בלי שורה נוספת ----------
 
 def test_the_header_is_a_single_row(client, catalog):

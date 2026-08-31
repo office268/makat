@@ -13,6 +13,7 @@ from .models import (
     OrgPart,
     Part,
     db,
+    squash,
 )
 
 CSV_COLUMNS = [
@@ -82,9 +83,8 @@ def _squash_text(value):
     return (value or "").replace(" ", "").replace("-", "").lower()
 
 
-def _squash(column):
-    """אותו כיווץ, בצד של בסיס הנתונים. replace ו-lower קיימים בשניהם."""
-    return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
+# אותו כיווץ, בצד של בסיס הנתונים. ההגדרה עצמה ב-models.
+_squash = squash
 
 
 def normalize_make(name):
@@ -854,6 +854,33 @@ def low_stock_parts(organization_id, limit=8):
         .limit(limit)
         .all()
     )
+
+
+def column_counts(parts, columns):
+    """הספירות שהעמודות המחושבות מציגות, לשורות שעל המסך בלבד.
+
+    {מזהה מק"ט: {"catalog_parts": n, "substitutes": n}}
+
+    שאילתה אחת לכל הדף, ובאותם ביטויים שלפיהם ממיינים ומסננים - אחרת
+    המספר שבתא היה יכול לסתור את הסדר שהוא עצמו יצר. כשאף אחת משתי
+    העמודות אינה מוצגת, אין כאן שאילתה בכלל.
+    """
+    wanted = {"catalog_parts", "substitutes"} & {column.key for column in columns}
+    if not wanted or not parts:
+        return {}
+    rows = (
+        db.session.query(
+            Part.id,
+            part_columns.CATALOG_PARTS,
+            part_columns.SUBSTITUTES,
+        )
+        .filter(Part.id.in_([part.id for part in parts]))
+        .all()
+    )
+    return {
+        part_id: {"catalog_parts": catalog or 0, "substitutes": substitutes or 0}
+        for part_id, catalog, substitutes in rows
+    }
 
 
 # ---------- פריסת העמודות ----------

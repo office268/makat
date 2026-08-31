@@ -52,6 +52,10 @@
   {%- elif column.key == 'stock' -%}
     {% if op %}<span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
     {% else %}<span class="text-muted">—</span>{% endif %}
+  {%- elif column.key in ('catalog_parts', 'substitutes') -%}
+    {# נספר בשאילתה אחת לכל הדף, באותו ביטוי שלפיו ממיינים #}
+    {% set value = counts.get(part.id, {}).get(column.key, 0) %}
+    {% if value %}{{ value }}{% else %}<span class="text-muted">0</span>{% endif %}
   {%- elif column.key == 'created_at' -%}
     <span class="small text-muted">{{ part.created_at | localtime('%d/%m/%Y') }}</span>
   {%- else -%}
