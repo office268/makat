@@ -1,5 +1,29 @@
 :root { --brand: #0c4a6e; }
 
+/* גודל התצוגה - נשלט מתפריט ההגדרות ונשמר במכשיר (static/js/display.js).
+   הזום מגדיל את הדף כולו כמו זום של הדפדפן; גודל הטקסט משנה את גודל
+   הבסיס שכל הטיפוגרפיה נמדדת ממנו. אחוזים ולא פיקסלים, כדי שגודל
+   הגופן שהמשתמש כבר קבע בדפדפן שלו יישאר נקודת המוצא. */
+:root { --app-zoom: 1; --app-font-scale: 1; }
+html { font-size: calc(100% * var(--app-font-scale)); }
+body { zoom: var(--app-zoom); }
+
+/* התפריט מבקש רוחב נוח, אבל לא יותר מהמסך. שתי המידות נחוצות:
+   min-width הוא רצפה בלבד, והתוכן עצמו - שנמדד ב-rem וגדל עם גודל
+   הטקסט - היה מותח את התפריט מעבר לקצה בטלפון צר. */
+.display-settings {
+  min-width: min(16rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  /* Bootstrap מגיע מ-CDN ולא נשמר במטמון של האפליקציה. כשהוא חסר -
+     אופליין, או רשת חסומה - התפריט הוא ul רגיל עם ההזחה שהדפדפן נותן
+     לרשימה, והיא לבדה דחפה את הדף מעבר לקצה המסך. p-3 של Bootstrap
+     מסומן !important ולכן הוא גובר על השורה הזו כשהוא כן נטען. */
+  padding-inline-start: 0;
+  list-style: none;
+}
+/* הקריאה לא תקפוץ ברוחב כשהמספר עובר מ-90% ל-100% */
+.display-settings [data-display-value] { min-width: 3.75rem; }
+
 body { background: #f5f7f9; }
 
 .bg-dark-blue { background-color: var(--brand); }

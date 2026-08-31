@@ -443,3 +443,66 @@ def test_the_identify_button_carries_an_inline_icon(client):
     assert 'fill="currentColor"' in button       # יורש את צבע הכפתור
     assert 'aria-hidden="true"' in button        # הטקסט הוא השם הנגיש
     assert "זהה רכב" in button
+
+
+# ---------- הגדרות התצוגה ----------
+
+def test_settings_sit_in_the_menu(client):
+    """הסעיף נמצא בתוך התפריט שההמבורגר פותח, ולא במקום אחר."""
+    html = client.get("/parts").get_data(as_text=True)
+    menu = html.split('id="nav"')[1].split("</nav>")[0]
+    assert "הגדרות" in menu
+    assert "display-settings" in menu
+
+
+def test_settings_offer_zoom_and_font_in_both_directions(client):
+    html = client.get("/parts").get_data(as_text=True)
+    for control in ["zoom:1", "zoom:-1", "font:1", "font:-1"]:
+        assert f'data-display-step="{control}"' in html, control
+    # קריאה נוכחית לכל אחד מהם, ואיפוס לשניהם יחד
+    assert 'data-display-value="zoom"' in html
+    assert 'data-display-value="font"' in html
+    assert "data-display-reset" in html
+
+
+def test_the_stepper_buttons_are_labelled_for_a_screen_reader(client):
+    """+ ו-- לבדם לא אומרים כלום למי שמקשיב לדף."""
+    html = client.get("/parts").get_data(as_text=True)
+    for label in ["הגדלת הזום", "הקטנת הזום", "הגדלת הטקסט", "הקטנת הטקסט"]:
+        assert f'aria-label="{label}"' in html, label
+
+
+def test_the_menu_stays_open_while_stepping(client):
+    """לחיצה על + לא סוגרת את התפריט - אחרת כל צעד דורש פתיחה מחדש."""
+    html = client.get("/parts").get_data(as_text=True)
+    assert 'data-bs-auto-close="outside"' in html
+
+
+def test_display_settings_load_before_the_page_is_drawn(client):
+    """הקובץ ב-head ולא בסוף הדף, אחרת הדף נפתח ברגיל וקופץ לגודלו."""
+    html = client.get("/parts").get_data(as_text=True)
+    head = html.split("</head>")[0]
+    assert "js/display.js" in head
+
+
+def test_the_display_script_is_served(client):
+    response = client.get("/static/js/display.js")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "--app-zoom" in body
+    assert "--app-font-scale" in body
+
+
+def test_the_size_is_a_device_setting_not_an_account_one(client):
+    """נשמר במכשיר: אותו אדם על מסך גדול ועל טלפון רוצה גדלים שונים."""
+    body = client.get("/static/js/display.js").get_data(as_text=True)
+    assert "localStorage" in body
+    # ואי אפשר להיתקע: כשל אחסון לא מפיל את המסך
+    assert "catch" in body
+
+
+def test_the_settings_reach_the_screen_before_identification(visitor):
+    """מי שמתקשה לקרוא צריך להגדיל *לפני* שהוא מקליד את מספרו."""
+    html = visitor.get("/login").get_data(as_text=True)
+    assert "js/display.js" in html
+    assert 'data-display-step="font:1"' in html
