@@ -198,11 +198,71 @@ def test_a_column_filter_marks_the_screen_as_filtered(client, catalog):
     assert "מתוך" in html                    # "1 מתוך 4"
 
 
-def test_the_filter_row_belongs_to_the_filter_form(client, catalog):
+# ---------- הכותרת: שני אייקונים, בלי שורה נוספת ----------
+
+def test_the_header_is_a_single_row(client, catalog):
+    """הסינון יושב באייקון שליד הכותרת, ולא בשורה משלו מתחתיה."""
+    head = client.get("/parts").get_data(as_text=True).split("<thead")[1].split("</thead>")[0]
+    assert head.count("<tr") == 1
+
+
+def test_each_column_carries_its_two_icons(client, catalog):
+    head = client.get("/parts").get_data(as_text=True).split("<thead")[1].split("</thead>")[0]
+    sortable = [c for c in services.column_layout() if c.sortable]
+    filterable = [c for c in services.column_layout() if c.filterable]
+    assert head.count('class="col-sort"') == len(sortable)
+    assert head.count("col-filter") >= len(filterable)
+    # אייקונים מוטבעים, לא פונט מ-CDN: הטבלה נראית אותו דבר גם בלי רשת
+    assert "<svg" in head
+
+
+def test_a_column_that_cannot_be_sorted_has_no_sort_icon(client, app, catalog):
+    """להתאמות אין סדר אחד נכון, ואייקון מיון שם היה משקר."""
+    with app.app_context():
+        services.save_column_layout(["fitments", "part_number"])
+    head = client.get("/parts").get_data(as_text=True).split("<thead")[1].split("</thead>")[0]
+    assert head.count('class="col-sort"') == 1      # רק המק"ט
+
+
+def test_the_filter_field_opens_by_itself_when_that_column_is_filtered(client, catalog):
+    """אחרת הערך שסונן היה נעלם מהעין ברגע שהדף נטען מחדש."""
+    head = client.get("/parts").get_data(as_text=True).split("<thead")[1].split("</thead>")[0]
+    assert "<details class=\"col-filter\" open>" not in head    # במנוחה הכל סגור
+
+    head = client.get("/parts?f_name_he=פילטר").get_data(as_text=True)
+    head = head.split("<thead")[1].split("</thead>")[0]
+    assert head.count("open>") == 1
+
+
+def test_the_filter_fields_belong_to_the_filter_form(client, catalog):
     """טופס אינו יכול לעטוף שורת טבלה, ולכן השדות מקושרים אליו בשמו."""
     html = client.get("/parts").get_data(as_text=True)
     assert 'form="filters"' in html
     assert 'name="f_name_he"' in html
+
+
+# ---------- חיווי חישוב ----------
+
+def test_the_table_says_when_it_is_recomputing(client, catalog):
+    """מיון וסינון הם בקשה לשרת; בלי חיווי המסך נראה תקוע."""
+    html = client.get("/parts").get_data(as_text=True)
+    assert "data-busy-table" in html
+    assert 'id="table-busy"' in html
+    # והפס מתחיל מוסתר - הוא מופיע רק בלחיצה
+    assert 'id="table-busy" hidden' in html
+
+
+def test_everything_that_recomputes_the_table_is_marked(client, catalog):
+    """מיון, סינון ועימוד - כולם מחזירים דף חדש, וכולם מדליקים את הפס."""
+    html = client.get("/parts").get_data(as_text=True)
+    head = html.split("<thead")[1].split("</thead>")[0]
+    assert head.count("data-table-nav") == len(
+        [c for c in services.column_layout() if c.sortable]
+    )
+    body = client.get("/static/js/app.js").get_data(as_text=True)
+    assert "data-busy-table" in body
+    assert "table-is-busy" in body
+    assert 'aria-busy' in body
 
 
 # ---------- מי קובע ----------
