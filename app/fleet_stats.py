@@ -196,8 +196,16 @@ class FleetStatsJob(db.Model):
 
         אין למאגר "סה\"כ קבוצות" להשוות אליו, ולכן אין אחוז התקדמות ואי
         אפשר להסתמך עליו כדי להסביר את הכפתור - הטקסט הוא ההסבר.
+
+        הרצה שנפלה על העמוד הראשון לא השאירה מה להמשיך, ו"המשך" הוא
+        תיאור שגוי של מה שיקרה בלחיצה - שם היא מתחילה מאפס, וכך היא
+        גם אומרת.
         """
-        return "ספירה מחדש" if self.status == self.DONE else "המשך ספירה"
+        if self.status == self.DONE:
+            return "ספירה מחדש"
+        if self.offset or self.models:
+            return "המשך ספירה"
+        return "התחל ספירה"
 
     def to_dict(self):
         return {

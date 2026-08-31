@@ -283,6 +283,15 @@ def stats():
         page=page, per_page=current_app.config["PER_PAGE"], error_out=False
     )
     totals = fleet_stats.summary(taken_at=taken_at)
+    # ספירת החלפים היא שאילתה לכל דגם, ולכן היא נעשית לשורות העמוד
+    # בלבד - ולא לכל עשרות אלפי הדגמים שבצילום. דגם שחוזר בכמה קודי
+    # דגם נספר פעם אחת.
+    memo, part_counts = {}, {}
+    for row in pagination.items:
+        key = (row.search_make, row.model)
+        if key not in memo:
+            memo[key] = services.vehicle_part_counts(*key)
+        part_counts[row.id] = memo[key]
     activity.note(
         summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
         results=pagination.total,
@@ -293,6 +302,7 @@ def stats():
         pagination=pagination,
         rows=pagination.items,
         totals=totals,
+        part_counts=part_counts,
         # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
         filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make, taken_at=taken_at),
         makes=fleet_stats.makes(taken_at=taken_at),

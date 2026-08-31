@@ -2,7 +2,7 @@
 import csv
 import io
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 
 from .models import (
     Category,
@@ -200,6 +200,25 @@ def search_parts(
         "newest": Part.created_at.desc(),
     }
     return query.order_by(sorts.get(sort, Part.part_number.asc()))
+
+
+def vehicle_part_counts(make, model):
+    """(מק"טים מתאימים לרכב, מתוכם מתכלים) לדגם אחד.
+
+    בנוי על אותו search_parts שהמסך /vehicles מריץ, ולא על שאילתה
+    מקבילה משלו: מספר בעמודה שאינו מה שנפתח בלחיצה עליו גרוע ממספר
+    שאינו שם בכלל.
+    """
+    from .taxonomy import WEAR_TYPES
+
+    query = search_parts(make=make, model=model).order_by(None)
+    total, wear = query.with_entities(
+        func.count(db.distinct(Part.id)),
+        func.count(db.distinct(
+            case((Part.part_type.in_(tuple(WEAR_TYPES)), Part.id))
+        )),
+    ).one()
+    return total or 0, wear or 0
 
 
 def find_by_number(number):

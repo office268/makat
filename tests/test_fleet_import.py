@@ -213,7 +213,13 @@ def test_cancelled_job_does_not_run(app):
 def test_button_label_says_what_it_will_do(app):
     with app.app_context():
         job = fleet_import.start_job()
+        # נפלה על העמוד הראשון: אין מה להמשיך, והכפתור לא מבטיח המשך
+        fleet_import._finish(job, FleetStatsJob.FAILED, error="HTTP 404 Not Found")
+        assert job.action_label == "התחל ספירה"
+
+        job.offset = 32000
         assert job.action_label == "המשך ספירה"
+
         fleet_import._finish(job, FleetStatsJob.DONE)
         assert job.action_label == "ספירה מחדש"
 
