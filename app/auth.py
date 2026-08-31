@@ -4,7 +4,7 @@
 נכנס, וכל השאר עוצרים בדלת. אין סיסמה, אין הרשמה עצמית ואין דוא"ל -
 רשימת המורשים היא טבלת המשתמשים עצמה, ומנהלים אותה במסך הצוות.
 """
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -50,7 +50,7 @@ def _unauthorized():
     if request.path.startswith("/api/"):
         return jsonify({"error": "נדרשת הזדהות"}), 401
     flash(login_manager.login_message, login_manager.login_message_category)
-    return redirect(url_for("auth.login", next=request.full_path))
+    return redirect(with_next("auth.login", here()))
 
 
 def role_required(minimum):
@@ -99,6 +99,28 @@ def safe_target(target):
     if not target or not target.startswith("/") or target.startswith("//"):
         return url_for("identify.index")
     return target
+
+
+def here():
+    """הכתובת הנוכחית כיעד לחזרה אחרי הזדהות.
+
+    full_path מוסיף "?" גם לבקשה שאין בה פרמטרים, ו-/parts? הוא יעד
+    מכוער שאין סיבה לגרור אותו הלוך ושוב.
+    """
+    return request.full_path if request.query_string else request.path
+
+
+def with_next(endpoint, target):
+    """כתובת של מסך בשער, עם היעד לחזרה אליו כפרמטר מקודד.
+
+    url_for משאיר "/" ו-"?" כמות שהם בערך של פרמטר, וכך נולדה בייצור
+    הכתובת /login?next=/parts? - שני סימני שאלה באותה כתובת. הדפדפן
+    עוד הסתדר איתה, אבל בדרך יש מי שמנרמל: הבקשה חזרה בלוגים כ-
+    /login%3Fnext=/parts, כלומר נתיב אחד שאין לו מסלול, ומי שביקש
+    להזדהות קיבל 404 במקום את הטופס. קידוד מלא של הערך לא משאיר
+    מקום לפרשנות.
+    """
+    return f"{url_for(endpoint)}?{urlencode({'next': target})}"
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
@@ -269,7 +291,7 @@ def welcome():
     """
     target = safe_target(request.args.get("next"))
     return render_template(
-        "auth/welcome.html", enter_url=url_for("auth.enter", next=target)
+        "auth/welcome.html", enter_url=with_next("auth.enter", target)
     )
 
 
@@ -283,7 +305,7 @@ def enter():
     """
     target = safe_target(request.args.get("next"))
     if not current_user.is_authenticated:
-        return redirect(url_for("auth.login", next=target))
+        return redirect(with_next("auth.login", target))
     session[PASS_ONCE] = True
     return redirect(target)
 

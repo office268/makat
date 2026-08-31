@@ -9,7 +9,7 @@
 """
 import re
 
-from sqlalchemy import case, func, union
+from sqlalchemy import case, cast, func, union
 
 from .models import (
     Category,
@@ -139,8 +139,10 @@ def fleet_value(field):
         if values[field]
     ]
     if not branches:
-        # אין צילום צי, או שאף רכב בקטלוג אינו במרשם
-        return db.literal(0)
+        # אין צילום צי, או שאף רכב בקטלוג אינו במרשם. ה-cast אינו
+        # קישוט: ב-Postgres מספר חשוף ב-ORDER BY הוא מספר סידורי של
+        # עמודה, ו-"ORDER BY 0" נפסל. עטוף ב-cast הוא שוב ביטוי.
+        return cast(db.literal(0), db.Integer)
     return func.coalesce(
         db.select(func.max(case(*branches, else_=0)))
         .where(Fitment.part_id == Part.id)
