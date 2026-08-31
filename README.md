@@ -55,6 +55,9 @@ VITARA, ARONA, KODIAQ). לכל שורה יש מק"ט מקורי ב-`cross_refs` 
 | `/import` | ייבוא מחירוני ספקים מקובץ CSV |
 | `/export.csv` | ייצוא תוצאות החיפוש הנוכחיות |
 | `/activity` | לוג השימוש: מי עשה מה, מתי, וכמה זה לקח (לבעלים) |
+| `/admin/discovery` | גילוי מק"טים מהאינטרנט דרך Claude (למנהל האפליקציה) |
+| `/admin/autodoc` | גריד חלפים מאתר Autodoc באמצעות Scrapy (למנהל האפליקציה) |
+| `/admin/discovery/review` | סקירת מה שנכנס אוטומטית: מה חשוד, אימות ומחיקה |
 
 ### מסך הפתיחה
 
@@ -521,6 +524,52 @@ python scripts/vehicle_stats.py --file rechev.csv  # מקובץ המאגר שה�
 המסך נופל לפרוקסי הישן — גילוי שמכוון פחות טוב עדיף על מסך שלא עושה
 כלום — והוא אומר במפורש לפי מה נבחרו המטרות.
 
+## גריד Autodoc: אותה צנרת, מקור אחר
+
+`/admin/autodoc` מביא חלפים מאתר Autodoc באמצעות **Scrapy**. מנהל
+האפליקציה בוחר יצרן, דגם וסוגי חלקים — בדיוק כמו במסך הגילוי — ולוחץ
+"התחל גרידה". מטרה אחת (דגם × סוג חלק) בכל בקשת HTTP, כי גרידה של
+עמוד לוקחת שניות ו-gunicorn הורג בקשה אחרי 60.
+
+**למה תת-תהליך ולא ייבוא.** Scrapy רץ על Twisted, ו-reactor שנסגר אינו
+נפתח שוב באותו תהליך: worker שהריץ גריד אחד היה נשבר בהרצה השנייה.
+`app/autodoc.py` מפעיל `scrapy crawl autodoc` כתת-תהליך שכותב JSON
+לקובץ זמני, עם תקרת זמן משלו. תת-תהליך שנתקע נהרג לפני שהבקשה נהרגת.
+
+**למה אותו אימות של הגילוי.** מקור אחר, סכנה זהה: עמוד קטגוריה של דגם
+מציג גם חלפים שאינם שלו — מסנן של CHERY בעמוד של קורולה, מספר OE של
+מרצדס בעמוד של אוקטביה. כל שורה שהגריד מחזיר עוברת ב-`validate` של
+`parts_discovery`, כולל השומר שפוסל אזכור של יצרן רכב אחר, ונשמרת דרך
+אותו `save`. לכן שתי השיטות חולקות טבלת הרצות אחת (`discovery_jobs`,
+עמודת `source`) ומסך סקירה אחד — `/admin/discovery/review` מציג את
+שתיהן, עם עמודה שאומרת מאיפה כל מק"ט הגיע.
+
+**מה שהאתר משנה, מתקנים בלי פריסה.** מבנה הכתובות של חנות מקוונת
+משתנה, וכתובת שגויה מחזירה אפס תוצאות. שלוש דרכי תיקון, לפי סדר
+המאמץ: `AUTODOC_CATEGORIES` (JSON שדורס את מיפוי הקטגוריות),
+`AUTODOC_URL_TEMPLATE` (תבנית הכתובת), ואם צריך גם `AUTODOC_SELECTORS`
+לעמוד שאין בו JSON-LD. לבדיקה ידנית של כתובת אחת:
+
+```bash
+cd scraper
+scrapy crawl autodoc -a make=טויוטה -a model=COROLLA \
+    -a part_type=oil_filter -O parts.json
+scrapy crawl autodoc -a url='https://www.autodoc.co.il/...' \
+    -a make=טויוטה -a model=COROLLA -a part_type=oil_filter -O parts.json
+```
+
+**הפירוק נבדק מול קובץ, לא מול הרשת.** `scraper/autodoc_scraper/parsers.py`
+הוא פונקציות טהורות: HTML נכנס, שורות יוצאות. שני מסלולים לפי סדר
+אמינות — JSON-LD שהאתר פולט למנועי חיפוש, ובנפילה סלקטורים על ה-HTML.
+`tests/fixtures/autodoc_*.html` הם עמודים שמורים, וכל בדיקות הגריד רצות
+בלי לצאת לאינטרנט.
+
+**מנומס כברירת מחדל.** בקשה אחת בכל פעם, שנייה וחצי המתנה ביניהן,
+AutoThrottle, וכיבוד `robots.txt`. הכיבוי (`AUTODOC_OBEY_ROBOTS=0`) קיים
+למי שיש לו הסכם מול האתר — זו החלטה של מי שמפעיל, ולא ברירת מחדל
+שנופלת עליו בשקט. מחיר נגרד ומוצג ביומן אך אינו נשמר בקטלוג: המחיר
+בקטלוג הוא שכבה פרטית של ארגון, ומחיר של חנות מקוונת אינו המחיר של המוסך.
+
 ## זיהוי סוג החלק
 
 `app/identify.py` תומך בשתי דרכים, ושתיהן מחזירות מפתח מתוך `app/taxonomy.py`
@@ -586,6 +635,9 @@ healthcheckPath:   /healthz                      ← בודק גם חיבור ל
 | `SUPERADMIN_EMAILS` | לגישת ניהול | כתובות בעלות הרשאת-על, מופרדות בפסיק |
 | `IMPORT_PARTS_CSV` | לא | נתיב CSV לטעינת הקטלוג בכל דיפלוי |
 | `ANTHROPIC_API_KEY` | לא | מפעיל זיהוי חלק מתמונה |
+| `AUTODOC_CATEGORIES` | לא | מיפוי סוג חלק ← קטגוריה בכתובת, לתיקון בלי פריסה |
+| `AUTODOC_OBEY_ROBOTS` | לא | `0` מכבה את כיבוד `robots.txt` בגריד |
+| `AUTODOC_TIMEOUT` | לא | תקרת שניות לתת-תהליך הגריד (ברירת מחדל 40) |
 | `WEB_CONCURRENCY` | לא | מספר workers (ברירת מחדל 2) |
 | `ACTIVITY_LOG_ENABLED` | לא | `0` מכבה את כתיבת לוג השימוש |
 | `ACTIVITY_LOG_RETENTION_DAYS` | לא | כמה ימים לשמור אירועים (ברירת מחדל 90) |
@@ -637,12 +689,19 @@ app/
   auth.py          הזדהות בטלפון, הרשאות, מסך הפתיחה ושער הכניסה
   phones.py        נרמול והצגה של מספר טלפון
   part_columns.py  עמודות טבלת המק"טים: כותרת, מיון, סינון וערך
+  parts_discovery.py  גילוי מק"טים דרך Claude: מטרות, אימות, שמירה וסקירה
+  autodoc.py       הפעלת הגריד כתת-תהליך, ותרגום מה שחזר לשפת הקטלוג
   static/js/car3d.js  מכונית הקווים של מסך הפתיחה
   static/js/display.js  זום וגודל טקסט, נשמרים במכשיר
+  static/js/job_screen.js  הלולאה של מסך עבודה במנות (גילוי וגריד)
+scraper/           פרויקט Scrapy עצמאי - רץ גם מהמסוף, בלי Flask
+  autodoc_scraper/spiders/autodoc.py  הגריד עצמו
+  autodoc_scraper/parsers.py  HTML -> שורות. פונקציות טהורות, נבדקות מול קובץ
+  autodoc_scraper/targets.py  מטרה -> כתובת באתר
 scripts/
   import_parts_csv.py  טעינת הקטלוג מ-CSV
   init_db.py       הכנת בסיס הנתונים (רץ כ-preDeployCommand)
   vehicle_stats.py פילוח הרכבים הפעילים בישראל לפי דגם
 data/              parts_catalog.csv · vehicles_sample.json
-tests/             454 בדיקות
+tests/             491 בדיקות
 ```

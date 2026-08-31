@@ -14,7 +14,14 @@ from flask import (
 )
 from flask_login import current_user
 
-from .. import activity, fleet_stats, part_columns, parts_discovery, services
+from .. import (
+    activity,
+    autodoc,
+    fleet_stats,
+    part_columns,
+    parts_discovery,
+    services,
+)
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
@@ -25,6 +32,10 @@ from ..vehicle_catalog import VehicleModel, active_job, latest_job
 from ..vehicle_import import cancel_job, run_chunk, start_job
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
+
+# הגילוי דרך המודל והגריד של Autodoc חולקים טבלת עבודות אחת, ולכן כל
+# מסך מסתכל רק על ההרצות שלו
+CLAUDE = parts_discovery.CLAUDE
 
 
 def _payload(job):
@@ -147,7 +158,7 @@ def _discovery_payload(job):
 def discovery():
     return render_template(
         "admin/discovery.html",
-        job=parts_discovery.latest_job(),
+        job=parts_discovery.latest_job(CLAUDE),
         part_types=all_types(),
         available=parts_discovery.discovery_available(),
         catalog_size=Part.query.count(),
@@ -157,7 +168,7 @@ def discovery():
 @admin_bp.get("/discovery/status")
 @superadmin_required
 def discovery_status():
-    return jsonify(_discovery_payload(parts_discovery.latest_job()))
+    return jsonify(_discovery_payload(parts_discovery.latest_job(CLAUDE)))
 
 
 def _requested_plan(source):
@@ -200,7 +211,7 @@ def discovery_start():
                      "או שנבחר דגם בלי יצרן."
         }), 400
 
-    job = parts_discovery.start_job(targets, user_id=current_user.id)
+    job = parts_discovery.start_job(targets, user_id=current_user.id, source=CLAUDE)
     activity.note(
         summary=f"גילוי מק\"טים הופעל · {len(targets)} מטרות",
         entity_type="job",
@@ -213,10 +224,10 @@ def discovery_start():
 @admin_bp.post("/discovery/step")
 @superadmin_required
 def discovery_step():
-    job = parts_discovery.active_job()
+    job = parts_discovery.active_job(CLAUDE)
     if job is None:
         return jsonify({"error": "אין חיפוש פעיל.",
-                        **_discovery_payload(parts_discovery.latest_job())}), 409
+                        **_discovery_payload(parts_discovery.latest_job(CLAUDE))}), 409
     return jsonify(_discovery_payload(parts_discovery.run_step(job)))
 
 
@@ -225,8 +236,93 @@ def discovery_step():
 def discovery_cancel():
     activity.note(summary='גילוי מק"טים בוטל')
     return jsonify(
-        _discovery_payload(parts_discovery.cancel_job(parts_discovery.active_job()))
+        _discovery_payload(
+            parts_discovery.cancel_job(parts_discovery.active_job(CLAUDE))
+        )
     )
+
+
+# ---------------------------------------------------------------------------
+# גריד Autodoc
+# ---------------------------------------------------------------------------
+
+
+@admin_bp.get("/autodoc")
+@superadmin_required
+def autodoc_screen():
+    """מסך הגריד. אותו דפוס כמו הגילוי, מקור אחר."""
+    return render_template(
+        "admin/autodoc.html",
+        job=autodoc.latest_job(),
+        part_types=all_types(),
+        available=autodoc.available(),
+        catalog_size=Part.query.count(),
+    )
+
+
+@admin_bp.get("/autodoc/status")
+@superadmin_required
+def autodoc_status():
+    return jsonify(_discovery_payload(autodoc.latest_job()))
+
+
+@admin_bp.get("/autodoc/plan")
+@superadmin_required
+def autodoc_plan():
+    """מה ירוץ, לפני שמתחילים. כאן זה זמן ובקשות לאתר, לא כסף."""
+    targets, capped = _requested_plan(request.args)
+    source = parts_discovery.plan_source(
+        request.args.get("make"), request.args.get("model")
+    )
+    return jsonify({
+        "count": len(targets),
+        "capped": capped,
+        "max": parts_discovery.MAX_TARGETS,
+        "source": parts_discovery.PLAN_SOURCES.get(source, ""),
+        "sample": [f"{mk} {md} · {type_name(t)}" for mk, md, t in targets[:6]],
+    })
+
+
+@admin_bp.post("/autodoc/start")
+@superadmin_required
+def autodoc_start():
+    """מטרה לכל צירוף של דגם וסוג חלק, כמו בגילוי."""
+    if not autodoc.available():
+        return jsonify({"error": "Scrapy אינו מותקן בשרת."}), 400
+
+    targets, _ = _requested_plan(request.form)
+    if not targets:
+        return jsonify({
+            "error": "לא נמצאו דגמים לגרידה. ייתכן שקטלוג דגמי הרכב ריק, "
+                     "או שנבחר דגם בלי יצרן."
+        }), 400
+
+    job = autodoc.start_job(targets, user_id=current_user.id)
+    activity.note(
+        summary=f"גריד Autodoc הופעל · {len(targets)} מטרות",
+        entity_type="job",
+        entity_id=job.id if job else None,
+        targets=len(targets),
+    )
+    return jsonify(_discovery_payload(job))
+
+
+@admin_bp.post("/autodoc/step")
+@superadmin_required
+def autodoc_step():
+    """מטרה אחת בכל בקשה - הגריד איטי, ו-gunicorn הורג בקשה אחרי 60 שניות."""
+    job = autodoc.active_job()
+    if job is None:
+        return jsonify({"error": "אין גריד פעיל.",
+                        **_discovery_payload(autodoc.latest_job())}), 409
+    return jsonify(_discovery_payload(autodoc.run_step(job)))
+
+
+@admin_bp.post("/autodoc/cancel")
+@superadmin_required
+def autodoc_cancel():
+    activity.note(summary="גריד Autodoc בוטל")
+    return jsonify(_discovery_payload(autodoc.cancel_job(autodoc.active_job())))
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +344,7 @@ def discovery_review():
             "suspect": parts_discovery.suspect(flags),
             "structural": parts_discovery.structural(flags),
             "source_url": parts_discovery.source_url_of(part),
+            "source_label": parts_discovery.part_source_label(part),
         })
     return render_template(
         "admin/discovery_review.html",

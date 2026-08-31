@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  עמוד קטגוריה מצומצם בסגנון Autodoc, לבדיקות בלבד.
+  מכיל את שני המסלולים שהפירוק יודע לקרוא: JSON-LD מובנה, ומתחתיו
+  אריחי מוצר ב-HTML. בכוונה יש כאן גם מסנן של יצרן רכב אחר, כדי
+  שהבדיקה תראה שהאימות פוסל אותו.
+-->
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>מסנן שמן טויוטה קורולה</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "itemListElement": [
+      {
+        "@type": "Product",
+        "name": "מסנן שמן MANN-FILTER W 712/94",
+        "sku": "W 712/94",
+        "mpn": "W71294",
+        "brand": {"@type": "Brand", "name": "MANN-FILTER"},
+        "image": "https://cdn.autodoc.example/w71294.jpg",
+        "url": "https://www.autodoc.co.il/mann-filter/1234",
+        "offers": {"@type": "Offer", "price": "24.90", "priceCurrency": "ILS"}
+      },
+      {
+        "@type": "Product",
+        "name": "מסנן שמן BOSCH F 026 407 006",
+        "sku": "F 026 407 006",
+        "brand": "BOSCH",
+        "url": "/bosch/5678",
+        "offers": [{"@type": "Offer", "price": "1,299.90", "priceCurrency": "ILS"}]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <div class="listing">
+    <div class="listing-item" data-product-id="1234">
+      <a href="/mann-filter/1234" title="מסנן שמן MANN-FILTER">
+        <img data-src="https://cdn.autodoc.example/w71294.jpg" alt="">
+      </a>
+      <span class="listing-item__manufacturer">MANN-FILTER</span>
+      <span class="listing-item__article-number">W 712/94</span>
+      <span class="listing-item__price">₪ 24.90</span>
+    </div>
+    <div class="listing-item" data-product-id="9999">
+      <a href="/chery-filter/9999" title="מסנן שמן CHERY AMULET">רק טקסט</a>
+      <span class="listing-item__manufacturer">JC PREMIUM</span>
+      <span>מספר פריט: B2F-300201</span>
+      <span class="listing-item__price">₪ 18.50</span>
+    </div>
+  </div>
+</body>
+</html>

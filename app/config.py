@@ -101,6 +101,17 @@ class Config:
     # כמה דגמים נכנסים לדירוג הפערים. פער אצל דגם עם שלושים רכבים אינו
     # הזדמנות, ודירוג עשרות אלפי דגמים אינו בקשת דפדפן.
     FLEET_GAP_MODELS = int(os.environ.get("FLEET_GAP_MODELS", 300))
+    # גריד Autodoc (/admin/autodoc). מטרה אחת לכל בקשת HTTP, ולכן
+    # תקרת הזמן יושבת מתחת ל-60 השניות ש-gunicorn נותן לבקשה. שאר
+    # הכוונון - קצב, robots, זהות הדפדפן - נקרא ישירות ע"י הגריד
+    # ממשתני הסביבה, ראה scraper/autodoc_scraper/settings.py.
+    AUTODOC_TIMEOUT = float(os.environ.get("AUTODOC_TIMEOUT", 40))
+    AUTODOC_MAX_ITEMS = int(os.environ.get("AUTODOC_MAX_ITEMS", 30))
+    # קריאת עמוד המוצר של כל שורה מביאה את המק"טים המקוריים, ומכפילה
+    # את מספר הבקשות לאתר. כבוי כברירת מחדל.
+    AUTODOC_FOLLOW_PRODUCT_PAGES = os.environ.get(
+        "AUTODOC_FOLLOW_PRODUCT_PAGES", "0"
+    ).strip() == "1"
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
