@@ -118,7 +118,16 @@ def index():
     # שלב 3 - ההצטלבות
     selected = candidates[0]["part_type"]
     context["selected_type"] = selected
-    context["matches"] = services.parts_for_vehicle(vehicle, selected)
+    matches = services.parts_for_vehicle(vehicle, selected)
+    # מק"ט שההתאמה שלו מצהירה על המנוע של הרכב אינו כמו מק"ט שרק לא
+    # סתר אותו. שניהם נשארים ברשימה - הקטלוג דליל מדי מכדי להסתיר -
+    # אבל המאומתים עולים לראש ומסומנים.
+    terms = services.vehicle_engine_terms(vehicle)
+    verified = services.engine_matched_parts(matches, terms)
+    matches.sort(key=lambda part: (part.id not in verified, part.part_number))
+    context["matches"] = matches
+    context["engine_matched"] = verified
+    context["engine_term"] = (vehicle.get("engine_code") or "").strip() or None
     context["org_id"] = services.current_org_id()
     context["searched"] = True
     activity.note(

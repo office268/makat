@@ -2,7 +2,7 @@
 import csv
 import io
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 
 from .models import (
     Category,
@@ -86,6 +86,37 @@ def _squash(column):
     return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
 
 
+def _engine_matches(terms):
+    """התאמה שמצהירה על אחד המנועים המבוקשים.
+
+    ההשוואה מכווצת (בלי רווחים ומקפים, אותיות קטנות), כי הקטלוג כותב
+    "2ZR-FAE" והמרשם "2ZRFAE" - אותו מנוע בשני כתיבים.
+    """
+    if isinstance(terms, str):
+        terms = [terms]
+    conditions = []
+    for term in terms:
+        squashed = _squash_text(term)
+        if not squashed:
+            continue
+        conditions.append(_squash(Fitment.engine_code).like(f"%{squashed}%"))
+        conditions.append(_squash(Fitment.engine_volume).like(f"%{squashed}%"))
+    return or_(*conditions) if conditions else db.false()
+
+
+def _engine_unspecified():
+    """התאמה שלא אמרה כלום על מנוע.
+
+    בקטלוג שלנו רק כחמישית מההתאמות מציינות מנוע. "לא צוין" הוא חוסר
+    מידע ולא הצהרה שהחלק אינו מתאים, ולכן סינון לפי מנוע שמוחק אותן
+    היה מוחק את רוב הקטלוג ומחזיר פחות מק"טים נכונים, לא יותר.
+    """
+    return and_(
+        or_(Fitment.engine_code.is_(None), Fitment.engine_code == ""),
+        or_(Fitment.engine_volume.is_(None), Fitment.engine_volume == ""),
+    )
+
+
 def search_parts(
     q=None,
     part_type=None,
@@ -150,12 +181,7 @@ def search_parts(
         if model:
             fit = fit.filter(_squash(Fitment.model).like(f"%{_squash_text(model)}%"))
         if engine:
-            fit = fit.filter(
-                or_(
-                    Fitment.engine_code.ilike(f"%{engine}%"),
-                    Fitment.engine_volume.ilike(f"%{engine}%"),
-                )
-            )
+            fit = fit.filter(or_(_engine_matches(engine), _engine_unspecified()))
         if year:
             year = _to_int(year)
             if year:
@@ -661,6 +687,35 @@ def export_csv(parts, organization_id=None):
     return "﻿" + buffer.getvalue()
 
 
+def vehicle_engine_terms(vehicle):
+    """באילו מונחים אפשר לזהות את המנוע של הרכב הזה בתוך הקטלוג.
+
+    הקטלוג מדבר שני כתיבים: רובו נפח ורמת מנוע ("1.4 TSI"), ומיעוטו
+    קוד יצרן ("2ZR-FAE"). המרשם מוסר קוד יצרן בלבד, והנפח מגיע מקטלוג
+    הדגמים שלנו לפי (יצרן, קוד דגם) - 1398 סמ"ק הופכים ל-"1.4".
+
+    מוחזרים שני המונחים, כי כל אחד מהם מוצא חלק אחר של הקטלוג.
+    """
+    from .vehicle_catalog import VehicleModel
+
+    terms = []
+    code = (vehicle.get("engine_code") or "").strip()
+    if code:
+        terms.append(code)
+
+    make = (vehicle.get("make") or "").strip().split()
+    model_code = (vehicle.get("model_code") or "").strip()
+    if make and model_code:
+        row = VehicleModel.query.filter(
+            VehicleModel.make.ilike(f"%{make[0]}%"),
+            VehicleModel.model_code == model_code,
+            VehicleModel.engine_volume.isnot(None),
+        ).first()
+        if row is not None and row.engine_volume:
+            terms.append(f"{round(row.engine_volume / 1000, 1):.1f}")
+    return terms
+
+
 def parts_for_vehicle(vehicle, part_type=None):
     """ההצטלבות: רכב מזוהה × סוג חלק -> המק"טים המתאימים בלבד."""
     if not vehicle:
@@ -676,6 +731,25 @@ def parts_for_vehicle(vehicle, part_type=None):
         if make
         else []
     )
+
+
+def engine_matched_parts(parts, terms):
+    """מזהי המק"טים שההתאמה שלהם מצהירה במפורש על המנוע של הרכב.
+
+    זה סימון ולא סינון, בכוונה: רק כחמישית מההתאמות בקטלוג מציינות
+    מנוע, והן מציינות אותו בשני כתיבים שונים. סינון היה מסתיר מק"ט
+    נכון שנכתב בכתיב האחר - הפסד גרוע בהרבה מרשימה קצת ארוכה. אז
+    כולם נשארים, והמאומתים עולים לראש ומסומנים.
+    """
+    if not terms or not parts:
+        return set()
+    ids = [part.id for part in parts]
+    rows = (
+        db.session.query(Fitment.part_id)
+        .filter(Fitment.part_id.in_(ids), _engine_matches(terms))
+        .distinct()
+    )
+    return {row[0] for row in rows}
 
 
 def catalog_coverage(vehicle):

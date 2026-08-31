@@ -1,6 +1,8 @@
 """חיפוש, ייבוא וסטטיסטיקות."""
 import io
 
+from app import services
+
 from app.auth_models import Organization
 from app.models import OrgPart, Part
 from app.services import (
@@ -125,3 +127,104 @@ def test_partial_model_search_still_works(app, org_id):
 
         typed_by_hand = {"make": "מאזדה יפן", "model": "3", "year": 2018}
         assert parts_for_vehicle(typed_by_hand, "oil_filter")
+
+
+# ---- זיהוי מנוע ----
+
+
+def _engine_fixture(app):
+    """הקטלוג האמיתי מדבר שני כתיבים: נפח ורמת מנוע, וקוד יצרן."""
+    from app.models import Fitment, Part, db
+    from app.vehicle_catalog import VehicleModel
+
+    with app.app_context():
+        for number, engine in (("ENG-VOL", "1.4 TSI"),      # כתיב נפח
+                               ("ENG-CODE", "2ZR-FAE"),      # כתיב קוד יצרן
+                               ("ENG-OTHER", "1.6 GDI"),     # מנוע אחר
+                               ("ENG-NONE", None)):          # לא צוין מנוע
+            part = Part(part_number=number, name_he=f"מסנן שמן {number}",
+                        part_type="oil_filter")
+            part.fitments = [Fitment(make="סקודה", model="OCTAVIA",
+                                     engine_code=engine)]
+            db.session.add(part)
+        db.session.add(VehicleModel(make="סקודה", model="OCTAVIA",
+                                    model_code="5E3", engine_volume=1395))
+        db.session.commit()
+
+
+VEHICLE = {"make": "סקודה צכיה", "model": "OCTAVIA", "model_code": "5E3",
+           "engine_code": "2ZRFAE"}
+
+
+def test_engine_terms_cover_both_notations(app):
+    """המרשם מוסר קוד יצרן; הנפח מגיע מקטלוג הדגמים שלנו."""
+    _engine_fixture(app)
+    with app.app_context():
+        assert services.vehicle_engine_terms(VEHICLE) == ["2ZRFAE", "1.4"]
+
+
+def test_engine_terms_without_a_model_in_the_catalog(app):
+    """בלי קטלוג דגמים אין נפח, ונשאר רק מה שהמרשם מסר."""
+    with app.app_context():
+        assert services.vehicle_engine_terms(
+            {"make": "סקודה צכיה", "model": "OCTAVIA", "model_code": "?",
+             "engine_code": "2ZRFAE"}
+        ) == ["2ZRFAE"]
+        assert services.vehicle_engine_terms({"make": "סקודה"}) == []
+
+
+def test_both_notations_are_recognised_across_spelling(app):
+    """"2ZR-FAE" בקטלוג ו-"2ZRFAE" במרשם הם אותו מנוע."""
+    _engine_fixture(app)
+    with app.app_context():
+        parts = services.parts_for_vehicle(VEHICLE, "oil_filter")
+        verified = services.engine_matched_parts(
+            parts, services.vehicle_engine_terms(VEHICLE))
+        numbers = {p.part_number for p in parts if p.id in verified}
+        assert numbers == {"ENG-VOL", "ENG-CODE"}
+
+
+def test_engine_is_marked_and_never_filters(app):
+    """הקטלוג דליל מדי לסינון: מק"ט למנוע אחר עדיין מוצג, רק בלי סימון."""
+    _engine_fixture(app)
+    with app.app_context():
+        parts = services.parts_for_vehicle(VEHICLE, "oil_filter")
+        assert {p.part_number for p in parts} == {
+            "ENG-VOL", "ENG-CODE", "ENG-OTHER", "ENG-NONE"}
+
+        verified = services.engine_matched_parts(parts, [])
+        assert verified == set()  # בלי מנוע ידוע אין מה לאמת
+
+
+def test_explicit_engine_filter_keeps_fitments_without_an_engine(app):
+    """סינון מפורש כן מצמצם - אבל "לא צוין מנוע" אינו "לא מתאים"."""
+    _engine_fixture(app)
+    with app.app_context():
+        found = {p.part_number for p in services.search_parts(
+            make="סקודה", model="OCTAVIA", engine="1.4").all()}
+        assert found == {"ENG-VOL", "ENG-NONE"}
+
+
+def test_verified_parts_come_first_on_the_identify_screen(client, app):
+    """מסך הזיהוי מעלה את המאומתים לראש - זה מה שהופך את הסימון לשימושי.
+
+    רכב הדוגמה 56789012 הוא סקודה אוקטביה עם קוד מנוע CZCA, ולכן הוא
+    מזהה את ההתאמה שכתובה באותו קוד.
+    """
+    from app.models import Fitment, Part, db
+
+    with app.app_context():
+        for number, engine in (("ZZZ-9", "CZCA"), ("AAA-1", None)):
+            part = Part(part_number=number, name_he=f"מסנן שמן {number}",
+                        part_type="oil_filter")
+            part.fitments = [Fitment(make="סקודה", model="OCTAVIA",
+                                     engine_code=engine)]
+            db.session.add(part)
+        db.session.commit()
+
+    html = client.post("/", data={"plate": "56789012", "query": "מסנן שמן"},
+                       follow_redirects=True).get_data(as_text=True)
+
+    assert "ZZZ-9" in html and "AAA-1" in html   # אף אחד לא הוסתר
+    assert html.index("ZZZ-9") < html.index("AAA-1")  # והמאומת ראשון
+    assert "מנוע תואם" in html
