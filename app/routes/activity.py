@@ -31,7 +31,7 @@ RANGES = ((1, "היום"), (7, "שבוע"), (30, "חודש"), (90, "רבעון")
 
 CSV_COLUMNS = [
     "created_at",
-    "user_email",
+    "user_label",
     "user_role",
     "organization_id",
     "action",
@@ -90,11 +90,11 @@ def index():
     )
     # רשימת המשתמשים לסינון: של הארגון, או כל מי שנרשם בלוג בתצוגה חוצת-ארגונים
     users = (
-        User.query.order_by(User.email).all()
+        User.query.order_by(User.phone).all()
         if _all_orgs()
         else User.query.filter_by(
             organization_id=current_user.organization_id
-        ).order_by(User.email).all()
+        ).order_by(User.phone).all()
     )
     return render_template(
         "activity.html",
@@ -132,7 +132,7 @@ def export_csv():
         writer.writerow(
             {
                 "created_at": entry.created_at.isoformat() if entry.created_at else "",
-                "user_email": entry.user_email or "",
+                "user_label": entry.user_label or "",
                 "user_role": entry.user_role or "",
                 "organization_id": entry.organization_id or "",
                 "action": entry.action,

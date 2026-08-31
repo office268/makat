@@ -45,7 +45,7 @@ def _adopt_pre_alembic_database():
 
     # יוצרים רק את הטבלאות שקו הבסיס מגדיר וחסרות בפועל. create_all()
     # ללא הגבלה היה יוצר גם טבלאות ממיגרציות מאוחרות יותר (org_parts,
-    # invitations), והן היו מתנגשות כשה-upgrade יגיע אליהן.
+    # activity_log), והן היו מתנגשות כשה-upgrade יגיע אליהן.
     from app.auth_models import Organization, User
 
     baseline_tables = [Organization.__table__, User.__table__]

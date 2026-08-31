@@ -1,16 +1,17 @@
 """מסלולי HTTP ו-API."""
 
 
-def test_public_pages_render(client):
+def test_the_screens_render(client):
     for route in ["/", "/dashboard", "/parts", "/vehicles", "/categories",
-                  "/manufacturers", "/suppliers", "/login", "/signup"]:
+                  "/manufacturers", "/suppliers", "/import", "/parts/new"]:
         assert client.get(route).status_code == 200, route
 
 
-def test_editing_pages_require_login(client):
-    """מסכי העריכה מפנים לדף התחברות במקום להיפתח."""
-    for route in ["/import", "/parts/new"]:
-        response = client.get(route)
+def test_every_screen_requires_identification(visitor):
+    """בלי הזדהות אין מסך - כולם מפנים לשדה הטלפון."""
+    for route in ["/dashboard", "/parts", "/vehicles", "/categories",
+                  "/manufacturers", "/suppliers", "/import", "/parts/new"]:
+        response = visitor.get(route)
         assert response.status_code == 302, route
         assert "/login" in response.headers["Location"], route
 
@@ -281,12 +282,12 @@ def test_home_stays_usable_with_an_empty_catalog(app, client):
     assert 'name="plate"' in html
 
 
-# שתי בדיקות ולא אחת: conftest מחזיק app context אחד לכל הבדיקה,
-# ו-Flask-Login מחזיק את המשתמש ב-g - כך שהתחברות באותה בדיקה דולפת
-# גם ללקוח חדש. בדיקה שלא מתחברת בכלל היא היחידה שבאמת אנונימית.
-def test_api_link_is_hidden_from_anonymous_visitors(client):
-    """הממשק קיים לשילוב במערכות של המוסך, לא כהצעה למבקר מזדמן."""
-    html = client.get("/").get_data(as_text=True)
+def test_api_link_is_hidden_before_identification(visitor):
+    """הממשק קיים לשילוב במערכות של המוסך, לא כהצעה למי שעומד בדלת.
+
+    מסך ההזדהות הוא המסך היחיד שרואה מי שלא נכנס, ולכן שם נבדק.
+    """
+    html = visitor.get("/login").get_data(as_text=True)
     assert ">API</a>" not in html
     assert 'קטלוג מק"טים לחלקי רכב' in html      # שאר הכותרת התחתונה נשארה
 

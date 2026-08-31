@@ -50,7 +50,7 @@
         {% endif %}
         <div class="dropdown ms-2">
           <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown">
-            {{ current_user.full_name or current_user.email }}
+            {{ current_user.display_name }}
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
             <li><h6 class="dropdown-header">
@@ -89,8 +89,7 @@
       <button class="btn btn-sm btn-light ms-2 d-none" id="install-app">📲 התקן</button>
 
       {% else %}
-        <a class="btn btn-sm btn-outline-light ms-2" href="{{ url_for('auth.login') }}">התחברות</a>
-        <a class="btn btn-sm btn-light ms-2" href="{{ url_for('auth.signup') }}">רישום</a>
+        <a class="btn btn-sm btn-light ms-2" href="{{ url_for('auth.login') }}">הזדהות</a>
       {% endif %}
     </div>
   </div>

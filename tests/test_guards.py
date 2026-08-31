@@ -25,15 +25,15 @@ def ro_client():
         organization = Organization(name="מוסך", slug="ro-garage")
         db.session.add(organization)
         db.session.flush()
-        manager = User(email="mgr@ro.test", role="manager", organization=organization)
-        manager.set_password("password123")
+        manager = User(phone="0505550001", email="mgr@ro.test", role="manager",
+                       organization=organization)
         db.session.add(manager)
         db.session.commit()
         part_id = Part.query.first().id
 
         client = app.test_client()
-        # מתחברים כמנהל - כך שכל חסימה שנראה מגיעה מהנעילה, לא מההרשאות
-        client.post("/login", data={"email": "mgr@ro.test", "password": "password123"})
+        # מזדהים כמנהל - כך שכל חסימה שנראה מגיעה מהנעילה, לא מההרשאות
+        client.post("/login", data={"phone": "0505550001"})
         yield client, part_id
         db.session.remove()
         db.drop_all()
@@ -75,11 +75,12 @@ def test_writes_work_when_guard_is_off(client, app):
         organization = Organization(name="מוסך", slug="open-garage")
         db.session.add(organization)
         db.session.flush()
-        manager = User(email="mgr@open.test", role="manager", organization=organization)
-        manager.set_password("password123")
+        manager = User(phone="0505550002", email="mgr@open.test", role="manager",
+                       organization=organization)
         db.session.add(manager)
         db.session.commit()
-    client.post("/login", data={"email": "mgr@open.test", "password": "password123"})
+    client.post("/logout")
+    client.post("/login", data={"phone": "0505550002"})
     assert client.post(
         "/api/parts", json={"part_number": "OPEN-1", "name_he": "חלק"}
     ).status_code == 201

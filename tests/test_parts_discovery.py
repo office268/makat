@@ -241,7 +241,7 @@ def test_manager_without_superadmin_is_forbidden(auth_client):
 def test_start_without_a_key_says_so(app, client):
     """בלי מפתח, המסך אומר את זה במקום להיכשל בשקט."""
     app.config["SUPERADMIN_EMAILS"] = frozenset({"fixture@t.test"})
-    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+    client.post("/login", data={"phone": "0500000001"})
     html = client.get("/admin/discovery").get_data(as_text=True)
     assert "ANTHROPIC_API_KEY" in html
     # רשימות בחירה, לא טקסט חופשי, ואפשרות לסמן הכל
@@ -334,7 +334,7 @@ def test_an_empty_vehicle_catalog_plans_nothing(app):
 
 def _login_superadmin(app, client):
     app.config["SUPERADMIN_EMAILS"] = frozenset({"fixture@t.test"})
-    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+    client.post("/login", data={"phone": "0500000001"})
 
 
 def test_plan_endpoint_describes_what_will_run(app, client):
