@@ -98,6 +98,9 @@ class Config:
     FLEET_STATS_RETRY_PAUSE = float(os.environ.get("FLEET_STATS_RETRY_PAUSE", 2))
     FLEET_STATS_PAGE_PAUSE = float(os.environ.get("FLEET_STATS_PAGE_PAUSE", 0.3))
     FLEET_STATS_MAX_FAILURES = int(os.environ.get("FLEET_STATS_MAX_FAILURES", 3))
+    # כמה דגמים נכנסים לדירוג הפערים. פער אצל דגם עם שלושים רכבים אינו
+    # הזדמנות, ודירוג עשרות אלפי דגמים אינו בקשת דפדפן.
+    FLEET_GAP_MODELS = int(os.environ.get("FLEET_GAP_MODELS", 300))
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך

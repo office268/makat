@@ -202,23 +202,59 @@ def search_parts(
     return query.order_by(sorts.get(sort, Part.part_number.asc()))
 
 
-def vehicle_part_counts(make, model):
-    """(מק"טים מתאימים לרכב, מתוכם מתכלים) לדגם אחד.
+def _fitment_index():
+    """מפת ההתאמות של הקטלוג: (יצרן, דגם מכווץ) -> קבוצות מזהי מק"ט.
 
-    בנוי על אותו search_parts שהמסך /vehicles מריץ, ולא על שאילתה
-    מקבילה משלו: מספר בעמודה שאינו מה שנפתח בלחיצה עליו גרוע ממספר
-    שאינו שם בכלל.
+    נבנית בשאילתה אחת ומשרתת מאות דגמים. שאילתה נפרדת לכל דגם היא
+    בזבוז כשהקטלוג כולו הוא אלפי שורות, וכשרוצים לדרג פערים על מאות
+    דגמים היא בכלל לא אפשרות.
+
+    שומרים מזהים ולא מונים, כי אותו מק"ט יכול להתאים גם ל-"COROLLA"
+    וגם ל-"COROLLA VERSO"; חיבור מונים היה סופר אותו פעמיים, ואיחוד
+    קבוצות סופר אותו פעם אחת - בדיוק כמו search_parts.
     """
     from .taxonomy import WEAR_TYPES
 
-    query = search_parts(make=make, model=model).order_by(None)
-    total, wear = query.with_entities(
-        func.count(db.distinct(Part.id)),
-        func.count(db.distinct(
-            case((Part.part_type.in_(tuple(WEAR_TYPES)), Part.id))
-        )),
-    ).one()
-    return total or 0, wear or 0
+    rows = (
+        db.session.query(Fitment.make, Fitment.model, Part.id, Part.part_type)
+        .join(Part, Part.id == Fitment.part_id)
+        .filter(Part.is_active.is_(True))
+        .all()
+    )
+    index = {}
+    for make, model, part_id, part_type in rows:
+        key = ((make or "").strip().lower(), _squash_text(model))
+        total, wear = index.setdefault(key, (set(), set()))
+        total.add(part_id)
+        if part_type in WEAR_TYPES:
+            wear.add(part_id)
+    return index
+
+
+def part_counts_for(pairs):
+    """{(יצרן, דגם): (מק"טים, מתוכם מתכלים)} לרשימת רכבים, בשאילתה אחת.
+
+    ההתאמה זהה לזו של search_parts: היצרן מלא, והדגם הוא הכלה בשם
+    ההתאמה אחרי כיווץ רווחים ומקפים. אחרת המספר בעמודה לא היה מה
+    שנפתח בלחיצה עליו.
+    """
+    index = _fitment_index()
+    counts = {}
+    for make, model in set(pairs):
+        wanted_make = (make or "").strip().lower()
+        wanted_model = _squash_text(model)
+        total, wear = set(), set()
+        for (fit_make, fit_model), (part_ids, wear_ids) in index.items():
+            if fit_make == wanted_make and wanted_model in fit_model:
+                total |= part_ids
+                wear |= wear_ids
+        counts[(make, model)] = (len(total), len(wear))
+    return counts
+
+
+def vehicle_part_counts(make, model):
+    """(מק"טים מתאימים לרכב, מתוכם מתכלים) לדגם אחד."""
+    return part_counts_for([(make, model)])[(make, model)]
 
 
 def find_by_number(number):
