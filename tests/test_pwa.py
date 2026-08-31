@@ -63,3 +63,9 @@ def test_pages_link_the_manifest_and_register_the_worker(client):
     assert 'rel="manifest"' in html
     assert "serviceWorker" in html
     assert 'name="theme-color"' in html
+
+
+def test_the_display_script_is_cached_for_offline(client):
+    """גודל התצוגה נשמר גם כשאין רשת - אחרת הדף היה נפתח ברגיל."""
+    worker = client.get("/sw.js").get_data(as_text=True)
+    assert "/static/js/display.js" in worker
