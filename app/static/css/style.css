@@ -1,5 +1,101 @@
 :root { --brand: #0c4a6e; }
 
+/* גודל התצוגה - נשלט מתפריט ההגדרות ונשמר במכשיר (static/js/display.js).
+   הזום מגדיל את הדף כולו כמו זום של הדפדפן; גודל הטקסט משנה את גודל
+   הבסיס שכל הטיפוגרפיה נמדדת ממנו. אחוזים ולא פיקסלים, כדי שגודל
+   הגופן שהמשתמש כבר קבע בדפדפן שלו יישאר נקודת המוצא. */
+:root { --app-zoom: 1; --app-font-scale: 1; }
+html { font-size: calc(100% * var(--app-font-scale)); }
+body { zoom: var(--app-zoom); }
+
+/* הריפוד הולך בכיוון ההפוך לטקסט.
+   ריפוד נמדד ב-rem, ולכן הוא גדל עם הגופן מעצמו - והגדלת הטקסט הייתה
+   מוסיפה בעיקר רווח לבן ודוחקת שורות אל מחוץ למסך. כאן הוא מתכווץ
+   במקום: ב-140% טקסט הריפוד הוא 80% מגודלו הרגיל, וב-180% הוא 60%.
+   כך ההגדלה מוסיפה אותיות, לא אוויר.
+
+   החישוב מחזיר את המכפיל שצריך *על גבי* ה-rem שכבר גדל, ולכן הוא
+   מחלק בגודל הגופן. מתחת ל-100% הוא נעצר על 1: כשהטקסט קטן, הריפוד
+   פשוט מתכווץ איתו, ואין סיבה לנפח אותו. */
+:root {
+  --app-pad-scale: clamp(
+    0.3,
+    calc((1.5 - var(--app-font-scale) * 0.5) / var(--app-font-scale)),
+    1
+  );
+}
+
+/* התאים עצמם - שם ההפרש בין שורה לשורה מצטבר לכל אורך הטבלה */
+.table > :not(caption) > * > * {
+  padding: calc(.6rem * var(--app-pad-scale)) calc(.75rem * var(--app-pad-scale));
+}
+
+/* והקונטיינרים שעוטפים את הטקסט. Bootstrap מחזיק את הריפוד שלהם
+   במשתני CSS משלו, ולכן די להחליף את הערך - בלי !important ובלי
+   לשכפל את הכלל עצמו. */
+.card {
+  --bs-card-spacer-y: calc(1rem * var(--app-pad-scale));
+  --bs-card-spacer-x: calc(1rem * var(--app-pad-scale));
+  --bs-card-cap-padding-y: calc(.5rem * var(--app-pad-scale));
+  --bs-card-cap-padding-x: calc(1rem * var(--app-pad-scale));
+}
+.list-group {
+  --bs-list-group-item-padding-y: calc(.5rem * var(--app-pad-scale));
+  --bs-list-group-item-padding-x: calc(1rem * var(--app-pad-scale));
+}
+.app-main {
+  padding-top: calc(1.5rem * var(--app-pad-scale));
+  padding-bottom: calc(1.5rem * var(--app-pad-scale));
+}
+
+/* התוכן יושב באמצע המסך אנכית. מסך קצר - כמו מסך הזיהוי לפני חיפוש -
+   נצמד עד היום לסרגל העליון והשאיר שטח לבן ארוך מתחתיו; עכשיו הוא
+   באמצע, והכותרת התחתונה נשארת בתחתית המסך גם כשהתוכן קצר.
+
+   safe center מבטל את המרכוז ברגע שהתוכן גבוה מהמסך - מרכוז רגיל היה
+   דוחף את ראש התוכן מעל קצה הגלילה, לאזור שאי אפשר לגלול אליו. השורה
+   שלפניו היא הנפילה לאחור לדפדפן שלא מכיר את המילה.
+
+   הגובה מחולק ב---app-zoom: הזום מוחל על body, וכל גובה שנמדד בתוכו
+   נמתח באותה מידה - החלוקה מחזירה אותו לגובה המסך בפועל. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh / var(--app-zoom));
+  min-height: calc(100dvh / var(--app-zoom));
+}
+.app-main {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  justify-content: safe center;
+}
+/* פריט בפריסת flex מתרחב לפי רוחב תוכנו כברירת מחדל, וטבלה רחבה
+   הייתה מותחת את הדף לרוחב במקום לגלול בתוך table-responsive */
+.app-main > * { min-width: 0; }
+/* המרווח שאחרי האלמנט האחרון נספר בגובה התוכן, והיה מסיט את המרכוז
+   כלפי מעלה בדיוק בחציו. הוא ממילא מיותר - הריפוד של app-main כבר
+   מפריד בין התוכן לכותרת התחתונה. !important כאן הוא היחיד שגובר על
+   mb-* של Bootstrap, שמסומנות כך בעצמן. */
+.app-main > :last-child { margin-bottom: 0 !important; }
+
+/* התפריט מבקש רוחב נוח, אבל לא יותר מהמסך. שתי המידות נחוצות:
+   min-width הוא רצפה בלבד, והתוכן עצמו - שנמדד ב-rem וגדל עם גודל
+   הטקסט - היה מותח את התפריט מעבר לקצה בטלפון צר. */
+.display-settings {
+  min-width: min(16rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  /* Bootstrap מגיע מ-CDN ולא נשמר במטמון של האפליקציה. כשהוא חסר -
+     אופליין, או רשת חסומה - התפריט הוא ul רגיל עם ההזחה שהדפדפן נותן
+     לרשימה, והיא לבדה דחפה את הדף מעבר לקצה המסך. p-3 של Bootstrap
+     מסומן !important ולכן הוא גובר על השורה הזו כשהוא כן נטען. */
+  padding-inline-start: 0;
+  list-style: none;
+}
+/* הקריאה לא תקפוץ ברוחב כשהמספר עובר מ-90% ל-100% */
+.display-settings [data-display-value] { min-width: 3.75rem; }
+
 body { background: #f5f7f9; }
 
 .bg-dark-blue { background-color: var(--brand); }
@@ -18,12 +114,70 @@ body { background: #f5f7f9; }
 
 .font-monospace { font-family: "Courier New", monospace; }
 
+/* ---------- כותרות הטבלה: מיון וסינון ---------- */
+
+.col-head { display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; }
+.col-sort { display: inline-flex; align-items: center; gap: .2rem;
+            color: inherit; text-decoration: none; white-space: nowrap; }
+.col-sort:hover { color: var(--brand); }
+.col-icon { flex: none; vertical-align: -.1em; }
+
+/* המשולש של details מוחלף באייקון המשפך עצמו */
+.col-filter > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  padding: .1rem .15rem;
+  border-radius: .2rem;
+  line-height: 1;
+}
+.col-filter > summary::-webkit-details-marker { display: none; }
+.col-filter > summary:hover { background: rgba(0, 0, 0, .06); color: var(--brand); }
+.col-filter[open] > summary { color: var(--brand); }
+
+/* השדה נפתח בתוך הכותרת ולא מעליה: חלונית צפה הייתה נחתכת בגלילה
+   האופקית של table-responsive, ודווקא בעמודות הימניות. */
+.col-filter-field { display: flex; gap: .25rem; margin-top: .35rem; }
+.col-filter-field .form-control,
+.col-filter-field .form-select { min-width: 7rem; font-weight: 400; }
+
+/* ---------- חיווי חישוב ---------- */
+
+/* פס בלתי-מוגדר בראש הטבלה. הבקשה הבאה תחליף את הדף ממילא, ולכן
+   אין כאן אחוזים - רק "עובדים על זה". */
+.table-busy {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(12, 74, 110, .15);
+  border-radius: var(--bs-card-inner-border-radius, .375rem) var(--bs-card-inner-border-radius, .375rem) 0 0;
+  z-index: 3;
+}
+.table-busy-bar {
+  position: absolute;
+  inset-block: 0;
+  width: 35%;
+  background: var(--brand);
+  animation: table-busy 1.1s linear infinite;
+}
+@keyframes table-busy {
+  from { inset-inline-start: -35%; }
+  to { inset-inline-start: 100%; }
+}
+/* הטבלה שמתחת מתעמעמת - הנתונים שמוצגים כבר אינם התשובה לשאלה החדשה */
+.table-is-busy { opacity: .5; transition: opacity .12s linear; }
+
+@media (prefers-reduced-motion: reduce) {
+  .table-busy-bar { animation: none; width: 100%; inset-inline-start: 0; opacity: .7; }
+  .table-is-busy { transition: none; }
+}
+
 /* מק"ט נשאר בשורה אחת: "C 29 110" הוא מק"ט אחד, והרווחים שבתוכו
    אינם נקודות שבירה. הטבלאות עטופות ב-table-responsive ולכן
    מק"ט ארוך גולל ולא שובר את הפריסה. */
 .sku { white-space: nowrap; }
-
-.table > :not(caption) > * > * { padding: .6rem .75rem; }
 
 footer a { color: var(--brand); }
 

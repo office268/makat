@@ -235,3 +235,46 @@ document.addEventListener("input", async function (event) {
     if (event.persisted && backFromABreak()) toSplash();
   });
 })();
+
+// חיווי חישוב בטבלה.
+//
+// מיון וסינון אינם קורים בדפדפן - הם בקשה לשרת שממיין ומסנן אלפי
+// מק"טים ומחזיר דף חדש. בין הלחיצה לבין הדף הזה המסך מציג את
+// התוצאה *הקודמת*, וזה בדיוק המצב שנראה תקוע.
+//
+// לכן: פס בראש הטבלה והנתונים הישנים מתעמעמים, מרגע הלחיצה ועד
+// שהדף הבא מגיע ומחליף הכל ממילא. אין כאן אחוזים - אין מה למדוד,
+// ופס בלתי-מוגדר אומר את מה שיש לומר.
+(function () {
+  const card = document.querySelector("[data-busy-table]");
+  if (!card) return;
+  const bar = document.getElementById("table-busy");
+  const table = card.querySelector("table");
+
+  function busy(on) {
+    if (bar) bar.hidden = !on;
+    if (table) {
+      table.classList.toggle("table-is-busy", on);
+      table.setAttribute("aria-busy", on ? "true" : "false");
+    }
+  }
+
+  // מיון ועימוד הם קישורים; הסינון הוא שליחת הטופס שמעל הטבלה
+  document.addEventListener("click", function (event) {
+    const link = event.target.closest("[data-table-nav]");
+    if (!link || event.defaultPrevented || event.button !== 0 ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    busy(true);
+  });
+
+  document.addEventListener("submit", function (event) {
+    if (event.target.id === "filters") busy(true);
+  });
+
+  // חזרה עם "אחורי" מגישה את הדף כפי שנעזב - כלומר עם הפס דולק
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) busy(false);
+  });
+})();

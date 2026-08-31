@@ -26,6 +26,20 @@ SOURCE_NOTE = "נוסף בחיפוש אינטרנט אוטומטי (Claude). מ�
 # תת-מחרוזת יציבה של ההערה, לאיתור כל מה שהגיע מכאן גם אם הנוסח ישתנה
 SOURCE_MARK = "נוסף בחיפוש אינטרנט אוטומטי"
 
+# הגריד של Autodoc (app/autodoc.py) נכנס לקטלוג דרך אותה צנרת בדיוק -
+# אותו אימות, אותה שמירה, אותו מסך סקירה - וההערה היחידה שמבדילה
+# ביניהם היא זו. היא יושבת כאן ולא שם כדי שהסקירה תדע למצוא את שניהם
+# בלי לייבא את הגריד.
+AUTODOC_NOTE = "נוסף בגרידת Autodoc אוטומטית. מקור לא רשמי."
+AUTODOC_MARK = "נוסף בגרידת Autodoc"
+
+CLAUDE, AUTODOC = "claude", "autodoc"
+# מקור -> (ההערה שנכתבת למק"ט, הסימון שמאתר אותו, שם לתצוגה)
+SOURCES = {
+    CLAUDE: (SOURCE_NOTE, SOURCE_MARK, "חיפוש Claude"),
+    AUTODOC: (AUTODOC_NOTE, AUTODOC_MARK, "גריד Autodoc"),
+}
+
 # סימון המקור של הקטלוג הבסיסי, זה שנאסף לפני שצנרת הגילוי נכתבה.
 # משמש להבחין בין מק"ט שהחיפוש האוטומטי הביא לבין מק"ט שהיה כאן לפניו.
 CATALOG_MARK = "מקור: קטלוג מקוון"
@@ -248,6 +262,9 @@ def _now():
 DEFAULT_MAKES = int(os.environ.get("DISCOVERY_DEFAULT_MAKES", 2))
 DEFAULT_MODELS = int(os.environ.get("DISCOVERY_DEFAULT_MODELS", 2))
 MAX_TARGETS = int(os.environ.get("DISCOVERY_MAX_TARGETS", 40))
+# כמה דגמים מראש דירוג הפערים נכנסים לתכנון. MAX_TARGETS חותך ממילא,
+# אבל דירוג של אלפי דגמים בכל תצוגה מקדימה הוא עבודה מיותרת.
+DEFAULT_GAP_MODELS = int(os.environ.get("DISCOVERY_GAP_MODELS", 8))
 
 # החלפים שמוסך באמת מחליף, כשלא נבחר סוג
 DEFAULT_PART_TYPES = [
@@ -256,12 +273,56 @@ DEFAULT_PART_TYPES = [
 ]
 
 
+def gap_pairs(make=None, limit=None):
+    """הדגמים עם הפער הגדול ביותר בין הרכבים שעל הכביש למק"טים שלנו.
+
+    זה מקור המטרות המועדף: לחפש מק"טים לדגם שיש לו מאתיים מק"טים
+    ושלושים אלף רכבים הוא בזבוז, ולדגם עם חמישים אלף רכבים ואפס
+    מק"טים זו בדיוק העבודה.
+
+    מוחזרות זוגות בכתיב הקטלוג, כדי שההתאמות שייווצרו יישבו לצד
+    הקיימות ולא יפתחו כתיב שני לאותו יצרן.
+    """
+    from . import fleet_stats
+    from .services import catalog_make
+
+    ranked, _ = fleet_stats.gap_ranking(make=make, limit=limit or DEFAULT_GAP_MODELS)
+    return [(catalog_make(row.search_make), row.model) for row in ranked]
+
+
+PLAN_SOURCES = {
+    "manual": "לפי מה שהוקלד",
+    "gap": "לפי דירוג הפערים בצי",
+    "variants": "לפי מספר הווריאנטים - עדיין אין ספירת צי",
+}
+
+
+def plan_source(make=None, model=None):
+    """מאיפה יילקחו המטרות, כדי שהמסך יגיד את זה במקום שהמשתמש ינחש.
+
+    בדיקה זולה בכוונה: קיומו של צילום צי, ולא הדירוג עצמו. תצוגה
+    מקדימה שרצה על כל הקלדה לא צריכה לשלם על דירוג מלא.
+    """
+    from . import fleet_stats
+
+    if model or (make and model):
+        return "manual"
+    return "gap" if fleet_stats.summary()["models"] else "variants"
+
+
 def plan_targets(make=None, model=None, part_types=None):
     """מה ירוץ בפועל. מחזיר (מטרות, האם נחתך בתקרה).
 
-    שדה ריק מתמלא מקטלוג משרד התחבורה לפי מספר הווריאנטים, כי זה
-    הפרוקסי היחיד לפופולריות שיש. התוצאה נחתכת ב-MAX_TARGETS כדי
-    שלחיצה אחת לא תייצר חשבון בלתי צפוי.
+    שדה ריק מתמלא מדירוג הפערים: כמה רכבים בטווח הקנייה יש לדגם, חלקי
+    המק"טים שכבר יש לנו עבורו. פעם זה נעשה לפי מספר הווריאנטים בקטלוג
+    הדגמים - הפרוקסי היחיד שהיה - וכיום יש ספירה אמיתית של הצי, כך
+    שהגילוי מכוון לשוק הגדול שאינו מכוסה במקום לדגם שבמקרה יש לו הרבה
+    קודי דגם.
+
+    בלי צילום צי (עוד לא נספר) חוזרים לפרוקסי הישן, כי גילוי שמכוון
+    פחות טוב עדיף על מסך שלא עושה כלום.
+
+    התוצאה נחתכת ב-MAX_TARGETS כדי שלחיצה אחת לא תייצר חשבון בלתי צפוי.
     """
     from .vehicle_catalog import popular_makes, popular_models
 
@@ -271,14 +332,20 @@ def plan_targets(make=None, model=None, part_types=None):
 
     if make and model:
         pairs = [(make, model)]
-    elif make:
-        pairs = popular_models(make, limit=DEFAULT_MODELS)
     elif model:
         pairs = []  # דגם בלי יצרן - לא ניתן להתאמה חד-משמעית
     else:
-        pairs = []
-        for candidate_make in popular_makes(limit=DEFAULT_MAKES):
-            pairs.extend(popular_models(candidate_make, limit=DEFAULT_MODELS))
+        pairs = gap_pairs(make=make)
+        if not pairs:
+            pairs = (
+                popular_models(make, limit=DEFAULT_MODELS)
+                if make
+                else [
+                    pair
+                    for candidate in popular_makes(limit=DEFAULT_MAKES)
+                    for pair in popular_models(candidate, limit=DEFAULT_MODELS)
+                ]
+            )
 
     targets = [[mk, md, t] for mk, md in pairs for t in types]
     return targets[:MAX_TARGETS], len(targets) > MAX_TARGETS
@@ -300,6 +367,9 @@ class DiscoveryJob(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     status = db.Column(db.String(20), default=RUNNING, nullable=False, index=True)
+    # מי הביא את התוצאות: המודל עם חיפוש רשת, או הגריד של Autodoc.
+    # שתי הצנרות זהות מכאן והלאה, ולכן הן חולקות טבלה אחת.
+    source = db.Column(db.String(20), default=CLAUDE, nullable=False, index=True)
     targets = db.Column(db.Text, nullable=False)     # JSON: [[make, model, type], ...]
     cursor = db.Column(db.Integer, default=0, nullable=False)
     created = db.Column(db.Integer, default=0, nullable=False)
@@ -335,9 +405,14 @@ class DiscoveryJob(db.Model):
     def status_label(self):
         return self.STATUS_LABELS.get(self.status, self.status)
 
+    @property
+    def source_label(self):
+        return SOURCES.get(self.source, ("", "", self.source))[2]
+
     def to_dict(self):
         return {
             "id": self.id, "status": self.status, "status_label": self.status_label,
+            "source": self.source, "source_label": self.source_label,
             "cursor": self.cursor, "total": self.total, "created": self.created,
             "updated": self.updated, "rejected": self.rejected,
             "progress_pct": self.progress_pct, "is_running": self.is_running,
@@ -345,25 +420,38 @@ class DiscoveryJob(db.Model):
         }
 
 
-def active_job():
+def _by_source(query, source):
+    """סינון לפי מקור. בלי מקור - כל ההרצות, משני המסכים."""
+    return query.filter_by(source=source) if source else query
+
+
+def active_job(source=None):
     return (
-        DiscoveryJob.query.filter_by(status=DiscoveryJob.RUNNING)
+        _by_source(DiscoveryJob.query.filter_by(status=DiscoveryJob.RUNNING), source)
         .order_by(DiscoveryJob.id.desc()).first()
     )
 
 
-def latest_job():
-    return DiscoveryJob.query.order_by(DiscoveryJob.id.desc()).first()
+def latest_job(source=None):
+    return (
+        _by_source(DiscoveryJob.query, source)
+        .order_by(DiscoveryJob.id.desc()).first()
+    )
 
 
-def start_job(targets, user_id=None):
-    """פותח הרצה. מטרה = (יצרן, דגם, סוג חלק)."""
-    existing = active_job()
+def start_job(targets, user_id=None, source=CLAUDE):
+    """פותח הרצה. מטרה = (יצרן, דגם, סוג חלק).
+
+    הבדיקה על הרצה פעילה היא לפי מקור: גריד שרץ אינו חוסם חיפוש דרך
+    המודל, כי הם שני מסכים נפרדים שמנהל האפליקציה מפעיל בנפרד.
+    """
+    existing = active_job(source)
     if existing is not None:
         return existing
     job = DiscoveryJob(
         targets=json.dumps(targets, ensure_ascii=False),
         started_by_id=user_id,
+        source=source,
         log="",
     )
     db.session.add(job)
@@ -379,8 +467,13 @@ def cancel_job(job):
     return job
 
 
-def save(accepted):
-    """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו)."""
+def save(accepted, source=CLAUDE):
+    """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו).
+
+    המקור נכתב לתוך ההערה של המק"ט, וזה מה שמאפשר למסך הסקירה להראות
+    מאיפה כל חלף הגיע - ולמחוק בדיוק את מה ששיטה אחת הכניסה.
+    """
+    note, mark, _label = SOURCES.get(source, SOURCES[CLAUDE])
     created = updated = 0
     for row in accepted:
         part = Part.query.filter_by(part_number=row["part_number"]).first()
@@ -396,11 +489,11 @@ def save(accepted):
         part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
         # מק"ט קיים שומר את ההערה שלו. דריסה הייתה מוחקת את סימון
         # המקור הקודם ומציגה חלף שנאסף קודם כאילו הגיע מהחיפוש.
-        source = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
+        origin = f'{note} {row.get("source_url") or ""}'.strip()
         if is_new:
-            part.notes = source
-        elif SOURCE_MARK not in (part.notes or ""):
-            part.notes = f'{part.notes or ""} | {source}'.strip(" |")
+            part.notes = origin
+        elif mark not in (part.notes or ""):
+            part.notes = f'{part.notes or ""} | {origin}'.strip(" |")
 
         # התאמה חדשה מתווספת; קיימת לא משוכפלת
         wanted_make = fitment_make(row["make"])
@@ -428,7 +521,12 @@ def save(accepted):
 
 
 def run_step(job, searcher=None):
-    """מטרה אחת: חיפוש, אימות, כתיבה. מחזיר את העבודה."""
+    """מטרה אחת: חיפוש, אימות, כתיבה. מחזיר את העבודה.
+
+    searcher הוא מי שמביא את המועמדים - המודל כברירת מחדל, והגריד של
+    Autodoc כשהמסך שלו מפעיל. משם והלאה הדרך זהה: אותו אימות ואותה
+    שמירה, כי הסכנה זהה - עמוד של דגם מציג גם חלקים שאינם שלו.
+    """
     if not job.is_running:
         return job
     targets = job.target_list
@@ -450,7 +548,7 @@ def run_step(job, searcher=None):
         return job
 
     accepted, rejected = validate(raw, make, model, part_type)
-    created, updated = save(accepted)
+    created, updated = save(accepted, source=job.source)
     job.created += created
     job.updated += updated
     job.rejected += len(rejected)
@@ -476,12 +574,27 @@ def run_step(job, searcher=None):
 # --------------------------------------------------------------------------
 
 def discovered_parts():
-    """כל מק"ט שהחיפוש האוטומטי הכניס או נגע בו, החדש קודם."""
+    """כל מק"ט שנכנס אוטומטית או נגעו בו, החדש קודם.
+
+    שני המקורות יחד: חיפוש המודל והגריד של Autodoc. שניהם נכנסים בלי
+    יד אדם, ולכן שניהם נסקרים באותו מסך.
+    """
+    marks = [mark for _note, mark, _label in SOURCES.values()]
     return (
-        Part.query.filter(Part.notes.like(f"%{SOURCE_MARK}%"))
+        Part.query.filter(
+            db.or_(*[Part.notes.like(f"%{mark}%") for mark in marks])
+        )
         .order_by(Part.id.desc())
         .all()
     )
+
+
+def part_source_label(part):
+    """מאיזו שיטה המק"ט הזה הגיע, לפי ההערה שנכתבה לו."""
+    for _note, mark, label in SOURCES.values():
+        if mark in (part.notes or ""):
+            return label
+    return ""
 
 
 def source_url_of(part):

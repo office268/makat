@@ -2,13 +2,35 @@
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, func, literal_column
 
 db = SQLAlchemy()
 
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+# הרווח והמקף נכתבים לתוך ה-SQL ולא נשלחים כפרמטרים, וזה לא קוסמטיקה:
+# Postgres מזהה ש-GROUP BY מכסה ביטוי ב-SELECT לפי *טקסט* הביטוי. שני
+# מופעים של אותו ביטוי עם פרמטרים מקבלים מספרים שונים ($1 מול $9), ואז
+# הוא טוען שהעמודה אינה מקובצת ומסרב לרוץ. SQLite סלחן ולא אמר כלום,
+# ולכן הכשל הזה מגיע רק בפרודקשן. הערכים קבועים בקוד, ואין כאן קלט.
+_SPACE = literal_column("' '")
+_HYPHEN = literal_column("'-'")
+_NOTHING = literal_column("''")
+
+
+def squash(column):
+    """שם בצורה שבה משווים אותו: בלי רווחים, בלי מקפים, אותיות קטנות.
+
+    "RAV 4" ו-"RAV4" הם אותו דגם, ו-"2ZR-FAE" ו-"2ZRFAE" אותו מנוע.
+    יושב כאן ולא ב-services כדי שגם רישום העמודות יוכל להשתמש בו בלי
+    לייבא את services ולסגור מעגל.
+    """
+    return func.replace(
+        func.replace(func.lower(column), _SPACE, _NOTHING), _HYPHEN, _NOTHING
+    )
 
 
 class Manufacturer(db.Model):
@@ -435,3 +457,45 @@ class OrgPart(db.Model):
 
     def __repr__(self):
         return f"<OrgPart org={self.organization_id} part={self.part_id}>"
+
+
+class TableLayout(db.Model):
+    """אילו עמודות מוצגות בטבלה, ובאיזה סדר.
+
+    שורה אחת לכל טבלה, לכל המערכת. הפריסה אינה העדפה של משתמש אלא
+    החלטה של מנהל האפליקציה מה נכון להראות - ולכן היא לא נשמרת לפי
+    משתמש ולא לפי ארגון, ומי שמשנה אותה משנה אותה לכולם.
+
+    הסדר נשמר כרשימת מפתחות ולא כמספרי מיקום: מיקומים היו צריכים
+    סידור מחדש בכל הזזה, ורשימה פשוט אומרת מה בא אחרי מה. המפתחות
+    עצמם מוגדרים ב-app/part_columns.py.
+    """
+
+    __tablename__ = "table_layouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    table_key = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    column_keys = db.Column(db.Text, nullable=False)  # JSON: רשימת מפתחות לפי סדר
+    updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id])
+
+    @property
+    def keys(self):
+        import json
+
+        try:
+            keys = json.loads(self.column_keys or "[]")
+        except ValueError:
+            return []
+        return [key for key in keys if isinstance(key, str)]
+
+    @keys.setter
+    def keys(self, values):
+        import json
+
+        self.column_keys = json.dumps(list(values), ensure_ascii=False)
+
+    def __repr__(self):
+        return f"<TableLayout {self.table_key}>"

@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from flask import current_app
 from flask_login import UserMixin
-from werkzeug.security import check_password_hash, generate_password_hash
 
+from . import phones
 from .models import db
 
 
@@ -36,9 +36,6 @@ class Organization(db.Model):
     users = db.relationship(
         "User", back_populates="organization", cascade="all, delete-orphan"
     )
-    invitations = db.relationship(
-        "Invitation", back_populates="organization", cascade="all, delete-orphan"
-    )
 
     def to_dict(self):
         return {
@@ -55,7 +52,11 @@ class Organization(db.Model):
 
 
 class User(UserMixin, db.Model):
-    """משתמש. שייך תמיד לארגון אחד."""
+    """משתמש. שייך תמיד לארגון אחד.
+
+    ההזדהות היא מספר הטלפון, והוא גם רשימת המורשים: שורה בטבלה הזאת
+    היא ההרשאה להיכנס. אין סיסמאות - אין מה לאבד, לאפס או לשתף.
+    """
 
     __tablename__ = "users"
 
@@ -68,8 +69,11 @@ class User(UserMixin, db.Model):
     }
 
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(190), nullable=False, unique=True, index=True)
-    password_hash = db.Column(db.String(255), nullable=False)
+    # הזהות. ייחודי ומאונדקס - הכניסה היא בדיוק החיפוש הזה.
+    phone = db.Column(db.String(20), unique=True, index=True)
+    # לא כל משתמש הוא כתובת דוא"ל: הרשאת-העל נגזרת ממנה (ראה
+    # is_superadmin), ולמכונאי שנוסף במסך הצוות אין ממנה צורך.
+    email = db.Column(db.String(190), unique=True, index=True)
     full_name = db.Column(db.String(120))
     role = db.Column(db.String(20), default="mechanic", nullable=False)
     organization_id = db.Column(
@@ -81,12 +85,15 @@ class User(UserMixin, db.Model):
 
     organization = db.relationship("Organization", back_populates="users")
 
-    # ---- סיסמה ----
-    def set_password(self, raw):
-        self.password_hash = generate_password_hash(raw)
+    # ---- זהות ----
+    @property
+    def display_name(self):
+        """איך קוראים לו על המסך. שם אם יש, אחרת המספר עצמו."""
+        return self.full_name or phones.display(self.phone) or self.email or "משתמש"
 
-    def check_password(self, raw):
-        return check_password_hash(self.password_hash, raw or "")
+    @property
+    def phone_display(self):
+        return phones.display(self.phone)
 
     # ---- הרשאות ----
     def has_role(self, minimum):
@@ -137,6 +144,7 @@ class User(UserMixin, db.Model):
     def to_dict(self):
         return {
             "id": self.id,
+            "phone": self.phone,
             "email": self.email,
             "full_name": self.full_name,
             "role": self.role,
@@ -148,45 +156,4 @@ class User(UserMixin, db.Model):
         }
 
     def __repr__(self):
-        return f"<User {self.email} ({self.role})>"
-
-
-class Invitation(db.Model):
-    """הזמנה של עובד לארגון.
-
-    הטוקן הוא הסוד היחיד שמאפשר הצטרפות, ולכן הוא ארוך ואקראי ופג
-    אחרי שבועיים. הזמנה שנוצלה נשמרת עם accepted_at - היא כבר לא
-    תקפה, אבל היא מתעדת מי צורף ומתי.
-    """
-
-    __tablename__ = "invitations"
-
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(190), nullable=False, index=True)
-    role = db.Column(db.String(20), default="mechanic", nullable=False)
-    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
-    organization_id = db.Column(
-        db.Integer, db.ForeignKey("organizations.id"), nullable=False, index=True
-    )
-    invited_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
-    created_at = db.Column(db.DateTime, default=_now)
-    expires_at = db.Column(db.DateTime, nullable=False)
-    accepted_at = db.Column(db.DateTime)
-
-    organization = db.relationship("Organization", back_populates="invitations")
-    invited_by = db.relationship("User", foreign_keys=[invited_by_id])
-
-    @property
-    def is_expired(self):
-        expires = self.expires_at
-        # שורות שנכתבו ב-SQLite חוזרות בלי אזור זמן
-        if expires is not None and expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return expires is not None and expires < datetime.now(timezone.utc)
-
-    @property
-    def role_label(self):
-        return User.ROLE_LABELS.get(self.role, self.role)
-
-    def __repr__(self):
-        return f"<Invitation {self.email} -> org {self.organization_id}>"
+        return f"<User {self.phone or self.email} ({self.role})>"

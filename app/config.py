@@ -98,6 +98,20 @@ class Config:
     FLEET_STATS_RETRY_PAUSE = float(os.environ.get("FLEET_STATS_RETRY_PAUSE", 2))
     FLEET_STATS_PAGE_PAUSE = float(os.environ.get("FLEET_STATS_PAGE_PAUSE", 0.3))
     FLEET_STATS_MAX_FAILURES = int(os.environ.get("FLEET_STATS_MAX_FAILURES", 3))
+    # כמה דגמים נכנסים לדירוג הפערים. פער אצל דגם עם שלושים רכבים אינו
+    # הזדמנות, ודירוג עשרות אלפי דגמים אינו בקשת דפדפן.
+    FLEET_GAP_MODELS = int(os.environ.get("FLEET_GAP_MODELS", 300))
+    # גריד Autodoc (/admin/autodoc). מטרה אחת לכל בקשת HTTP, ולכן
+    # תקרת הזמן יושבת מתחת ל-60 השניות ש-gunicorn נותן לבקשה. שאר
+    # הכוונון - קצב, robots, זהות הדפדפן - נקרא ישירות ע"י הגריד
+    # ממשתני הסביבה, ראה scraper/autodoc_scraper/settings.py.
+    AUTODOC_TIMEOUT = float(os.environ.get("AUTODOC_TIMEOUT", 40))
+    AUTODOC_MAX_ITEMS = int(os.environ.get("AUTODOC_MAX_ITEMS", 30))
+    # קריאת עמוד המוצר של כל שורה מביאה את המק"טים המקוריים, ומכפילה
+    # את מספר הבקשות לאתר. כבוי כברירת מחדל.
+    AUTODOC_FOLLOW_PRODUCT_PAGES = os.environ.get(
+        "AUTODOC_FOLLOW_PRODUCT_PAGES", "0"
+    ).strip() == "1"
     # נעילת כתיבה עד שמנגנון ההרשאות ייכנס. פתוח כברירת מחדל בפיתוח
     # מקומי, נעול כברירת מחדל בפרודקשן.
     # מזהה גרסת ה-service worker. שינוי שלו גורם לדפדפנים למשוך
@@ -144,10 +158,21 @@ class Config:
 
 
 class TestConfig(Config):
-    """הגדרות לבדיקות."""
+    """הגדרות לבדיקות.
+
+    ברירת המחדל היא SQLite בזיכרון - מהיר, ולא דורש שרת. אבל SQLite
+    סלחן במקומות ש-Postgres אינו, ופרודקשן רץ על Postgres: שאילתה
+    שעברה כאן ונפלה שם כבר קרתה. לכן אפשר להריץ את אותה חבילת בדיקות
+    מול Postgres אמיתי:
+
+        TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5432/makat_test \
+            python -m pytest
+    """
 
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        "TEST_DATABASE_URL", "sqlite:///:memory:"
+    )
     SUPERADMIN_EMAILS = frozenset()
     VEHICLE_IMPORT_RETRY_PAUSE = 0  # בלי המתנות אמיתיות בבדיקות
     VEHICLE_IMPORT_PAGE_PAUSE = 0

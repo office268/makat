@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}גריד Autodoc{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">גריד חלפים מ-Autodoc</h1>
+<p class="text-muted small mb-3">
+  Scrapy נכנס לעמוד הקטגוריה של הדגם באתר Autodoc, קורא את המוצרים
+  שבו ומחזיר מק"ט, יצרן ומחיר. מה שחוזר עובר את אותו אימות של הגילוי
+  דרך Claude — עמוד של דגם מציג גם חלפים שאינם שלו, ומה שנפסל מופיע ביומן.
+</p>
+
+{% if not available %}
+<div class="alert alert-warning">
+  <strong>Scrapy אינו מותקן בשרת.</strong>
+  <div class="small mt-1">
+    הגריד רץ כתת-תהליך מתוך <code>scraper/</code>. התקנה:
+    <code>pip install -r requirements.txt</code>.
+  </div>
+</div>
+{% endif %}
+
+<div class="alert alert-light border small">
+  הגריד יוצא לאתר חיצוני: בקשה אחת בכל פעם, בהמתנה ביניהן, ובכיבוד
+  <code>robots.txt</code>. אם מטרה חוזרת בלי תוצאות — מבנה הכתובות באתר
+  כנראה השתנה. אפשר לתקן בלי פריסה מחדש דרך <code>AUTODOC_CATEGORIES</code>
+  או <code>AUTODOC_URL_TEMPLATE</code>, ולבדוק כתובת ידנית עם
+  <code>scrapy crawl autodoc -a url=…</code>.
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <form class="card" id="autodoc-form">
+      {{ csrf_field() }}
+      <div class="card-body">
+        <label class="form-label fw-bold" for="make">יצרן הרכב</label>
+        <select class="form-select mb-3" name="make" id="make">
+          <option value="">כל היצרנים — לפי הנפוצים</option>
+          {% for mk in known_makes %}<option value="{{ mk }}">{{ mk }}</option>{% endfor %}
+        </select>
+
+        <label class="form-label fw-bold" for="model">דגם</label>
+        {# הדגמים נטענים לפי היצרן שנבחר, מקטלוג משרד התחבורה #}
+        <select class="form-select mb-3" name="model" id="model" disabled>
+          <option value="">כל הדגמים — לפי הנפוצים</option>
+        </select>
+
+        <div class="d-flex justify-content-between align-items-center">
+          <label class="form-label fw-bold mb-0">סוגי חלקים</label>
+          <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="select-all">
+            <label class="form-check-label small fw-bold" for="select-all">הכל</label>
+          </div>
+        </div>
+        <div class="row row-cols-2 g-1 my-2" style="max-height: 260px; overflow-y: auto"
+             id="part-types">
+          {% for pt in part_types %}
+          <div class="col"><div class="form-check">
+            <input class="form-check-input" type="checkbox" name="part_type"
+                   value="{{ pt.key }}" id="pt-{{ pt.key }}">
+            <label class="form-check-label small" for="pt-{{ pt.key }}">{{ pt.name_he }}</label>
+          </div></div>
+          {% endfor %}
+        </div>
+
+        <div class="d-grid mt-3">
+          <button class="btn btn-primary btn-lg" id="btn-run" {% if not available %}disabled{% endif %}>
+            התחל גרידה
+          </button>
+        </div>
+        {# כל מטרה היא הרצת גריד נפרדת מול האתר, ולכן התוכנית מוצגת לפני הלחיצה #}
+        <p class="form-text mb-1" id="cost-note">מחשב…</p>
+        <ul class="form-text mb-0 ps-3" id="plan-sample"></ul>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">התקדמות</span>
+        <span class="badge bg-secondary" id="job-status">
+          {{ job.status_label if job else "לא הופעל" }}
+        </span>
+      </div>
+      <div class="progress mb-2" style="height: 1.4rem">
+        <div class="progress-bar" id="progress-bar" role="progressbar"
+             style="width: {{ job.progress_pct if job else 0 }}%">
+          {{ job.progress_pct if job else 0 }}%
+        </div>
+      </div>
+      <p class="small text-muted mb-2" id="job-counters">
+        {% if job %}{{ job.cursor }}/{{ job.total }} · נוספו {{ job.created }} ·
+        עודכנו {{ job.updated }} · נפסלו {{ job.rejected }}{% else %}—{% endif %}
+      </p>
+      <div class="alert alert-warning small d-none" id="job-error"></div>
+      <button class="btn btn-sm btn-outline-secondary d-none" id="btn-stop">עצור</button>
+
+      <hr>
+      <div class="d-flex justify-content-between">
+        <span class="small fw-bold">יומן</span>
+        <span class="small text-muted">בקטלוג <span id="catalog-size">{{ catalog_size }}</span> מק"טים</span>
+      </div>
+      <pre class="small mt-2 mb-0" id="job-log" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap"
+        >{% if job %}{{ job.log }}{% else %}—{% endif %}</pre>
+      <p class="small text-muted mt-2 mb-0">
+        מה שנכנס לקטלוג מסומן כ"גריד Autodoc" ומופיע ב<a href="{{ url_for('admin.discovery_review') }}">מסך הסקירה</a>,
+        שם אפשר לאמת ולמחוק.
+      </p>
+    </div></div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/job_screen.js') }}"></script>
+<script>
+  // אותה לולאה של מסך הגילוי (static/js/job_screen.js), כתובות ומילים אחרות.
+  jobScreen({
+    form: "autodoc-form",
+    urls: {plan: "{{ url_for('admin.autodoc_plan') }}",
+           start: "{{ url_for('admin.autodoc_start') }}",
+           step: "{{ url_for('admin.autodoc_step') }}",
+           cancel: "{{ url_for('admin.autodoc_cancel') }}"},
+    labels: {run: "התחל גרידה", busy: "גורד...",
+             unit: "עמודים ייגרדו —",
+             perTarget: "הרצת גריד נפרדת לכל אחד.",
+             empty: "לא נמצאו דגמים לגרידה.",
+             stuck: "הגריד לא מתקדם."},
+  });
+</script>
+{% endblock %}

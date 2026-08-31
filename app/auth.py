@@ -1,6 +1,10 @@
-"""התחברות, הרשמה והרשאות."""
-import re
-from urllib.parse import urlparse
+"""הזדהות והרשאות.
+
+ההזדהות היא שדה אחד: מספר טלפון. מי שהמספר שלו נמצא בטבלת המשתמשים
+נכנס, וכל השאר עוצרים בדלת. אין סיסמה, אין הרשמה עצמית ואין דוא"ל -
+רשימת המורשים היא טבלת המשתמשים עצמה, ומנהלים אותה במסך הצוות.
+"""
+from urllib.parse import urlencode, urlparse
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -22,18 +26,15 @@ from flask_login import (
     logout_user,
 )
 
-from . import activity
-from .auth_models import Organization, User
+from . import activity, phones
+from .auth_models import User
 from .models import db
 
 auth_bp = Blueprint("auth", __name__)
 login_manager = LoginManager()
 login_manager.login_view = "auth.login"
-login_manager.login_message = "יש להתחבר כדי להמשיך."
+login_manager.login_message = "יש להזדהות כדי להמשיך."
 login_manager.login_message_category = "info"
-
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-MIN_PASSWORD = 8
 
 
 @login_manager.user_loader
@@ -43,13 +44,13 @@ def load_user(user_id):
 
 @login_manager.unauthorized_handler
 def _unauthorized():
-    """בקשת API מקבלת JSON; בקשת דפדפן מופנית לדף ההתחברות."""
+    """בקשת API מקבלת JSON; בקשת דפדפן מופנית למסך ההזדהות."""
     from flask import jsonify
 
     if request.path.startswith("/api/"):
-        return jsonify({"error": "נדרשת התחברות"}), 401
+        return jsonify({"error": "נדרשת הזדהות"}), 401
     flash(login_manager.login_message, login_manager.login_message_category)
-    return redirect(url_for("auth.login", next=request.full_path))
+    return redirect(with_next("auth.login", here()))
 
 
 def role_required(minimum):
@@ -100,113 +101,71 @@ def safe_target(target):
     return target
 
 
-def slugify(name):
-    slug = re.sub(r"[^\w֐-׿-]+", "-", (name or "").strip().lower()).strip("-")
-    return slug or "org"
+def here():
+    """הכתובת הנוכחית כיעד לחזרה אחרי הזדהות.
+
+    full_path מוסיף "?" גם לבקשה שאין בה פרמטרים, ו-/parts? הוא יעד
+    מכוער שאין סיבה לגרור אותו הלוך ושוב.
+    """
+    return request.full_path if request.query_string else request.path
 
 
-def unique_slug(name):
-    base = slugify(name)
-    slug, suffix = base, 2
-    while Organization.query.filter_by(slug=slug).first():
-        slug = f"{base}-{suffix}"
-        suffix += 1
-    return slug
+def with_next(endpoint, target):
+    """כתובת של מסך בשער, עם היעד לחזרה אליו כפרמטר מקודד.
 
-
-def _validate_signup(form):
-    """מחזיר רשימת שגיאות. ריקה = תקין."""
-    errors = []
-    if not (form.get("organization_name") or "").strip():
-        errors.append("יש להזין שם ארגון.")
-    email = (form.get("email") or "").strip().lower()
-    if not EMAIL_RE.match(email):
-        errors.append("כתובת דוא\"ל לא תקינה.")
-    elif User.query.filter_by(email=email).first():
-        errors.append("כתובת הדוא\"ל כבר רשומה במערכת.")
-    password = form.get("password") or ""
-    if len(password) < MIN_PASSWORD:
-        errors.append(f"הסיסמה חייבת להכיל לפחות {MIN_PASSWORD} תווים.")
-    elif password != form.get("password_confirm"):
-        errors.append("הסיסמאות אינן תואמות.")
-    return errors
-
-
-@auth_bp.route("/signup", methods=["GET", "POST"])
-def signup():
-    """הרשמת ארגון חדש. הנרשם הופך לבעלים שלו."""
-    if current_user.is_authenticated:
-        return redirect(url_for("identify.index"))
-
-    if request.method == "POST":
-        errors = _validate_signup(request.form)
-        if errors:
-            for message in errors:
-                flash(message, "danger")
-        else:
-            name = request.form["organization_name"].strip()
-            organization = Organization(
-                name=name,
-                slug=unique_slug(name),
-                kind=request.form.get("kind") or "מוסך",
-                phone=(request.form.get("phone") or "").strip() or None,
-            )
-            db.session.add(organization)
-            db.session.flush()
-
-            user = User(
-                email=request.form["email"].strip().lower(),
-                full_name=(request.form.get("full_name") or "").strip() or None,
-                role="owner",
-                organization=organization,
-            )
-            user.set_password(request.form["password"])
-            db.session.add(user)
-            db.session.commit()
-
-            login_user(user)
-            session[PASS_ONCE] = True
-            activity.note(
-                action="auth.signup",
-                summary=f"{organization.name} ({user.email})",
-                entity_type="organization",
-                entity_id=organization.id,
-                kind=organization.kind,
-            )
-            flash(f"ברוך הבא, {organization.name}!", "success")
-            return redirect(url_for("identify.index"))
-
-    return render_template("auth/signup.html", form=request.form, kinds=Organization.KINDS)
+    url_for משאיר "/" ו-"?" כמות שהם בערך של פרמטר, וכך נולדה בייצור
+    הכתובת /login?next=/parts? - שני סימני שאלה באותה כתובת. הדפדפן
+    עוד הסתדר איתה, אבל בדרך יש מי שמנרמל: הבקשה חזרה בלוגים כ-
+    /login%3Fnext=/parts, כלומר נתיב אחד שאין לו מסלול, ומי שביקש
+    להזדהות קיבל 404 במקום את הטופס. קידוד מלא של הערך לא משאיר
+    מקום לפרשנות.
+    """
+    return f"{url_for(endpoint)}?{urlencode({'next': target})}"
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
+    """הזדהות. שדה אחד, מספר טלפון.
+
+    שלוש דחיות אפשריות, וכל אחת אומרת את שמה: מספר שאינו מספר, מספר
+    שאינו ברשימת המורשים, ומשתמש או ארגון שהושבתו. ההסתרה שנהוגה
+    בטופס סיסמה ("אחד מהשניים שגוי") לא מרוויחה כאן דבר: מי שמנחש
+    מספרים יגלה ממילא, ומכונאי שעומד מול טופס שלא אומר לו מה קרה
+    יתקשר למנהל במקום לתקן ספרה.
+    """
     if current_user.is_authenticated:
-        return redirect(url_for("identify.index"))
+        return redirect(safe_target(request.args.get("next")))
 
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
-        user = User.query.filter_by(email=email).first()
-        # הודעה זהה לשני המקרים - לא מסגירים אילו כתובות רשומות
-        if user is None or not user.check_password(request.form.get("password")):
+        typed = (request.form.get("phone") or "").strip()
+        phone = phones.normalize(typed)
+        user = User.query.filter_by(phone=phone).first() if phone else None
+
+        if phone is None:
             activity.note(
-                action="auth.login_failed", summary=email, reason="bad_credentials"
+                action="auth.login_failed", summary=typed[:40], reason="malformed"
             )
-            flash("דוא\"ל או סיסמה שגויים.", "danger")
+            flash("מספר הטלפון אינו תקין.", "danger")
+        elif user is None:
+            activity.note(
+                action="auth.login_failed", summary=phone, reason="unknown_phone"
+            )
+            flash("המספר הזה אינו מורשה להיכנס. פנה למנהל המערכת.", "danger")
         elif not user.is_active:
             activity.note(
-                action="auth.login_failed", summary=email, reason="inactive"
+                action="auth.login_failed", summary=phone, reason="inactive"
             )
             flash("החשבון או הארגון מושבתים. פנה למנהל המערכת.", "warning")
         else:
-            login_user(user, remember=request.form.get("remember") == "1")
+            # הזדהות נשמרת: מכשיר במוסך אינו נשאל בכל פתיחה. מסך
+            # הפתיחה עדיין מקדם כל פתיחה - הוא הדלת, לא השומר.
+            login_user(user, remember=True)
             session[PASS_ONCE] = True
             activity.note(
                 action="auth.login",
-                summary=f"{user.email} ({user.role_label})",
+                summary=f"{user.display_name} ({user.role_label})",
                 entity_type="user",
                 entity_id=user.id,
-                remember=request.form.get("remember") == "1",
             )
             user.last_login_at = datetime.now(timezone.utc)
             db.session.commit()
@@ -252,8 +211,8 @@ def splash_gate():
       כל השאר        פתיחה: אייקון במסך הבית, סימנייה, כתובת שהוקלדה,
                      לשונית חדשה - ושם המכונית מקבלת את הפנים
 
-    נחסם רק השורש. שאר המסכים נגישים ישירות: קישור עמוק שנשלח לעובד
-    צריך להיפתח במקום שאליו הוא מצביע.
+    נחסם רק השורש. קישור עמוק שנשלח לעובד מצביע על מסך מסוים, ולכן
+    הוא נפתח שם - אחרי הזדהות, שאותה מבקש השער הבא.
     """
     if not _opens_the_app(request):
         return None
@@ -262,6 +221,39 @@ def splash_gate():
     if _from_inside(request):
         return None
     return redirect(url_for("auth.welcome"))
+
+
+# מה שפתוח למי שעוד לא הזדהה: הדלת עצמה, והקבצים שהדפדפן מושך בעצמו
+# כדי להציג אותה. כל השאר - כולל הקטלוג - נמצא מעבר לה.
+PUBLIC_ENDPOINTS = frozenset(
+    {
+        "auth.welcome",
+        "auth.enter",
+        "auth.login",
+        "static",
+        "pwa.manifest",
+        "pwa.service_worker",
+        "pwa.offline",
+        "healthz",
+    }
+)
+
+
+@auth_bp.before_app_request
+def identification_gate():
+    """בלי הזדהות אין אפליקציה.
+
+    רץ אחרי splash_gate, ולכן פתיחה של האפליקציה עדיין פוגשת קודם את
+    המכונית: המכונית היא הדלת, וזה השומר שמאחוריה.
+
+    כתובת שאינה מוכרת (endpoint ריק) ממשיכה ל-404 שלה. הפניה להזדהות
+    הייתה הופכת כל שגיאת כתובת לטופס, ומסתירה שהקישור פשוט שבור.
+    """
+    if current_user.is_authenticated:
+        return None
+    if request.endpoint in PUBLIC_ENDPOINTS or request.endpoint is None:
+        return None
+    return login_manager.unauthorized()
 
 
 @auth_bp.after_app_request
@@ -293,20 +285,29 @@ def splash_settings():
 def welcome():
     """מסך הפתיחה: מכונית תלת-ממד מסתובבת שלחיצה עליה נכנסת לאפליקציה.
 
-    מחובר או לא - הלחיצה מובילה לאותו מקום. המסך הראשי פתוח גם
-    למבקר (בלי מחירים ומלאי), ולכן אין סיבה לחסום אותו בטופס.
+    הלחיצה מובילה לאותו מקום לכולם - ‎/enter מחליט שם אם היא נכנסת
+    פנימה או עוצרת בשדה הטלפון. המסך הזה עצמו פתוח לכל אחד; הוא לא
+    מסגיר דבר, ובלעדיו לא הייתה דרך להגיע לשדה.
     """
     target = safe_target(request.args.get("next"))
     return render_template(
-        "auth/welcome.html", enter_url=url_for("auth.enter", next=target)
+        "auth/welcome.html", enter_url=with_next("auth.enter", target)
     )
 
 
 @auth_bp.get("/enter")
 def enter():
-    """הלחיצה על המכונית: אסימון כניסה יחיד, וממשיכה לאפליקציה."""
+    """הלחיצה על המכונית.
+
+    מי שכבר הזדהה נכנס ישר, עם אסימון כניסה יחיד שפותח את השורש בלי
+    לחזור למסך הפתיחה. מי שלא - פוגש את שדה הטלפון, ומשם ממשיך אל
+    אותו יעד עצמו.
+    """
+    target = safe_target(request.args.get("next"))
+    if not current_user.is_authenticated:
+        return redirect(with_next("auth.login", target))
     session[PASS_ONCE] = True
-    return redirect(safe_target(request.args.get("next")))
+    return redirect(target)
 
 
 @auth_bp.post("/logout")
@@ -314,7 +315,7 @@ def enter():
 def logout():
     activity.note(
         action="auth.logout",
-        summary=current_user.email,
+        summary=current_user.display_name,
         entity_type="user",
         entity_id=current_user.id,
         actor=current_user,

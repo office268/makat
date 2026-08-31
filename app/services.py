@@ -2,8 +2,9 @@
 import csv
 import io
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 
+from . import part_columns
 from .models import (
     Category,
     CrossReference,
@@ -12,6 +13,7 @@ from .models import (
     OrgPart,
     Part,
     db,
+    squash,
 )
 
 CSV_COLUMNS = [
@@ -81,9 +83,107 @@ def _squash_text(value):
     return (value or "").replace(" ", "").replace("-", "").lower()
 
 
-def _squash(column):
-    """אותו כיווץ, בצד של בסיס הנתונים. replace ו-lower קיימים בשניהם."""
-    return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
+# אותו כיווץ, בצד של בסיס הנתונים. ההגדרה עצמה ב-models.
+_squash = squash
+
+
+def normalize_make(name):
+    """שם יצרן בצורה שבה משווים אותו בין המרשם לקטלוג.
+
+    המרשם כותב "מזדה" והקטלוג "מאזדה" - אותו יצרן, אֵם קריאה אחת הבדל,
+    והשוואה מילולית פשוט לא מוצאת אותו. לכן נופלות א' ואותיות כפולות
+    (וו -> ו), וההשוואה נעשית על מה שנשאר.
+
+    זו נורמליזציה זהירה בכוונה: על שנים-עשר היצרנים שבקטלוג היא אינה
+    ממזגת שניים לאחד, ולכן היא מגשרת על כתיב בלי להמציא התאמות.
+    """
+    text = (name or "").strip().lower().replace("א", "")
+    collapsed = []
+    for char in text:
+        if not collapsed or collapsed[-1] != char:
+            collapsed.append(char)
+    return "".join(collapsed)
+
+
+def catalog_make(make):
+    """שם היצרן ככתיבתו בקטלוג, אם הוא מוכר שם בכתיב אחר."""
+    wanted = normalize_make(make)
+    if not wanted:
+        return make
+    for (name,) in db.session.query(Fitment.make).distinct():
+        if name and normalize_make(name) == wanted:
+            return name
+    return make
+
+
+# שם דגם קצר מדי מזהה כל דבר: "3" נמצא בתוך "I30" ובתוך "MAZDA 3" גם
+# יחד. משלוש אותיות ומעלה ההתאמה כבר אומרת משהו.
+MIN_MODEL_PREFIX = 3
+
+
+def _model_matches(model):
+    """התאמת שם דגם בין המרשם לקטלוג, בשני הכיוונים.
+
+    לפעמים שם הקטלוג ארוך יותר ("COROLLA VERSO" מול "COROLLA"), ולפעמים
+    דווקא שם המרשם ("COROLLA HSD SDN" מול "COROLLA"). בדיקה בכיוון אחד
+    בלבד הפילה את המקרה השני: 265 מק"טים לקורולה לא נמצאו לרכב שבמרשם
+    נקרא COROLLA HSD SDN - לא בדוח, וגרוע מזה, גם בזיהוי לפי מספר רישוי.
+
+    לכן: או ששם המרשם מוכל בשם הקטלוג, או ששם המרשם *מתחיל* בשם הקטלוג.
+    ההכלה ההפוכה מוגבלת לתחילת המחרוזת ולשמות באורך סביר, אחרת שם קצר
+    היה נדבק לכל דגם שמכיל את אותן אותיות.
+    """
+    squashed = _squash_text(model)
+    catalog = _squash(Fitment.model)
+    return or_(
+        catalog.like(f"%{squashed}%"),
+        and_(
+            func.length(catalog) >= MIN_MODEL_PREFIX,
+            db.literal(squashed).like(catalog.concat("%")),
+        ),
+    )
+
+
+def model_matches_name(registry_model, catalog_model):
+    """אותו כלל בדיוק, בצד פייתון. מימוש אחד לוגי, שני ניסוחים."""
+    wanted = _squash_text(registry_model)
+    catalog = _squash_text(catalog_model)
+    if not wanted or not catalog:
+        return False
+    return wanted in catalog or (
+        len(catalog) >= MIN_MODEL_PREFIX and wanted.startswith(catalog)
+    )
+
+
+def _engine_matches(terms):
+    """התאמה שמצהירה על אחד המנועים המבוקשים.
+
+    ההשוואה מכווצת (בלי רווחים ומקפים, אותיות קטנות), כי הקטלוג כותב
+    "2ZR-FAE" והמרשם "2ZRFAE" - אותו מנוע בשני כתיבים.
+    """
+    if isinstance(terms, str):
+        terms = [terms]
+    conditions = []
+    for term in terms:
+        squashed = _squash_text(term)
+        if not squashed:
+            continue
+        conditions.append(_squash(Fitment.engine_code).like(f"%{squashed}%"))
+        conditions.append(_squash(Fitment.engine_volume).like(f"%{squashed}%"))
+    return or_(*conditions) if conditions else db.false()
+
+
+def _engine_unspecified():
+    """התאמה שלא אמרה כלום על מנוע.
+
+    בקטלוג שלנו רק כחמישית מההתאמות מציינות מנוע. "לא צוין" הוא חוסר
+    מידע ולא הצהרה שהחלק אינו מתאים, ולכן סינון לפי מנוע שמוחק אותן
+    היה מוחק את רוב הקטלוג ומחזיר פחות מק"טים נכונים, לא יותר.
+    """
+    return and_(
+        or_(Fitment.engine_code.is_(None), Fitment.engine_code == ""),
+        or_(Fitment.engine_volume.is_(None), Fitment.engine_volume == ""),
+    )
 
 
 def search_parts(
@@ -99,6 +199,7 @@ def search_parts(
     low_stock=None,
     active_only=True,
     sort="part_number",
+    column_filters=None,
     organization_id=None,
 ):
     """בונה שאילתת חיפוש מק"טים לפי כל הפילטרים.
@@ -106,6 +207,10 @@ def search_parts(
     מחיר ומלאי פרטיים לארגון, ולכן סינון או מיון לפיהם דורש
     organization_id. בלעדיו הם מתעלמים בשקט - מבקר אנונימי רואה
     את הקטלוג המשותף בלבד.
+
+    column_filters הוא הסינון שמגיע משורת הכותרות של הטבלה, ממופה לפי
+    שם הפרמטר. הכללים עצמם יושבים ב-app/part_columns.py, ליד הגדרת
+    העמודה - כך שעמודה חדשה מביאה איתה את הסינון שלה.
     """
     query = Part.query
 
@@ -146,16 +251,12 @@ def search_parts(
     if make or model or year or engine:
         fit = db.session.query(Fitment.part_id)
         if make:
-            fit = fit.filter(Fitment.make.ilike(make))
+            # הרכב מגיע בכתיב המרשם, ההתאמות נכתבו בכתיב הקטלוג
+            fit = fit.filter(Fitment.make.ilike(catalog_make(make)))
         if model:
-            fit = fit.filter(_squash(Fitment.model).like(f"%{_squash_text(model)}%"))
+            fit = fit.filter(_model_matches(model))
         if engine:
-            fit = fit.filter(
-                or_(
-                    Fitment.engine_code.ilike(f"%{engine}%"),
-                    Fitment.engine_volume.ilike(f"%{engine}%"),
-                )
-            )
+            fit = fit.filter(or_(_engine_matches(engine), _engine_unspecified()))
         if year:
             year = _to_int(year)
             if year:
@@ -178,15 +279,20 @@ def search_parts(
     if active_only:
         query = query.filter(Part.is_active.is_(True))
 
+    # סינון ומיון לפי עמודה. ה-join לשכבה הפרטית נעשה פעם אחת לכל
+    # היותר, גם כשגם המיון וגם הסינון זקוקים לה.
+    query, org_joined = part_columns.apply_filters(
+        query, column_filters or {}, organization_id, False
+    )
+    query, org_joined, sorted_column, _ = part_columns.apply_sort(
+        query, sort, organization_id, org_joined
+    )
+    if sorted_column is not None:
+        return query
+
     org_sorts = {"price_asc", "price_desc", "stock"}
     if sort in org_sorts and organization_id:
-        query = query.outerjoin(
-            OrgPart,
-            db.and_(
-                OrgPart.part_id == Part.id,
-                OrgPart.organization_id == organization_id,
-            ),
-        )
+        query, org_joined = part_columns.join_org(query, organization_id, org_joined)
         order = {
             "price_asc": OrgPart.price.asc(),
             "price_desc": OrgPart.price.desc(),
@@ -202,23 +308,58 @@ def search_parts(
     return query.order_by(sorts.get(sort, Part.part_number.asc()))
 
 
-def vehicle_part_counts(make, model):
-    """(מק"טים מתאימים לרכב, מתוכם מתכלים) לדגם אחד.
+def _fitment_index():
+    """מפת ההתאמות של הקטלוג: (יצרן, דגם מכווץ) -> קבוצות מזהי מק"ט.
 
-    בנוי על אותו search_parts שהמסך /vehicles מריץ, ולא על שאילתה
-    מקבילה משלו: מספר בעמודה שאינו מה שנפתח בלחיצה עליו גרוע ממספר
-    שאינו שם בכלל.
+    נבנית בשאילתה אחת ומשרתת מאות דגמים. שאילתה נפרדת לכל דגם היא
+    בזבוז כשהקטלוג כולו הוא אלפי שורות, וכשרוצים לדרג פערים על מאות
+    דגמים היא בכלל לא אפשרות.
+
+    שומרים מזהים ולא מונים, כי אותו מק"ט יכול להתאים גם ל-"COROLLA"
+    וגם ל-"COROLLA VERSO"; חיבור מונים היה סופר אותו פעמיים, ואיחוד
+    קבוצות סופר אותו פעם אחת - בדיוק כמו search_parts.
     """
     from .taxonomy import WEAR_TYPES
 
-    query = search_parts(make=make, model=model).order_by(None)
-    total, wear = query.with_entities(
-        func.count(db.distinct(Part.id)),
-        func.count(db.distinct(
-            case((Part.part_type.in_(tuple(WEAR_TYPES)), Part.id))
-        )),
-    ).one()
-    return total or 0, wear or 0
+    rows = (
+        db.session.query(Fitment.make, Fitment.model, Part.id, Part.part_type)
+        .join(Part, Part.id == Fitment.part_id)
+        .filter(Part.is_active.is_(True))
+        .all()
+    )
+    index = {}
+    for make, model, part_id, part_type in rows:
+        key = (normalize_make(make), _squash_text(model))
+        total, wear = index.setdefault(key, (set(), set()))
+        total.add(part_id)
+        if part_type in WEAR_TYPES:
+            wear.add(part_id)
+    return index
+
+
+def part_counts_for(pairs):
+    """{(יצרן, דגם): (מק"טים, מתוכם מתכלים)} לרשימת רכבים, בשאילתה אחת.
+
+    ההתאמה זהה לזו של search_parts: היצרן מלא, והדגם הוא הכלה בשם
+    ההתאמה אחרי כיווץ רווחים ומקפים. אחרת המספר בעמודה לא היה מה
+    שנפתח בלחיצה עליו.
+    """
+    index = _fitment_index()
+    counts = {}
+    for make, model in set(pairs):
+        wanted_make = normalize_make(make)
+        total, wear = set(), set()
+        for (fit_make, fit_model), (part_ids, wear_ids) in index.items():
+            if fit_make == wanted_make and model_matches_name(model, fit_model):
+                total |= part_ids
+                wear |= wear_ids
+        counts[(make, model)] = (len(total), len(wear))
+    return counts
+
+
+def vehicle_part_counts(make, model):
+    """(מק"טים מתאימים לרכב, מתוכם מתכלים) לדגם אחד."""
+    return part_counts_for([(make, model)])[(make, model)]
 
 
 def find_by_number(number):
@@ -625,6 +766,35 @@ def export_csv(parts, organization_id=None):
     return "﻿" + buffer.getvalue()
 
 
+def vehicle_engine_terms(vehicle):
+    """באילו מונחים אפשר לזהות את המנוע של הרכב הזה בתוך הקטלוג.
+
+    הקטלוג מדבר שני כתיבים: רובו נפח ורמת מנוע ("1.4 TSI"), ומיעוטו
+    קוד יצרן ("2ZR-FAE"). המרשם מוסר קוד יצרן בלבד, והנפח מגיע מקטלוג
+    הדגמים שלנו לפי (יצרן, קוד דגם) - 1398 סמ"ק הופכים ל-"1.4".
+
+    מוחזרים שני המונחים, כי כל אחד מהם מוצא חלק אחר של הקטלוג.
+    """
+    from .vehicle_catalog import VehicleModel
+
+    terms = []
+    code = (vehicle.get("engine_code") or "").strip()
+    if code:
+        terms.append(code)
+
+    make = (vehicle.get("make") or "").strip().split()
+    model_code = (vehicle.get("model_code") or "").strip()
+    if make and model_code:
+        row = VehicleModel.query.filter(
+            VehicleModel.make.ilike(f"%{make[0]}%"),
+            VehicleModel.model_code == model_code,
+            VehicleModel.engine_volume.isnot(None),
+        ).first()
+        if row is not None and row.engine_volume:
+            terms.append(f"{round(row.engine_volume / 1000, 1):.1f}")
+    return terms
+
+
 def parts_for_vehicle(vehicle, part_type=None):
     """ההצטלבות: רכב מזוהה × סוג חלק -> המק"טים המתאימים בלבד."""
     if not vehicle:
@@ -640,6 +810,25 @@ def parts_for_vehicle(vehicle, part_type=None):
         if make
         else []
     )
+
+
+def engine_matched_parts(parts, terms):
+    """מזהי המק"טים שההתאמה שלהם מצהירה במפורש על המנוע של הרכב.
+
+    זה סימון ולא סינון, בכוונה: רק כחמישית מההתאמות בקטלוג מציינות
+    מנוע, והן מציינות אותו בשני כתיבים שונים. סינון היה מסתיר מק"ט
+    נכון שנכתב בכתיב האחר - הפסד גרוע בהרבה מרשימה קצת ארוכה. אז
+    כולם נשארים, והמאומתים עולים לראש ומסומנים.
+    """
+    if not terms or not parts:
+        return set()
+    ids = [part.id for part in parts]
+    rows = (
+        db.session.query(Fitment.part_id)
+        .filter(Fitment.part_id.in_(ids), _engine_matches(terms))
+        .distinct()
+    )
+    return {row[0] for row in rows}
 
 
 def catalog_coverage(vehicle):
@@ -665,3 +854,100 @@ def low_stock_parts(organization_id, limit=8):
         .limit(limit)
         .all()
     )
+
+
+def column_counts(parts, columns):
+    """הספירות שהעמודות המחושבות מציגות, לשורות שעל המסך בלבד.
+
+    {מזהה מק"ט: {"catalog_parts": n, "substitutes": n}}
+
+    שאילתה אחת לכל הדף, ובאותם ביטויים שלפיהם ממיינים ומסננים - אחרת
+    המספר שבתא היה יכול לסתור את הסדר שהוא עצמו יצר. כשאף אחת משתי
+    העמודות אינה מוצגת, אין כאן שאילתה בכלל.
+    """
+    keys = {column.key for column in columns}
+    counted = {"catalog_parts", "substitutes"} & keys
+    fleet_keys = {"fleet_vehicles", "fleet_prime", "fleet_gap"} & keys
+    if not parts or not (counted or fleet_keys):
+        return {}
+
+    values = {part.id: {} for part in parts}
+    if counted:
+        rows = (
+            db.session.query(
+                Part.id,
+                part_columns.CATALOG_PARTS,
+                part_columns.SUBSTITUTES,
+            )
+            .filter(Part.id.in_(list(values)))
+            .all()
+        )
+        for part_id, catalog, substitutes in rows:
+            values[part_id].update(
+                catalog_parts=catalog or 0, substitutes=substitutes or 0
+            )
+    if fleet_keys:
+        values = _add_fleet_numbers(values, parts)
+    return values
+
+
+def _add_fleet_numbers(values, parts):
+    """מוסיף לכל שורה את מספרי הצי של הרכב שהחלק מתאים לו.
+
+    מפייתון ולא מ-SQL, ומאותה מפה שממנה נבנה גם ביטוי המיון - כך התא
+    והסדר אומרים את אותו דבר. בלי צילום צי אין מספרים, וזה "—" ולא
+    אפס: "לא ידוע" אינו "אין רכבים כאלה".
+    """
+    from . import fleet_stats
+
+    numbers = fleet_stats.catalog_fleet_numbers()
+    for part in parts:
+        if not numbers:
+            values[part.id].update(fleet_vehicles=None, fleet_prime=None, fleet_gap=None)
+            continue
+        # הגדול מבין הרכבים שהחלק מתאים להם - הנפוץ שבהם. אותו כלל
+        # בדיוק כמו ה-CASE שממיין (ראה part_columns.fleet_value).
+        best = {"vehicles": 0, "prime": 0, "gap": 0.0}
+        for fitment in part.fitments:
+            row = numbers.get((fitment.make, fitment.model))
+            if row:
+                for field in best:
+                    best[field] = max(best[field], row[field])
+        values[part.id].update(
+            fleet_vehicles=best["vehicles"],
+            fleet_prime=best["prime"],
+            fleet_gap=best["gap"],
+        )
+    return values
+
+
+# ---------- פריסת העמודות ----------
+
+PARTS_TABLE = "parts"
+
+
+def column_layout(table_key=PARTS_TABLE):
+    """העמודות המוצגות בטבלה, לפי סדרן.
+
+    אין שורה שמורה = ברירת המחדל שבקוד. כך הטבלה עובדת ביום הראשון,
+    לפני שמנהל האפליקציה נגע בה בכלל.
+    """
+    from .models import TableLayout
+
+    layout = TableLayout.query.filter_by(table_key=table_key).first()
+    return part_columns.resolve(layout.keys if layout else part_columns.DEFAULT_KEYS)
+
+
+def save_column_layout(keys, table_key=PARTS_TABLE, user=None):
+    """שומר את הפריסה. רשימה ריקה תחזיר את ברירת המחדל בקריאה הבאה."""
+    from .models import TableLayout
+
+    layout = TableLayout.query.filter_by(table_key=table_key).first()
+    if layout is None:
+        layout = TableLayout(table_key=table_key)
+        db.session.add(layout)
+    layout.keys = list(keys)
+    if user is not None:
+        layout.updated_by_id = user.id
+    db.session.commit()
+    return layout

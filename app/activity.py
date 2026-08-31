@@ -53,7 +53,6 @@ ACTION_LABELS = {
     "auth.login": "כניסה למערכת",
     "auth.login_failed": "ניסיון כניסה שנכשל",
     "auth.logout": "יציאה מהמערכת",
-    "auth.signup": "רישום ארגון חדש",
     "auth.account": "מסך החשבון",
     "identify.index": "מסך הזיהוי",
     "identify.vehicle_lookup": "זיהוי רכב לפי מספר רישוי",
@@ -76,11 +75,9 @@ ACTION_LABELS = {
     "web.import_csv": "ייבוא CSV",
     "web.not_found": "דף שלא נמצא",
     "team.index": "ניהול משתמשים",
-    "team.invite": "הזמנת עובד",
-    "team.revoke": "ביטול הזמנה",
+    "team.add_user": "הוספת מורשה",
     "team.change_role": "שינוי תפקיד",
     "team.toggle_active": "הפעלה/השבתה של משתמש",
-    "team.accept": "קבלת הזמנה",
     "admin.vehicle_import": "מסך ייבוא קטלוג דגמי רכב",
     "admin.vehicle_import_start": "התחלת ייבוא דגמי רכב",
     "admin.vehicle_import_cancel": "ביטול ייבוא דגמי רכב",
@@ -88,6 +85,8 @@ ACTION_LABELS = {
     "admin.discovery_start": 'התחלת גילוי מק"טים',
     "admin.discovery_cancel": 'ביטול גילוי מק"טים',
     "admin.discovery_review": "סקירת מה שהתגלה",
+    "admin.columns": 'מסך עמודות טבלת המק"טים',
+    "admin.columns_save": "שינוי עמודות הטבלה",
     "admin.discovery_verify": 'אימות מק"ט מול הרשת',
     "admin.discovery_delete": 'מחיקת מק"טים שנפסלו',
     "api.list_parts": 'רשימת מק"טים (API)',
@@ -139,8 +138,9 @@ class ActivityLog(db.Model):
         db.Integer, db.ForeignKey("organizations.id"), index=True
     )
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
-    # תצלום של המשתמש בזמן האירוע - הלוג נשאר קריא גם אחרי שהמשתמש נמחק
-    user_email = db.Column(db.String(190))
+    # תצלום של המשתמש בזמן האירוע - הלוג נשאר קריא גם אחרי שהמשתמש נמחק.
+    # מה שנרשם הוא הזהות שאיתה נכנס, כלומר מספר הטלפון.
+    user_label = db.Column(db.String(190))
     user_role = db.Column(db.String(20))
 
     action = db.Column(db.String(80), nullable=False, index=True)
@@ -188,7 +188,7 @@ class ActivityLog(db.Model):
 
     @property
     def actor(self):
-        return self.user_email or "אנונימי"
+        return self.user_label or "אנונימי"
 
     def to_dict(self):
         return {
@@ -196,7 +196,7 @@ class ActivityLog(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "organization_id": self.organization_id,
             "user_id": self.user_id,
-            "user_email": self.user_email,
+            "user_label": self.user_label,
             "user_role": self.user_role,
             "action": self.action,
             "label": self.label,
@@ -250,7 +250,7 @@ def note(
         # שומר את האירוע רשום על שמו במקום להיראות אנונימי.
         extra["actor"] = {
             "id": actor.id,
-            "email": actor.email,
+            "label": actor.phone or actor.email,
             "role": actor.role,
             "organization_id": actor.organization_id,
         }
@@ -307,7 +307,7 @@ def _build_entry(status_code):
     actor = extra.get("actor") or (
         {
             "id": user.id,
-            "email": user.email,
+            "label": user.phone or user.email,
             "role": user.role,
             "organization_id": user.organization_id,
         }
@@ -324,7 +324,7 @@ def _build_entry(status_code):
         created_at=_now(),
         organization_id=actor.get("organization_id"),
         user_id=actor.get("id"),
-        user_email=actor.get("email"),
+        user_label=actor.get("label"),
         user_role=actor.get("role"),
         action=extra.get("action") or request.endpoint or "unknown",
         summary=extra.get("summary"),
@@ -427,7 +427,7 @@ def search(
             db.or_(
                 ActivityLog.path.ilike(like),
                 ActivityLog.summary.ilike(like),
-                ActivityLog.user_email.ilike(like),
+                ActivityLog.user_label.ilike(like),
                 ActivityLog.action.ilike(like),
                 ActivityLog.details.ilike(like),
             )
@@ -487,18 +487,18 @@ def top_users(limit=8, **filters):
     rows = (
         _base(**filters)
         .with_entities(
-            ActivityLog.user_email,
+            ActivityLog.user_label,
             func.count(ActivityLog.id).label("count"),
             func.max(ActivityLog.created_at),
         )
-        .group_by(ActivityLog.user_email)
+        .group_by(ActivityLog.user_label)
         .order_by(func.count(ActivityLog.id).desc())
         .limit(limit)
         .all()
     )
     return [
-        {"email": email or "אנונימי", "count": count, "last_at": last_at}
-        for email, count, last_at in rows
+        {"label": label or "אנונימי", "count": count, "last_at": last_at}
+        for label, count, last_at in rows
     ]
 
 

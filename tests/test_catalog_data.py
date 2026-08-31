@@ -23,7 +23,11 @@ def _load(app):
     """מייבא את קובץ הקטלוג פעם אחת לכל אפליקציה, ומחזיר את אותה תוצאה."""
     if app not in _IMPORTED:
         with app.app_context():
-            Part.query.delete()
+            # דרך ה-ORM ולא query.delete(): מחיקה בכמות אחת עוקפת את
+            # ה-cascade, ואז המקבילים וההתאמות נשארים מיותמים. SQLite
+            # לא אוכף מפתחות זרים ושתק; Postgres עוצר את המחיקה.
+            for part in Part.query.all():
+                db.session.delete(part)
             db.session.commit()
             with CSV.open(encoding="utf-8-sig") as fh:
                 _IMPORTED[app] = services.import_csv(fh)

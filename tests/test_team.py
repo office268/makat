@@ -1,10 +1,16 @@
-"""ניהול משתמשים בארגון והזמנות."""
-from datetime import datetime, timedelta, timezone
-
+"""ניהול המורשים של הארגון: מי יכול להיכנס, באיזה תפקיד."""
 import pytest
 
-from app.auth_models import Invitation, Organization, User
+from app.auth_models import Organization, User
 from app.models import db
+
+# לכל משתמש בבדיקות מספר משלו - הוא הזהות שאיתה נכנסים
+PHONES = {
+    "owner@home.test": "0503330001",
+    "mgr@home.test": "0503330002",
+    "mech@home.test": "0503330003",
+    "owner@other.test": "0503330004",
+}
 
 
 @pytest.fixture
@@ -22,15 +28,18 @@ def team(app):
             ("mech@home.test", "mechanic", home),
             ("owner@other.test", "owner", other),
         ]:
-            user = User(email=email, role=role, organization=organization)
-            user.set_password("password123")
-            db.session.add(user)
+            db.session.add(
+                User(phone=PHONES[email], email=email, role=role,
+                     organization=organization)
+            )
         db.session.commit()
         yield {"home": home.id, "other": other.id}
 
 
 def login(client, email):
-    return client.post("/login", data={"email": email, "password": "password123"})
+    """הזדהות כמישהו אחר. הבדיקות מזהות אותו בדוא"ל, המערכת במספר."""
+    client.post("/logout")
+    return client.post("/login", data={"phone": PHONES[email]})
 
 
 # ---------- גישה למסך ----------
@@ -39,74 +48,72 @@ def test_only_owner_reaches_team_screen(client, team):
     for email, expected in [("owner@home.test", 200),
                             ("mgr@home.test", 403),
                             ("mech@home.test", 403)]:
-        client.post("/logout")
         login(client, email)
         assert client.get("/team").status_code == expected, email
 
 
-def test_anonymous_is_redirected(client, team):
-    assert client.get("/team").status_code == 302
+def test_the_unidentified_are_redirected(visitor, team):
+    assert visitor.get("/team").status_code == 302
 
 
-# ---------- הזמנות ----------
+# ---------- הוספת מורשה ----------
 
-def test_owner_can_invite(client, app, team):
+def test_owner_can_add_a_phone(client, app, team):
     login(client, "owner@home.test")
-    client.post("/team/invite", data={"email": "new@home.test", "role": "manager"})
+    client.post("/team/add", data={"phone": "050-333-9001", "role": "manager",
+                                   "full_name": "עובד חדש"})
     with app.app_context():
-        invitation = Invitation.query.filter_by(email="new@home.test").first()
-        assert invitation is not None
-        assert invitation.role == "manager"
-        assert invitation.organization_id == team["home"]
-        assert len(invitation.token) > 30      # טוקן ארוך ואקראי
-
-
-def test_invite_rejects_existing_email(client, app, team):
-    login(client, "owner@home.test")
-    client.post("/team/invite", data={"email": "mgr@home.test", "role": "mechanic"})
-    with app.app_context():
-        assert Invitation.query.count() == 0
-
-
-def test_accepting_invitation_creates_user_in_that_org(client, app, team):
-    login(client, "owner@home.test")
-    client.post("/team/invite", data={"email": "joiner@home.test", "role": "mechanic"})
-    with app.app_context():
-        token = Invitation.query.first().token
-    client.post("/logout")
-
-    client.post(f"/invite/{token}",
-                data={"password": "longenough1", "password_confirm": "longenough1",
-                      "full_name": "עובד חדש"})
-    with app.app_context():
-        user = User.query.filter_by(email="joiner@home.test").first()
+        user = User.query.filter_by(phone="0503339001").first()
         assert user is not None
+        assert user.role == "manager"
+        assert user.full_name == "עובד חדש"
         assert user.organization_id == team["home"]
-        assert user.role == "mechanic"
-        assert Invitation.query.first().accepted_at is not None
 
 
-def test_invitation_cannot_be_reused(client, app, team):
+def test_an_added_phone_can_enter_immediately(client, app, team):
+    """אין הזמנה לשלוח ואין סיסמה לקבוע - המספר הוא כל מה שצריך."""
     login(client, "owner@home.test")
-    client.post("/team/invite", data={"email": "once@home.test", "role": "mechanic"})
-    with app.app_context():
-        token = Invitation.query.first().token
+    client.post("/team/add", data={"phone": "0503339002", "role": "mechanic"})
     client.post("/logout")
-    client.post(f"/invite/{token}",
-                data={"password": "longenough1", "password_confirm": "longenough1"})
-    client.post("/logout")
-    assert client.get(f"/invite/{token}").status_code == 404
+
+    client.post("/login", data={"phone": "0503339002"})
+    assert client.get("/parts").status_code == 200
 
 
-def test_expired_invitation_is_rejected(client, app, team):
+def test_add_rejects_a_malformed_number(client, app, team):
+    login(client, "owner@home.test")
+    before = None
     with app.app_context():
-        invitation = Invitation(
-            email="late@home.test", role="mechanic", token="expired-token-value",
-            organization_id=team["home"],
-            expires_at=datetime.now(timezone.utc) - timedelta(days=1))
-        db.session.add(invitation)
-        db.session.commit()
-    assert client.get("/invite/expired-token-value").status_code == 404
+        before = User.query.count()
+    client.post("/team/add", data={"phone": "12", "role": "mechanic"})
+    with app.app_context():
+        assert User.query.count() == before
+
+
+def test_add_rejects_a_number_already_registered(client, app, team):
+    login(client, "owner@home.test")
+    client.post("/team/add", data={"phone": PHONES["mgr@home.test"],
+                                   "role": "mechanic"})
+    with app.app_context():
+        assert User.query.filter_by(phone=PHONES["mgr@home.test"]).count() == 1
+        assert User.query.filter_by(phone=PHONES["mgr@home.test"]).first().role == "manager"
+
+
+def test_the_number_is_stored_normalized(client, app, team):
+    """אותו אדם לא ייחסם כי בפעם הבאה הוא יקליד בלי מקפים."""
+    login(client, "owner@home.test")
+    client.post("/team/add", data={"phone": "+972 50 333 9003", "role": "mechanic"})
+    with app.app_context():
+        assert User.query.filter_by(phone="0503339003").first() is not None
+
+
+def test_only_owner_can_add(client, app, team):
+    login(client, "mgr@home.test")
+    assert client.post(
+        "/team/add", data={"phone": "0503339004", "role": "mechanic"}
+    ).status_code == 403
+    with app.app_context():
+        assert User.query.filter_by(phone="0503339004").first() is None
 
 
 # ---------- גבולות בין ארגונים ----------
@@ -124,8 +131,8 @@ def test_owner_cannot_touch_another_orgs_user(client, app, team):
 def test_team_screen_lists_only_own_organization(client, team):
     login(client, "owner@home.test")
     html = client.get("/team").get_data(as_text=True)
-    assert "mgr@home.test" in html
-    assert "owner@other.test" not in html
+    assert "050-333-0002" in html                      # המנהל של אותו מוסך
+    assert "050-333-0004" not in html                  # הבעלים של המוסך הזר
 
 
 # ---------- שמירה על בעלים ----------
@@ -165,4 +172,4 @@ def test_disabled_user_cannot_log_in(client, app, team):
     client.post("/logout")
 
     login(client, "mech@home.test")
-    assert client.get("/team").status_code == 302     # לא מחובר
+    assert client.get("/team").status_code == 302     # לא הזדהה

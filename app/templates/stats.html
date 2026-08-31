@@ -5,6 +5,7 @@
 <p class="text-muted small">
   {% if totals.models %}
     {{ "{:,}".format(totals.vehicles) }} רכבים פעילים ·
+    {{ "{:,}".format(totals.prime) }} מהם בטווח הקנייה (4-12 שנים) ·
     {{ "{:,}".format(totals.models) }} דגמים ·
     נכון ל-{{ totals.taken_at | localtime("%d/%m/%Y") }} ·
     מקור: מרשם כלי הרכב של משרד התחבורה (data.gov.il)
@@ -31,11 +32,11 @@
 {% else %}
 
 <form class="card mb-3" method="get"><div class="card-body row g-2">
-  <div class="col-md-5">
+  <div class="col-md-4">
     <input class="form-control" name="q" value="{{ selected.q or '' }}"
            placeholder="דגם, יצרן או קוד דגם">
   </div>
-  <div class="col-md-4">
+  <div class="col-md-5">
     <select class="form-select" name="make">
       <option value="">כל היצרנים</option>
       {% for mk in makes %}
@@ -43,8 +44,18 @@
       {% endfor %}
     </select>
   </div>
-  <div class="col-md-3 d-grid d-md-flex gap-2">
-    <button class="btn btn-primary flex-fill">חפש</button>
+  <div class="col-md-3">
+    <select class="form-select" name="sort" onchange="this.form.submit()">
+      {% for key, label in sorts.items() %}
+      <option value="{{ key }}" {% if selected.sort == key %}selected{% endif %}>
+        מיון: {{ label }}</option>
+      {% endfor %}
+      <option value="gap" {% if selected.sort == 'gap' %}selected{% endif %}>
+        מיון: הפער הגדול ביותר</option>
+    </select>
+  </div>
+  <div class="col-md-12 d-grid d-md-flex gap-2">
+    <button class="btn btn-primary">חפש</button>
     <a class="btn btn-outline-secondary"
        href="{{ url_for('web.stats_csv', q=selected.q, make=selected.make) }}">CSV</a>
   </div>
@@ -52,7 +63,10 @@
 
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>{{ "{:,}".format(pagination.total) }} דגמים</span>
+    <span>
+      {%- if pagination %}{{ "{:,}".format(pagination.total) }} דגמים
+      {%- else %}{{ gap_limit }} הדגמים הגדולים בטווח הקנייה, לפי גודל הפער{% endif %}
+    </span>
     <span class="text-muted small">
       {{ "{:,}".format(filtered_vehicles) }} רכבים
       {%- if totals.vehicles %} · {{ "%.1f" | format(filtered_vehicles * 100.0 / totals.vehicles) }}% מהצי{% endif %}
@@ -64,7 +78,13 @@
       {# בטלפון תשע עמודות לא נכנסות, ואלה השתיים שפחות משנות בהחלטת מלאי #}
       <th class="d-none d-lg-table-cell">קוד דגם</th>
       <th class="d-none d-md-table-cell">שנות ייצור</th>
-      <th class="text-end">רכבים</th><th>נתח מהצי</th>
+      <th class="text-end">רכבים</th>
+      <th class="text-end" title="רכבים בני 4-12: מחוץ לאחריות ועדיין על הכביש">
+        בטווח הקנייה</th>
+      <th class="d-none d-lg-table-cell">נתח מהצי</th>
+      <th class="text-end"
+          title="רכבים בטווח הקנייה על כל מק"ט שיש לנו לדגם - ככל שגבוה יותר, הפער גדול יותר">
+        רכבים למק"ט</th>
       <th class="text-end" title="מק"טים בקטלוג שמתאימים לדגם הזה">חלפים במאגר</th>
       <th class="text-end"
           title="מתוכם חלפים מתכלים: רפידות, דיסקים, מסננים, רצועות, מצתים ומגבים">
@@ -73,7 +93,9 @@
     <tbody>
     {% for row in rows %}
     <tr>
-      <td class="text-center text-muted">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+      {# במצב "פער" אין עימוד: הרשימה היא דירוג אחד סגור #}
+      <td class="text-center text-muted">
+        {{ (pagination.page - 1) * pagination.per_page + loop.index if pagination else loop.index }}</td>
       <td>{{ row.make }}</td>
       <td class="fw-bold">
         {# הדגם הוא הכניסה לחיפוש החלפים - זה מה שעושים עם המספר הזה #}
@@ -82,7 +104,13 @@
       <td class="font-monospace small text-muted d-none d-lg-table-cell">{{ row.model_code or '—' }}</td>
       <td class="small d-none d-md-table-cell">{{ row.years or '—' }}</td>
       <td class="text-end fw-bold">{{ "{:,}".format(row.vehicles) }}</td>
-      <td style="min-width: 8rem">
+      <td class="text-end">
+        {% if row.prime %}
+        {{ "{:,}".format(row.prime) }}
+        <span class="small text-muted d-block">{{ "%.0f" | format(row.prime_share) }}%</span>
+        {% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="d-none d-lg-table-cell" style="min-width: 8rem">
         {% set share = row.share(totals.vehicles) %}
         <div class="progress" style="height: .5rem" role="img"
              aria-label="{{ "%.2f" | format(share) }}% מכלל הרכבים">
@@ -92,6 +120,18 @@
         <span class="small text-muted">{{ "%.2f" | format(share) }}%</span>
       </td>
       {% set counts = part_counts.get(row.id, (0, 0)) %}
+      {% set ratio = row.vehicles_per_part(counts[0]) %}
+      <td class="text-end">
+        {# בלי מק"טים אין מכנה, וזה לא "אפס" אלא הפער המרבי #}
+        {% if ratio is none %}
+          {% if row.prime %}<span class="badge bg-danger-subtle text-danger-emphasis"
+             title="אין לנו אף מק"ט לדגם הזה">אין כיסוי</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        {% else %}
+          <span class="{% if ratio >= 1000 %}fw-bold text-danger-emphasis{% endif %}">
+            {{ "{:,}".format(ratio | round | int) }}</span>
+        {% endif %}
+      </td>
       <td class="text-end">
         {% if counts[0] %}
         <a href="{{ url_for('web.vehicles', make=row.search_make, model=row.model) }}">
@@ -105,13 +145,13 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="9" class="text-center text-muted py-4">לא נמצאו דגמים מתאימים.</td></tr>
+    <tr><td colspan="11" class="text-center text-muted py-4">לא נמצאו דגמים מתאימים.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
 </div>
 
-{% if pagination.pages > 1 %}
+{% if pagination and pagination.pages > 1 %}
 <nav class="mt-3"><ul class="pagination justify-content-center">
   {% for page_num in pagination.iter_pages() %}
     {% if page_num %}

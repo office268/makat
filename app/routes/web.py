@@ -12,7 +12,7 @@ from flask import (
 )
 from sqlalchemy.orm import selectinload
 
-from .. import activity, fleet_stats, services
+from .. import activity, fleet_stats, part_columns, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 from ..taxonomy import all_types
@@ -25,6 +25,22 @@ def _known_makes():
     from ..vehicle_catalog import makes
 
     return makes() or services.vehicle_makes()
+
+
+def _column_filters():
+    """הסינון שהוקלד בשורת הכותרות, ממופה לפי שם הפרמטר.
+
+    נקרא מהרישום ולא מרשימה קבועה: עמודה חדשה מביאה איתה את הסינון
+    שלה, ואין מקום שני שצריך לזכור לעדכן.
+    """
+    values = {}
+    for column in part_columns.COLUMNS:
+        if not column.filterable:
+            continue
+        typed = request.args.get(column.param, "").strip()
+        if typed:
+            values[column.param] = typed
+    return values
 
 
 def _filters_from_request():
@@ -40,6 +56,7 @@ def _filters_from_request():
         "low_stock": request.args.get("low_stock") == "1",
         "active_only": request.args.get("show_inactive") != "1",
         "sort": request.args.get("sort", "part_number"),
+        "column_filters": _column_filters(),
         "organization_id": services.current_org_id(),
     }
 
@@ -88,7 +105,7 @@ def parts_list():
         filters[key]
         for key in ("q", "category_id", "manufacturer_id", "make", "model",
                     "year", "engine", "in_stock", "low_stock")
-    )
+    ) or bool(filters["column_filters"])
     activity.note(
         summary=(f'חיפוש "{filters["q"]}"' if filters["q"] else 'רשימת מק"טים')
         + f" · {pagination.total} תוצאות",
@@ -96,13 +113,19 @@ def parts_list():
         page=page,
         filtered=is_filtered,
     )
+    sorted_column, direction = part_columns.parse_sort(filters["sort"])
+    columns = services.column_layout()
     return render_template(
         "parts/list.html",
         pagination=pagination,
         parts=pagination.items,
+        counts=services.column_counts(pagination.items, columns),
         filters=filters,
         is_filtered=is_filtered,
         total_parts=Part.query.count(),
+        columns=columns,
+        sorted_key=sorted_column.key if sorted_column else None,
+        sort_direction=direction,
     )
 
 
@@ -274,40 +297,65 @@ def stats():
     """
     q = request.args.get("q", "").strip() or None
     make = request.args.get("make", "").strip() or None
+    sort = request.args.get("sort", "vehicles")
     page = request.args.get("page", 1, type=int)
     # הצילום החי נקבע פעם אחת ומועבר לכל השאילתות: אחרת ספירה שרצה
     # ברקע הייתה יכולה להתפרסם באמצע הבקשה, והמסך היה מציג טבלה מצילום
     # אחד וסכומים מצילום אחר
     taken_at = fleet_stats.live_taken_at()
-    pagination = fleet_stats.search(q=q, make=make, taken_at=taken_at).paginate(
-        page=page, per_page=current_app.config["PER_PAGE"], error_out=False
-    )
     totals = fleet_stats.summary(taken_at=taken_at)
-    # ספירת החלפים היא שאילתה לכל דגם, ולכן היא נעשית לשורות העמוד
-    # בלבד - ולא לכל עשרות אלפי הדגמים שבצילום. דגם שחוזר בכמה קודי
-    # דגם נספר פעם אחת.
-    memo, part_counts = {}, {}
-    for row in pagination.items:
-        key = (row.search_make, row.model)
-        if key not in memo:
-            memo[key] = services.vehicle_part_counts(*key)
-        part_counts[row.id] = memo[key]
+
+    if sort == "gap":
+        rows, pagination = _fleet_gaps(q, make, taken_at), None
+    else:
+        pagination = fleet_stats.search(
+            q=q, make=make, taken_at=taken_at, sort=sort
+        ).paginate(
+            page=page, per_page=current_app.config["PER_PAGE"], error_out=False
+        )
+        rows = pagination.items
+
+    part_counts = _part_counts_for_rows(rows)
     activity.note(
-        summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
-        results=pagination.total,
+        summary=(f'צי הרכב: {q or make or "הכל"} · {sort}'),
+        results=pagination.total if pagination else len(rows),
         page=page,
+        sort=sort,
     )
     return render_template(
         "stats.html",
         pagination=pagination,
-        rows=pagination.items,
+        rows=rows,
         totals=totals,
         part_counts=part_counts,
+        gap_limit=current_app.config["FLEET_GAP_MODELS"],
         # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
         filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make, taken_at=taken_at),
         makes=fleet_stats.makes(taken_at=taken_at),
-        selected={"q": q, "make": make},
+        sorts=fleet_stats.SORTS,
+        selected={"q": q, "make": make, "sort": sort},
     )
+
+
+def _part_counts_for_rows(rows):
+    """{מזהה שורה: (מק"טים, מתוכם מתכלים)}, בשאילתה אחת לכל הדגמים.
+
+    דגם שחוזר בכמה קודי דגם נספר פעם אחת - הקטלוג לא יודע להבחין
+    ביניהם, ושתי שורות שיציגו את אותו מספר אינן שתי בדיקות.
+    """
+    counts = services.part_counts_for(
+        [(row.search_make, row.model) for row in rows]
+    )
+    return {row.id: counts[(row.search_make, row.model)] for row in rows}
+
+
+def _fleet_gaps(q, make, taken_at):
+    """הדגמים עם הפער הגדול ביותר. אותו דירוג שמנוע הגילוי מכוון לפיו."""
+    ranked, _ = fleet_stats.gap_ranking(
+        q=q, make=make, taken_at=taken_at,
+        limit=current_app.config["FLEET_GAP_MODELS"],
+    )
+    return ranked
 
 
 @web_bp.route("/stats.csv")

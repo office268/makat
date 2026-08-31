@@ -241,7 +241,7 @@ def test_manager_without_superadmin_is_forbidden(auth_client):
 def test_start_without_a_key_says_so(app, client):
     """בלי מפתח, המסך אומר את זה במקום להיכשל בשקט."""
     app.config["SUPERADMIN_EMAILS"] = frozenset({"fixture@t.test"})
-    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+    client.post("/login", data={"phone": "0500000001"})
     html = client.get("/admin/discovery").get_data(as_text=True)
     assert "ANTHROPIC_API_KEY" in html
     # רשימות בחירה, לא טקסט חופשי, ואפשרות לסמן הכל
@@ -334,7 +334,7 @@ def test_an_empty_vehicle_catalog_plans_nothing(app):
 
 def _login_superadmin(app, client):
     app.config["SUPERADMIN_EMAILS"] = frozenset({"fixture@t.test"})
-    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+    client.post("/login", data={"phone": "0500000001"})
 
 
 def test_plan_endpoint_describes_what_will_run(app, client):
@@ -559,3 +559,62 @@ def test_verify_reports_a_failure_instead_of_a_500(app, client, monkeypatch):
     response = client.post("/admin/discovery/verify", data={"part_id": part_id})
     assert response.status_code == 502
     assert "מכסה" in response.get_json()["error"]
+
+
+# ---- לאן הגילוי מכוון ----
+
+
+def test_targets_follow_the_fleet_gap_ranking(app):
+    """הגילוי רץ על השוק הגדול שאינו מכוסה, לא על מי שיש לו הרבה קודי דגם."""
+    from app import fleet_stats
+    from app.models import Fitment, Part
+
+    with app.app_context():
+        fleet_stats.replace_snapshot([
+            # מכוסה היטב (הקטלוג של הבדיקות מחזיק מק"ט לקורולה) ולכן לא דחוף
+            {"make": "טויוטה יפן", "model": "COROLLA", "vehicles": 90000,
+             "prime": 60000},
+            # גדול ובלי כיסוי כלל - זה מה שצריך לעלות לראש
+            {"make": "יונדאי קוריאה", "model": "IONIQ HYBRID", "vehicles": 50000,
+             "prime": 50000},
+            # קטן, ולכן אינו הזדמנות גם בלי כיסוי
+            {"make": "רנו צרפת", "model": "TWINGO", "vehicles": 400, "prime": 300},
+        ])
+
+        pairs = pd.gap_pairs()
+        assert pairs[0] == ("יונדאי", "IONIQ HYBRID")
+        assert pairs.index(("יונדאי", "IONIQ HYBRID")) < pairs.index(
+            ("טויוטה", "COROLLA"))
+
+        targets, _ = pd.plan_targets()
+        assert targets[0][:2] == ["יונדאי", "IONIQ HYBRID"]
+
+
+def test_targets_use_the_catalog_spelling_of_the_maker(app):
+    """המרשם כותב "מזדה", הקטלוג "מאזדה" - התאמה חדשה לא תפתח כתיב שני."""
+    from app import fleet_stats
+    from app.models import Fitment, Part
+
+    with app.app_context():
+        part = Part(part_number="MZ-9", name_he="מסנן", part_type="oil_filter")
+        part.fitments = [Fitment(make="מאזדה", model="MAZDA 6")]
+        db.session.add(part)
+        fleet_stats.replace_snapshot([
+            {"make": "מזדה יפן", "model": "MAZDA 6", "vehicles": 40000,
+             "prime": 30000},
+        ])
+        assert pd.gap_pairs() == [("מאזדה", "MAZDA 6")]
+
+
+def test_without_a_fleet_snapshot_the_old_proxy_still_works(app):
+    """גילוי שמכוון פחות טוב עדיף על מסך שלא עושה כלום."""
+    from app.vehicle_catalog import VehicleModel
+
+    with app.app_context():
+        db.session.add(VehicleModel(make="טויוטה", model="COROLLA",
+                                    model_code="ZRE", year_from=2015))
+        db.session.commit()
+
+        assert pd.gap_pairs() == []           # אין צילום צי
+        targets, _ = pd.plan_targets()
+        assert targets and targets[0][:2] == ["טויוטה", "COROLLA"]

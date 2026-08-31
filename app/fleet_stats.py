@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from .models import db
+from .models import Fitment, db
 from .vehicles import RESOURCE_ID  # מקור אמת אחד למאגר הרכבים הפעילים
 
 CKAN_SQL_URL = "https://data.gov.il/api/3/action/datastore_search_sql"
@@ -45,9 +45,22 @@ SCAN_FIELDS = (FIELD_MAKE, FIELD_MODEL, FIELD_CODE, FIELD_YEAR)
 
 UNKNOWN = "לא ידוע"
 
+# חלון האפטרמרקט: רכב חדש עדיין באחריות ובטיפולי סוכנות, ורכב ישן מאוד
+# כבר בקושי מטופל. מה שביניהם הוא הקהל שקונה חלפים - ולכן הצילום שומר
+# את שלוש הקבוצות בנפרד ולא רק את הסכום.
+PRIME_FROM_AGE = 4
+PRIME_TO_AGE = 12
+
+# הדליים מושווים כטקסט ולא כמספר: שנת ייצור היא ארבע ספרות, ההשוואה
+# הלקסיקוגרפית נכונה עליהן, והמרה מפורשת ל-int הייתה מפילה את כל
+# השאילתה על שורה בודדת עם ערך פגום.
 COUNT_SQL = (
     'SELECT "{make}" AS make, "{model}" AS model, "{code}" AS model_code, '
     "count(*) AS vehicles, "
+    "sum(case when \"{year}\"::text > '{young_after}' then 1 else 0 end) AS young, "
+    "sum(case when \"{year}\"::text <= '{young_after}' "
+    "and \"{year}\"::text >= '{prime_from}' then 1 else 0 end) AS prime, "
+    "sum(case when \"{year}\"::text < '{prime_from}' then 1 else 0 end) AS old, "
     'min("{year}"::text) AS year_from, max("{year}"::text) AS year_to '
     'FROM "{resource}" '
     "GROUP BY 1, 2, 3 HAVING count(*) >= {min_count} "
@@ -74,6 +87,11 @@ class FleetModelCount(db.Model):
     model = db.Column(db.String(120), nullable=False, index=True)
     model_code = db.Column(db.String(60), index=True)
     vehicles = db.Column(db.Integer, nullable=False, index=True)
+    # פילוח הגיל: עד 3 שנים, 4-12 (חלון האפטרמרקט), ומעליו. שלושתם יחד
+    # יכולים להיות פחות מ-vehicles - רשומה בלי שנת ייצור אינה בשום דלי.
+    young = db.Column(db.Integer, default=0, nullable=False)
+    prime = db.Column(db.Integer, default=0, nullable=False, index=True)
+    old = db.Column(db.Integer, default=0, nullable=False)
     year_from = db.Column(db.Integer)
     year_to = db.Column(db.Integer)
     taken_at = db.Column(db.DateTime, default=_now, nullable=False)
@@ -100,12 +118,32 @@ class FleetModelCount(db.Model):
             return 0.0
         return self.vehicles * 100.0 / total
 
+    @property
+    def prime_share(self):
+        """איזה חלק מהדגם נמצא בחלון האפטרמרקט."""
+        if not self.vehicles:
+            return 0.0
+        return (self.prime or 0) * 100.0 / self.vehicles
+
+    def vehicles_per_part(self, parts):
+        """כמה רכבים בטווח הקנייה על כל מק"ט שיש לנו לדגם.
+
+        בלי מק"טים בכלל אין מכנה, והתשובה אינה "אפס" אלא "הכל" - הפער
+        הגדול ביותר שיכול להיות. מוחזר None, והמסך מציג זאת במפורש.
+        """
+        if not parts:
+            return None
+        return (self.prime or 0) / parts
+
     def to_dict(self):
         return {
             "make": self.make,
             "model": self.model,
             "model_code": self.model_code,
             "vehicles": self.vehicles,
+            "young": self.young,
+            "prime": self.prime,
+            "old": self.old,
             "year_from": self.year_from,
             "year_to": self.year_to,
             "years": self.years,
@@ -269,11 +307,14 @@ def sql_page(offset, limit=SQL_PAGE_SIZE, min_count=1, resource_id=None, timeout
     min_count ו-limit מומרים ל-int לפני ההשחלה לשאילתה: הם מגיעים משורת
     הפקודה, והם היחידים בשאילתה שאינם קבועים בקוד.
     """
+    this_year = _now().year
     sql = COUNT_SQL.format(
         make=FIELD_MAKE,
         model=FIELD_MODEL,
         code=FIELD_CODE,
         year=FIELD_YEAR,
+        young_after=this_year - PRIME_FROM_AGE,   # שנת ייצור גדולה מזו = חדש
+        prime_from=this_year - PRIME_TO_AGE,      # וקטנה מזו = ישן
         resource=resource_id or RESOURCE_ID,
         min_count=int(min_count),
         limit=int(limit),
@@ -314,7 +355,8 @@ def scan_page(offset, page_size=SCAN_PAGE_SIZE, resource_id=None, timeout=TIMEOU
 # ---- צבירה ----
 
 
-def _row(make, model, model_code, vehicles, year_from=None, year_to=None):
+def _row(make, model, model_code, vehicles, year_from=None, year_to=None,
+         young=0, prime=0, old=0):
     return {
         "make": make or UNKNOWN,
         "model": model or model_code or UNKNOWN,
@@ -322,7 +364,22 @@ def _row(make, model, model_code, vehicles, year_from=None, year_to=None):
         "vehicles": vehicles,
         "year_from": year_from,
         "year_to": year_to,
+        "young": young,
+        "prime": prime,
+        "old": old,
     }
+
+
+def age_bucket(year, this_year=None):
+    """לאיזו קבוצת גיל שייך רכב משנת הייצור הזאת. None = שנה לא ידועה."""
+    if not year:
+        return None
+    age = (this_year or _now().year) - year
+    if age < PRIME_FROM_AGE:
+        return "young"
+    if age <= PRIME_TO_AGE:
+        return "prime"
+    return "old"
 
 
 def _from_sql(record):
@@ -334,6 +391,9 @@ def _from_sql(record):
         _int(record.get("vehicles")) or 0,
         _int(record.get("year_from")),
         _int(record.get("year_to")),
+        young=_int(record.get("young")) or 0,
+        prime=_int(record.get("prime")) or 0,
+        old=_int(record.get("old")) or 0,
     )
 
 
@@ -373,6 +433,9 @@ def aggregate_records(records, counts=None):
     להחזיק שלושה מיליון שורות בזיכרון.
     """
     counts = {} if counts is None else counts
+    # שנה אחת לכל המנה: היא לא משתנה באמצע, וחישוב שלה לכל שורה
+    # משלושה מיליון הוא בזבוז
+    this_year = _now().year
     for record in records:
         make = _clean(record.get(FIELD_MAKE))
         model = _clean(record.get(FIELD_MODEL))
@@ -386,6 +449,9 @@ def aggregate_records(records, counts=None):
         entry["vehicles"] += 1
 
         year = _int(record.get(FIELD_YEAR))
+        bucket = age_bucket(year, this_year)
+        if bucket:
+            entry[bucket] += 1
         if year:
             if entry["year_from"] is None or year < entry["year_from"]:
                 entry["year_from"] = year
@@ -402,7 +468,8 @@ def pack_counts(counts):
     """
     payload = json.dumps(
         [
-            [key[0], key[1], key[2], row["vehicles"], row["year_from"], row["year_to"]]
+            [key[0], key[1], key[2], row["vehicles"], row["year_from"], row["year_to"],
+             row["young"], row["prime"], row["old"]]
             for key, row in counts.items()
         ],
         ensure_ascii=False,
@@ -416,8 +483,10 @@ def unpack_counts(blob):
         return {}
     payload = zlib.decompress(base64.b64decode(blob)).decode("utf-8")
     return {
-        (make, model, code): _row(make, model, code, vehicles, year_from, year_to)
-        for make, model, code, vehicles, year_from, year_to in json.loads(payload)
+        (make, model, code): _row(make, model, code, vehicles, year_from, year_to,
+                                  young, prime, old)
+        for make, model, code, vehicles, year_from, year_to, young, prime, old
+        in json.loads(payload)
     }
 
 
@@ -450,7 +519,8 @@ def scan_counts(page_size=SCAN_PAGE_SIZE, fetch=None, max_records=None, min_coun
 
 # ---- צילום המצב במסד ----
 
-_SNAPSHOT_FIELDS = ("make", "model", "model_code", "vehicles", "year_from", "year_to")
+_SNAPSHOT_FIELDS = ("make", "model", "model_code", "vehicles", "year_from",
+                    "year_to", "young", "prime", "old")
 
 
 def add_rows(rows, taken_at):
@@ -474,6 +544,7 @@ def publish(taken_at):
         synchronize_session=False
     )
     db.session.commit()
+    forget_fleet_index()
 
 
 def discard(taken_at):
@@ -490,6 +561,7 @@ def replace_snapshot(rows, taken_at=None):
     FleetModelCount.query.delete()
     models, _ = add_rows(rows, taken_at)
     db.session.commit()
+    forget_fleet_index()
     return models
 
 
@@ -543,17 +615,99 @@ def summary(taken_at=None):
         db.session.query(
             db.func.sum(FleetModelCount.vehicles),
             db.func.count(FleetModelCount.id),
+            db.func.sum(FleetModelCount.prime),
         ),
         taken_at=taken_at,
     ).one()
-    return {"vehicles": row[0] or 0, "models": row[1] or 0, "taken_at": taken_at}
+    return {
+        "vehicles": row[0] or 0,
+        "models": row[1] or 0,
+        "prime": row[2] or 0,
+        "taken_at": taken_at,
+    }
 
 
-def search(q=None, make=None, taken_at=None):
-    """שאילתת הטבלה, מהדגם הנפוץ לנדיר."""
+SORTS = {
+    "vehicles": "רכבים על הכביש",
+    "prime": "רכבים בטווח הקנייה",
+}
+
+
+def search(q=None, make=None, taken_at=None, sort="vehicles"):
+    """שאילתת הטבלה, מהדגם הגדול לקטן לפי המיון המבוקש."""
+    column = FleetModelCount.prime if sort == "prime" else FleetModelCount.vehicles
     return _filtered(FleetModelCount.query, q, make, taken_at).order_by(
-        FleetModelCount.vehicles.desc(), FleetModelCount.make, FleetModelCount.model
+        column.desc(), FleetModelCount.make, FleetModelCount.model
     )
+
+
+def gap_ranking(q=None, make=None, taken_at=None, limit=None):
+    """הדגמים שבהם הפער בין רכבים בטווח הקנייה למק"טים שלנו הוא הגדול ביותר.
+
+    זה החישוב שמאחורי מיון "הפער הגדול ביותר" במסך, והוא משותף גם
+    למנוע הגילוי: אין טעם ששני מקומות ידרגו הזדמנויות בשתי שיטות.
+
+    הדירוג נעשה על הדגמים הגדולים בלבד - פער אצל דגם עם שלושים רכבים
+    אינו הזדמנות - והמכנה הוא מק"טים+1, כך שדגם בלי מק"טים כלל עולה
+    לראש לפי גודלו במקום להתחלק באפס.
+    """
+    from . import services
+
+    rows = grouped_by_model(q=q, make=make, taken_at=taken_at, limit=limit)
+    counts = services.part_counts_for([(row.search_make, row.model) for row in rows])
+    ranked = sorted(
+        rows,
+        key=lambda row: (row.prime or 0)
+        / (counts[(row.search_make, row.model)][0] + 1),
+        reverse=True,
+    )
+    return ranked, counts
+
+
+def grouped_by_model(q=None, make=None, taken_at=None, limit=None):
+    """שורות הצילום מקובצות לדגם אחד, בלי הפיצול לקודי דגם ולכתיבי יצרן.
+
+    לאותו דגם יש כמה קודי דגם, ולפעמים גם כמה כתיבי יצרן ("מזדה יפן"
+    ו-"מזדה תאילנד"). לקטלוג החלפים אין הבחנה ביניהם, ולכן בדירוג
+    הפערים הם הופיעו כשורות נפרדות עם אותו מספר בדיוק - רעש, לא מידע.
+
+    מוחזרות שורות זמניות (לא נשמרות), כדי שהמסך יוכל להשתמש באותן
+    תכונות בדיוק כמו בשורה רגילה מהצילום.
+    """
+    totals = _filtered(
+        db.session.query(
+            FleetModelCount.make,
+            FleetModelCount.model,
+            db.func.sum(FleetModelCount.vehicles),
+            db.func.sum(FleetModelCount.prime),
+            db.func.min(FleetModelCount.year_from),
+            db.func.max(FleetModelCount.year_to),
+        ),
+        q,
+        make,
+        taken_at,
+    ).group_by(FleetModelCount.make, FleetModelCount.model).order_by(
+        db.desc(db.func.sum(FleetModelCount.prime))
+    )
+    if limit:
+        totals = totals.limit(limit)
+
+    merged = {}
+    for maker, model, vehicles, prime, year_from, year_to in totals.all():
+        key = ((maker or "").split()[0] if maker else maker, model)
+        row = merged.get(key)
+        if row is None:
+            row = merged[key] = FleetModelCount(
+                make=key[0], model=model, vehicles=0, prime=0, young=0, old=0
+            )
+            row.id = len(merged)  # מפתח לשורה במסך; אינו נשמר לעולם
+        row.vehicles += vehicles or 0
+        row.prime += prime or 0
+        if year_from and (row.year_from is None or year_from < row.year_from):
+            row.year_from = year_from
+        if year_to and (row.year_to is None or year_to > row.year_to):
+            row.year_to = year_to
+    return list(merged.values())
 
 
 def total_vehicles(q=None, make=None, taken_at=None):
@@ -569,8 +723,10 @@ def total_vehicles(q=None, make=None, taken_at=None):
 
 # ---- ייצוא ----
 
-CSV_COLUMNS = ("make", "model", "model_code", "vehicles", "year_from", "year_to")
-CSV_HEADER = ("יצרן", "דגם", "קוד דגם", "רכבים פעילים", "משנת", "עד שנת")
+CSV_COLUMNS = ("make", "model", "model_code", "vehicles", "young", "prime", "old",
+               "year_from", "year_to")
+CSV_HEADER = ("יצרן", "דגם", "קוד דגם", "רכבים פעילים", "עד 3 שנים",
+              "בטווח הקנייה 4-12", "מעל 12", "משנת", "עד שנת")
 
 
 def to_csv(rows):
@@ -603,3 +759,105 @@ def makes(taken_at=None):
         .all()
     )
     return [row[0] for row in rows]
+
+
+# ---------- חשיבות החלק: הצי שמאחורי כל התאמה בקטלוג ----------
+
+# הצי המנורמל, לפי חותמת הצילום. הנרמול של עשרות אלפי שורות הוא
+# עשיריות שנייה, והצילום מתחלף אולי פעם בחודש - אין סיבה לשלם על זה
+# בכל טעינת מסך. החותמת היא זהות הצילום במערכת (ראה live_taken_at),
+# ולכן צילום חדש פוסל את הזיכרון מאליו.
+_FLEET_INDEX = {}
+
+
+def _normalized_fleet(taken_at):
+    """{יצרן מנורמל: [(דגם מכווץ, רכבים, בטווח הקנייה)]} לצילום נתון."""
+    cached = _FLEET_INDEX.get(taken_at)
+    if cached is not None:
+        return cached
+
+    from .services import _squash_text, normalize_make
+
+    rows = db.session.query(
+        FleetModelCount.make,
+        FleetModelCount.model,
+        FleetModelCount.vehicles,
+        FleetModelCount.prime,
+    )
+    if taken_at is not None:
+        rows = rows.filter(FleetModelCount.taken_at == taken_at)
+
+    index = {}
+    for make, model, vehicles, prime in rows:
+        # במרשם היצרן הוא "טויוטה יפן"; בקטלוג הוא "טויוטה"
+        head = make.split()[0] if make else ""
+        index.setdefault(normalize_make(head), []).append(
+            (_squash_text(model), vehicles or 0, prime or 0)
+        )
+
+    _FLEET_INDEX.clear()          # צילום אחד בזיכרון, לא היסטוריה
+    _FLEET_INDEX[taken_at] = index
+    return index
+
+
+def forget_fleet_index():
+    """שוכח את הצי המנורמל. נקרא כשנכתב צילום חדש."""
+    _FLEET_INDEX.clear()
+
+
+def catalog_fleet_numbers():
+    """{(יצרן בקטלוג, דגם בקטלוג): {"vehicles", "prime", "gap"}}.
+
+    לכל צמד רכב שמופיע בהתאמות של הקטלוג - כמה רכבים כאלה על הכביש,
+    וכמה מהם בטווח הקנייה. ההצלבה היא בדיוק זו של מסך /stats: היצרן
+    מנורמל (מזדה = מאזדה) והדגם מוכל בשני הכיוונים, אחרת המספר בעמודה
+    היה סותר את המספר שבמסך הצי.
+
+    הקטלוג מחזיק כמה עשרות צמדי רכב בלבד, ולכן ההצלבה עצמה היא
+    אלפיות. מה שיקר - נרמול הצי - נשמר בזיכרון לפי הצילום.
+    """
+    from .services import (
+        MIN_MODEL_PREFIX,
+        _squash_text,
+        normalize_make,
+        part_counts_for,
+    )
+
+    taken_at = live_taken_at()
+    if taken_at is None:
+        return {}
+
+    fleet = _normalized_fleet(taken_at)
+    pairs = (
+        db.session.query(Fitment.make, Fitment.model)
+        .filter(Fitment.make.isnot(None), Fitment.model.isnot(None))
+        .distinct()
+        .all()
+    )
+
+    numbers = {}
+    for make, model in pairs:
+        catalog = _squash_text(model)
+        vehicles = prime = 0
+        if catalog:
+            for registry, count, in_prime in fleet.get(normalize_make(make), ()):
+                # אותו כלל כמו services.model_matches_name, אחרי שכל צד
+                # כווץ פעם אחת: השוואה בתוך לולאה על עשרות אלפי שורות
+                # שילמה על הכיווץ שוב ושוב
+                if registry and (
+                    registry in catalog
+                    or (len(catalog) >= MIN_MODEL_PREFIX and registry.startswith(catalog))
+                ):
+                    vehicles += count
+                    prime += in_prime
+        numbers[(make, model)] = {"vehicles": vehicles, "prime": prime}
+
+    # הפער מחושב כאן, לכל צמד רכב בנפרד - ולא כחלוקה של שני מספרים
+    # מצטברים. לחלק שמתאים לשני רכבים, "הגדול מבין הפערים" אינו
+    # "הרכבים הגדולים חלקי המק"טים הרבים", והתא והמיון היו נותנים שתי
+    # תשובות שונות.
+    per_vehicle = part_counts_for(list(numbers))
+    for pair, row in numbers.items():
+        catalog_parts = per_vehicle.get(pair, (0, 0))[0]
+        row["gap"] = row["prime"] / catalog_parts if catalog_parts else 0.0
+    return numbers

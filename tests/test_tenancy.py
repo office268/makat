@@ -10,6 +10,10 @@ from app.auth_models import Organization, User
 from app.models import OrgPart, Part, Supplier, db
 
 
+# מספר לכל ארגון - הזהות שאיתה נכנס המנהל שלו
+PHONES = {"alpha": "0504440001", "beta": "0504440002"}
+
+
 @pytest.fixture
 def two_orgs(app):
     """שני ארגונים שמתמחרים את אותו מק"ט מהקטלוג המשותף."""
@@ -24,8 +28,8 @@ def two_orgs(app):
             organization = Organization(name=slug, slug=slug)
             db.session.add(organization)
             db.session.flush()
-            user = User(email=f"u@{slug}.test", role="manager", organization=organization)
-            user.set_password("password123")
+            user = User(phone=PHONES[slug], email=f"u@{slug}.test",
+                        role="manager", organization=organization)
             db.session.add_all([
                 user,
                 OrgPart(organization=organization, part=part, price=price,
@@ -39,7 +43,9 @@ def two_orgs(app):
 
 
 def login(client, slug):
-    return client.post("/login", data={"email": f"u@{slug}.test", "password": "password123"})
+    """הזדהות כמנהל של אותו ארגון. יוצאים תחילה - הלקוח כבר מזוהה."""
+    client.post("/logout")
+    return client.post("/login", data={"phone": PHONES[slug]})
 
 
 # ---------- הקטלוג משותף ----------
@@ -47,7 +53,6 @@ def login(client, slug):
 def test_catalog_identity_is_shared(client, two_orgs):
     """שני הארגונים רואים את אותו מק"ט מהקטלוג."""
     for slug in ("alpha", "beta"):
-        client.post("/logout")
         login(client, slug)
         assert "TEST-001" in client.get("/parts").get_data(as_text=True)
 
@@ -75,12 +80,9 @@ def test_api_does_not_leak_other_org_pricing(client, two_orgs):
     assert item["stock_qty"] == 9
 
 
-def test_anonymous_sees_catalog_without_prices(client, two_orgs):
-    payload = client.get("/api/parts").get_json()
-    item = next(i for i in payload["items"] if i["part_number"] == "TEST-001")
-    assert item["part_number"] == "TEST-001"     # הקטלוג גלוי
-    assert "price" not in item                   # המחיר לא
-    assert "stock_qty" not in item
+def test_the_unidentified_see_nothing_at_all(visitor, two_orgs):
+    """הקטלוג היה פתוח למבקר בלי מחירים; היום הוא סגור לגמרי."""
+    assert visitor.get("/api/parts").status_code == 401
 
 
 def test_export_csv_only_carries_own_pricing(client, two_orgs):
@@ -90,10 +92,10 @@ def test_export_csv_only_carries_own_pricing(client, two_orgs):
     assert "300" not in text
 
 
-def test_anonymous_export_has_no_prices(client, two_orgs):
-    text = client.get("/export.csv").get_data(as_text=True)
-    assert "TEST-001" in text
-    assert "300" not in text and "450" not in text
+def test_the_unidentified_cannot_export(visitor, two_orgs):
+    response = visitor.get("/export.csv")
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
 
 
 # ---------- ספקים פרטיים ----------

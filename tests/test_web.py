@@ -1,16 +1,17 @@
 """מסלולי HTTP ו-API."""
 
 
-def test_public_pages_render(client):
+def test_the_screens_render(client):
     for route in ["/", "/dashboard", "/parts", "/vehicles", "/categories",
-                  "/manufacturers", "/suppliers", "/login", "/signup"]:
+                  "/manufacturers", "/suppliers", "/import", "/parts/new"]:
         assert client.get(route).status_code == 200, route
 
 
-def test_editing_pages_require_login(client):
-    """מסכי העריכה מפנים לדף התחברות במקום להיפתח."""
-    for route in ["/import", "/parts/new"]:
-        response = client.get(route)
+def test_every_screen_requires_identification(visitor):
+    """בלי הזדהות אין מסך - כולם מפנים לשדה הטלפון."""
+    for route in ["/dashboard", "/parts", "/vehicles", "/categories",
+                  "/manufacturers", "/suppliers", "/import", "/parts/new"]:
+        response = visitor.get(route)
         assert response.status_code == 302, route
         assert "/login" in response.headers["Location"], route
 
@@ -125,7 +126,8 @@ def test_catalog_browsable_without_searching(client):
 def test_catalog_shows_the_original_part_number(client):
     """המק"ט המקורי הוא מה שהלקוח מביא מהמוסך, ולכן הוא בטבלה עצמה."""
     html = client.get("/parts").get_data(as_text=True)
-    assert 'מק"ט מקורי' in html
+    # הכותרת מגיעה מרישום העמודות, וג\'רשיים בטקסט נכתבים כישות HTML
+    assert "ט מקורי" in html
     assert "04465-02220" in html          # ה-OEM של המק"ט מה-fixture
 
 
@@ -281,12 +283,12 @@ def test_home_stays_usable_with_an_empty_catalog(app, client):
     assert 'name="plate"' in html
 
 
-# שתי בדיקות ולא אחת: conftest מחזיק app context אחד לכל הבדיקה,
-# ו-Flask-Login מחזיק את המשתמש ב-g - כך שהתחברות באותה בדיקה דולפת
-# גם ללקוח חדש. בדיקה שלא מתחברת בכלל היא היחידה שבאמת אנונימית.
-def test_api_link_is_hidden_from_anonymous_visitors(client):
-    """הממשק קיים לשילוב במערכות של המוסך, לא כהצעה למבקר מזדמן."""
-    html = client.get("/").get_data(as_text=True)
+def test_api_link_is_hidden_before_identification(visitor):
+    """הממשק קיים לשילוב במערכות של המוסך, לא כהצעה למי שעומד בדלת.
+
+    מסך ההזדהות הוא המסך היחיד שרואה מי שלא נכנס, ולכן שם נבדק.
+    """
+    html = visitor.get("/login").get_data(as_text=True)
     assert ">API</a>" not in html
     assert 'קטלוג מק"טים לחלקי רכב' in html      # שאר הכותרת התחתונה נשארה
 
@@ -442,3 +444,94 @@ def test_the_identify_button_carries_an_inline_icon(client):
     assert 'fill="currentColor"' in button       # יורש את צבע הכפתור
     assert 'aria-hidden="true"' in button        # הטקסט הוא השם הנגיש
     assert "זהה רכב" in button
+
+
+# ---------- הגדרות התצוגה ----------
+
+def test_settings_sit_in_the_menu(client):
+    """הסעיף נמצא בתוך התפריט שההמבורגר פותח, ולא במקום אחר."""
+    html = client.get("/parts").get_data(as_text=True)
+    menu = html.split('id="nav"')[1].split("</nav>")[0]
+    assert "הגדרות" in menu
+    assert "display-settings" in menu
+
+
+def test_settings_offer_zoom_and_font_in_both_directions(client):
+    html = client.get("/parts").get_data(as_text=True)
+    for control in ["zoom:1", "zoom:-1", "font:1", "font:-1"]:
+        assert f'data-display-step="{control}"' in html, control
+    # קריאה נוכחית לכל אחד מהם, ואיפוס לשניהם יחד
+    assert 'data-display-value="zoom"' in html
+    assert 'data-display-value="font"' in html
+    assert "data-display-reset" in html
+
+
+def test_the_stepper_buttons_are_labelled_for_a_screen_reader(client):
+    """+ ו-- לבדם לא אומרים כלום למי שמקשיב לדף."""
+    html = client.get("/parts").get_data(as_text=True)
+    for label in ["הגדלת הזום", "הקטנת הזום", "הגדלת הטקסט", "הקטנת הטקסט"]:
+        assert f'aria-label="{label}"' in html, label
+
+
+def test_the_menu_stays_open_while_stepping(client):
+    """לחיצה על + לא סוגרת את התפריט - אחרת כל צעד דורש פתיחה מחדש."""
+    html = client.get("/parts").get_data(as_text=True)
+    assert 'data-bs-auto-close="outside"' in html
+
+
+def test_display_settings_load_before_the_page_is_drawn(client):
+    """הקובץ ב-head ולא בסוף הדף, אחרת הדף נפתח ברגיל וקופץ לגודלו."""
+    html = client.get("/parts").get_data(as_text=True)
+    head = html.split("</head>")[0]
+    assert "js/display.js" in head
+
+
+def test_the_display_script_is_served(client):
+    response = client.get("/static/js/display.js")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "--app-zoom" in body
+    assert "--app-font-scale" in body
+
+
+def test_the_steps_are_five_percent_and_the_zoom_reaches_a_half(client):
+    """צעד גס מדי מדלג על הגודל הנוח; זום שנעצר גבוה לא מכניס טבלה למסך."""
+    body = client.get("/static/js/display.js").get_data(as_text=True)
+    assert "step: 0.05" in body
+    assert body.count("step: 0.05") == 2          # גם לזום וגם לטקסט
+    zoom_line = [line for line in body.splitlines() if "zoom: { min" in line][0]
+    assert "min: 0.5" in zoom_line
+
+
+def test_bigger_text_gets_tighter_padding(client):
+    """ריפוד נמדד ב-rem וגדל עם הגופן. כאן הוא הולך בכיוון ההפוך,
+    אחרת ההגדלה הייתה מוסיפה בעיקר רווח לבן."""
+    css = client.get("/static/css/style.css").get_data(as_text=True)
+    assert "--app-pad-scale" in css
+    # התאים עצמם, והקונטיינר שעוטף את התוכן
+    assert ".table > :not(caption) > * > *" in css
+    assert css.count("var(--app-pad-scale)") >= 6
+    assert ".app-main" in css
+
+
+def test_the_main_container_can_tighten(client):
+    """py-4 של Bootstrap מסומן !important ולא היה מתכווץ."""
+    html = client.get("/parts").get_data(as_text=True)
+    main = html.split("<main")[1].split(">")[0]
+    assert "app-main" in main
+    assert "py-4" not in main
+
+
+def test_the_size_is_a_device_setting_not_an_account_one(client):
+    """נשמר במכשיר: אותו אדם על מסך גדול ועל טלפון רוצה גדלים שונים."""
+    body = client.get("/static/js/display.js").get_data(as_text=True)
+    assert "localStorage" in body
+    # ואי אפשר להיתקע: כשל אחסון לא מפיל את המסך
+    assert "catch" in body
+
+
+def test_the_settings_reach_the_screen_before_identification(visitor):
+    """מי שמתקשה לקרוא צריך להגדיל *לפני* שהוא מקליד את מספרו."""
+    html = visitor.get("/login").get_data(as_text=True)
+    assert "js/display.js" in html
+    assert 'data-display-step="font:1"' in html

@@ -15,3 +15,6 @@ instance/
 .idea/
 .vscode/
 uploads/
+
+# ארטיפקטים של Scrapy (מטמון, קבצי ביניים)
+.scrapy/

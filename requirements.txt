@@ -14,6 +14,10 @@ psycopg[binary]==3.2.3
 # זיהוי חלק מתמונה (אופציונלי - עובד גם בלעדיו)
 anthropic>=0.40
 
+# גריד חלפים מ-Autodoc (scraper/, מסך /admin/autodoc). רץ כתת-תהליך
+# ולא בתוך ה-worker: Twisted לא סוגר ופותח reactor פעמיים באותו תהליך.
+Scrapy==2.18.0
+
 # יצירת אייקוני PWA (scripts/make_icons.py)
 Pillow==12.3.0
 
