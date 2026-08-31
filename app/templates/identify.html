@@ -189,7 +189,14 @@
       <tbody>
         {% for part in matches %}
         <tr>
-          <td><span class="font-monospace fw-bold sku">{{ part.part_number }}</span></td>
+          <td>
+            <span class="font-monospace fw-bold sku">{{ part.part_number }}</span>
+            {% if engine_matched and part.id in engine_matched %}
+            <span class="badge bg-success-subtle text-success-emphasis"
+                  title="ההתאמה בקטלוג מצהירה במפורש על המנוע של הרכב הזה">
+              מנוע תואם</span>
+            {% endif %}
+          </td>
           <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
           <td class="font-monospace small text-muted">
             {% for ref in part.cross_refs %}<span class="sku">{{ ref.ref_number }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
