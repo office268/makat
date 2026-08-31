@@ -320,6 +320,43 @@ def test_the_counts_are_fetched_in_one_query_for_the_whole_page(app, client, veh
         assert len(services.column_counts(parts, part_columns.COLUMNS)) == len(parts)
 
 
+# ---------- מה ש-SQLite סלח עליו ו-Postgres לא ----------
+
+def test_the_grouped_expression_is_written_the_same_in_select_and_group_by():
+    """Postgres משווה SELECT מול GROUP BY לפי טקסט הביטוי.
+
+    כשהרווח והמקף נשלחים כפרמטרים, אותו ביטוי מקבל מספרים שונים בשני
+    המקומות ($1 מול $9), ו-Postgres טוען שהעמודה אינה מקובצת ומסרב.
+    SQLite לא אמר כלום, והמסך נפל רק בפרודקשן. הבדיקה הזאת קוראת את
+    ה-SQL שנוצר ומוודאת ששני המקומות כתובים אותו דבר.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(
+        part_columns._PARTS_PER_VEHICLE.original.compile(dialect=postgresql.dialect())
+    )
+    selected, _, grouped = sql.partition("GROUP BY")
+    squashed = "replace(replace(lower(fitments.make), ' ', ''), '-', '')"
+    assert squashed in selected
+    assert squashed in grouped
+    assert "%(replace_" not in sql          # אין פרמטרים בביטוי הכיווץ
+
+
+@pytest.mark.parametrize("expression", ["CATALOG_PARTS", "SUBSTITUTES"])
+def test_a_count_of_nothing_is_zero_and_not_null(expression):
+    """NULL ממוין ראשון ב-SQLite ואחרון ב-Postgres, והתא מציג 0.
+
+    בלי coalesce אותה לחיצה הייתה נותנת שתי תשובות שונות לפי בסיס
+    הנתונים, ושתיהן סותרות את מה שכתוב במסך.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(
+        getattr(part_columns, expression).compile(dialect=postgresql.dialect())
+    )
+    assert sql.lstrip().lower().startswith("coalesce")
+
+
 # ---------- הכותרת: שני אייקונים, בלי שורה נוספת ----------
 
 def test_the_header_is_a_single_row(client, catalog):
