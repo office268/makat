@@ -248,6 +248,9 @@ def _now():
 DEFAULT_MAKES = int(os.environ.get("DISCOVERY_DEFAULT_MAKES", 2))
 DEFAULT_MODELS = int(os.environ.get("DISCOVERY_DEFAULT_MODELS", 2))
 MAX_TARGETS = int(os.environ.get("DISCOVERY_MAX_TARGETS", 40))
+# כמה דגמים מראש דירוג הפערים נכנסים לתכנון. MAX_TARGETS חותך ממילא,
+# אבל דירוג של אלפי דגמים בכל תצוגה מקדימה הוא עבודה מיותרת.
+DEFAULT_GAP_MODELS = int(os.environ.get("DISCOVERY_GAP_MODELS", 8))
 
 # החלפים שמוסך באמת מחליף, כשלא נבחר סוג
 DEFAULT_PART_TYPES = [
@@ -256,12 +259,56 @@ DEFAULT_PART_TYPES = [
 ]
 
 
+def gap_pairs(make=None, limit=None):
+    """הדגמים עם הפער הגדול ביותר בין הרכבים שעל הכביש למק"טים שלנו.
+
+    זה מקור המטרות המועדף: לחפש מק"טים לדגם שיש לו מאתיים מק"טים
+    ושלושים אלף רכבים הוא בזבוז, ולדגם עם חמישים אלף רכבים ואפס
+    מק"טים זו בדיוק העבודה.
+
+    מוחזרות זוגות בכתיב הקטלוג, כדי שההתאמות שייווצרו יישבו לצד
+    הקיימות ולא יפתחו כתיב שני לאותו יצרן.
+    """
+    from . import fleet_stats
+    from .services import catalog_make
+
+    ranked, _ = fleet_stats.gap_ranking(make=make, limit=limit or DEFAULT_GAP_MODELS)
+    return [(catalog_make(row.search_make), row.model) for row in ranked]
+
+
+PLAN_SOURCES = {
+    "manual": "לפי מה שהוקלד",
+    "gap": "לפי דירוג הפערים בצי",
+    "variants": "לפי מספר הווריאנטים - עדיין אין ספירת צי",
+}
+
+
+def plan_source(make=None, model=None):
+    """מאיפה יילקחו המטרות, כדי שהמסך יגיד את זה במקום שהמשתמש ינחש.
+
+    בדיקה זולה בכוונה: קיומו של צילום צי, ולא הדירוג עצמו. תצוגה
+    מקדימה שרצה על כל הקלדה לא צריכה לשלם על דירוג מלא.
+    """
+    from . import fleet_stats
+
+    if model or (make and model):
+        return "manual"
+    return "gap" if fleet_stats.summary()["models"] else "variants"
+
+
 def plan_targets(make=None, model=None, part_types=None):
     """מה ירוץ בפועל. מחזיר (מטרות, האם נחתך בתקרה).
 
-    שדה ריק מתמלא מקטלוג משרד התחבורה לפי מספר הווריאנטים, כי זה
-    הפרוקסי היחיד לפופולריות שיש. התוצאה נחתכת ב-MAX_TARGETS כדי
-    שלחיצה אחת לא תייצר חשבון בלתי צפוי.
+    שדה ריק מתמלא מדירוג הפערים: כמה רכבים בטווח הקנייה יש לדגם, חלקי
+    המק"טים שכבר יש לנו עבורו. פעם זה נעשה לפי מספר הווריאנטים בקטלוג
+    הדגמים - הפרוקסי היחיד שהיה - וכיום יש ספירה אמיתית של הצי, כך
+    שהגילוי מכוון לשוק הגדול שאינו מכוסה במקום לדגם שבמקרה יש לו הרבה
+    קודי דגם.
+
+    בלי צילום צי (עוד לא נספר) חוזרים לפרוקסי הישן, כי גילוי שמכוון
+    פחות טוב עדיף על מסך שלא עושה כלום.
+
+    התוצאה נחתכת ב-MAX_TARGETS כדי שלחיצה אחת לא תייצר חשבון בלתי צפוי.
     """
     from .vehicle_catalog import popular_makes, popular_models
 
@@ -271,14 +318,20 @@ def plan_targets(make=None, model=None, part_types=None):
 
     if make and model:
         pairs = [(make, model)]
-    elif make:
-        pairs = popular_models(make, limit=DEFAULT_MODELS)
     elif model:
         pairs = []  # דגם בלי יצרן - לא ניתן להתאמה חד-משמעית
     else:
-        pairs = []
-        for candidate_make in popular_makes(limit=DEFAULT_MAKES):
-            pairs.extend(popular_models(candidate_make, limit=DEFAULT_MODELS))
+        pairs = gap_pairs(make=make)
+        if not pairs:
+            pairs = (
+                popular_models(make, limit=DEFAULT_MODELS)
+                if make
+                else [
+                    pair
+                    for candidate in popular_makes(limit=DEFAULT_MAKES)
+                    for pair in popular_models(candidate, limit=DEFAULT_MODELS)
+                ]
+            )
 
     targets = [[mk, md, t] for mk, md in pairs for t in types]
     return targets[:MAX_TARGETS], len(targets) > MAX_TARGETS

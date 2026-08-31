@@ -327,22 +327,12 @@ def _part_counts_for_rows(rows):
 
 
 def _fleet_gaps(q, make, taken_at):
-    """הדגמים שבהם הפער בין רכבים בטווח הקנייה למק"טים שלנו הוא הגדול ביותר.
-
-    הדירוג נעשה על הדגמים הגדולים בלבד: פער אצל דגם עם שלושים רכבים
-    אינו הזדמנות, והוא היה מציף את הרשימה. המכנה הוא מק"טים+1, כך שדגם
-    בלי מק"טים כלל עולה לראש לפי גודלו במקום להתחלק באפס.
-    """
-    top = fleet_stats.grouped_by_model(
+    """הדגמים עם הפער הגדול ביותר. אותו דירוג שמנוע הגילוי מכוון לפיו."""
+    ranked, _ = fleet_stats.gap_ranking(
         q=q, make=make, taken_at=taken_at,
         limit=current_app.config["FLEET_GAP_MODELS"],
     )
-    counts = services.part_counts_for([(row.search_make, row.model) for row in top])
-    return sorted(
-        top,
-        key=lambda row: (row.prime or 0) / (counts[(row.search_make, row.model)][0] + 1),
-        reverse=True,
-    )
+    return ranked
 
 
 @web_bp.route("/stats.csv")
