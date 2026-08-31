@@ -214,6 +214,13 @@ def vehicles(app, catalog):
             part = Part.query.filter_by(part_number=number).first()
             db.session.add(Fitment(part=part, make="טויוטה", model="COROLLA",
                                    year_from=2015))
+        # רק ל-AA-1 יש מנוע וגימור: זה המצב האמיתי בקטלוג, שבו רוב
+        # ההתאמות עוצרות ברמת הדגם
+        aa_fitment = Fitment.query.join(Part).filter(
+            Part.part_number == "AA-1"
+        ).first()
+        aa_fitment.engine_code = "1.6 GDI"
+        aa_fitment.submodel = "LUXURY"
         # BB-2 מצהיר על המק"ט של AA-1 כמקביל שלו: לפי הכלל של
         # equivalent_parts הם תחליפים זה של זה, לשני הכיוונים
         bb = Part.query.filter_by(part_number="BB-2").first()
@@ -228,6 +235,8 @@ def test_the_new_columns_are_on_the_shelf(client):
     assert labels["vehicle_model"] == "דגם רכב"
     assert labels["catalog_parts"] == "חלפים במאגר"
     assert labels["substitutes"] == "תחליפים"
+    assert labels["engine"] == "מנוע"
+    assert labels["trim"] == "גימור"
 
 
 def test_the_vehicle_columns_show_make_and_model(app, client, vehicles):
@@ -239,10 +248,29 @@ def test_the_vehicle_columns_show_make_and_model(app, client, vehicles):
     assert "COROLLA" in body
 
 
+def test_the_engine_and_trim_columns_show_what_the_fitment_holds(app, client, vehicles):
+    """שתי העמודות יורדות מתחת לדגם - אבל רק כשההתאמה אומרת משהו.
+
+    ההתאמה של AA-1 נושאת מנוע וגימור, של CC-3 לא. התא של CC-3 חייב
+    להראות מקף ולא ערך מושאל מרכב אחר.
+    """
+    with app.app_context():
+        services.save_column_layout(["part_number", "engine", "trim"])
+
+    for number, engine, trim in [("AA-1", "1.6 GDI", "LUXURY"), ("CC-3", "—", "—")]:
+        html = client.get(f"/parts?f_part_number={number}").get_data(as_text=True)
+        body = html.split("<tbody>")[1].split("</tbody>")[0]
+        assert engine in body, number
+        assert trim in body, number
+
+
 @pytest.mark.parametrize("param,value,expected", [
     ("f_vehicle_make", "טויוטה", ["AA-1", "CC-3", "TEST-001"]),
     ("f_vehicle_model", "COROLLA", ["AA-1", "CC-3", "TEST-001"]),
     ("f_vehicle_model", "אין דגם כזה", []),
+    ("f_engine", "GDI", ["AA-1"]),
+    ("f_trim", "LUXURY", ["AA-1"]),
+    ("f_engine", "אין מנוע כזה", []),
 ])
 def test_the_vehicle_columns_filter(client, vehicles, param, value, expected):
     assert sorted(numbers(client.get(f"/parts?{param}={value}"))) == expected
@@ -291,6 +319,8 @@ def test_a_part_with_nothing_attached_counts_zero(app, client, catalog):
 @pytest.mark.parametrize("sort", [
     "vehicle_make:asc", "vehicle_make:desc",
     "vehicle_model:asc", "vehicle_model:desc",
+    "engine:asc", "engine:desc",
+    "trim:asc", "trim:desc",
     "catalog_parts:desc", "substitutes:desc",
 ])
 def test_the_new_columns_sort(client, vehicles, sort):

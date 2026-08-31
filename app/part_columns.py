@@ -353,6 +353,30 @@ COLUMNS = (
         ),
         text=lambda part, op: _vehicle_names(part, "model"),
     ),
+    # שני אלה יורדים לרזולוציה שמתחת לדגם: אותה קורולה עם מנוע אחר
+    # לוקחת חלק אחר. הם קוראים את אותן שורות התאמה, ולכן מק"ט שמתאים
+    # לכמה רכבים מציג את כולם - כמו יצרן ודגם.
+    Column(
+        "engine", "מנוע",
+        sort_by=db.select(func.min(Fitment.engine_code))
+        .where(Fitment.part_id == Part.id).correlate(Part).scalar_subquery(),
+        param="f_engine", kind="text",
+        apply=lambda raw: _in_related(
+            Fitment, Fitment.engine_code.ilike(f"%{raw.strip()}%")
+        ),
+        text=lambda part, op: _vehicle_names(part, "engine_code"),
+        hint="1.6 GDI",
+    ),
+    Column(
+        "trim", "גימור",
+        sort_by=db.select(func.min(Fitment.submodel))
+        .where(Fitment.part_id == Part.id).correlate(Part).scalar_subquery(),
+        param="f_trim", kind="text",
+        apply=lambda raw: _in_related(
+            Fitment, Fitment.submodel.ilike(f"%{raw.strip()}%")
+        ),
+        text=lambda part, op: _vehicle_names(part, "submodel"),
+    ),
     Column(
         "catalog_parts", "חלפים במאגר",
         sort_by=CATALOG_PARTS, param="f_catalog_parts", kind="number",
