@@ -4,6 +4,7 @@ import io
 
 from sqlalchemy import and_, case, func, or_
 
+from . import part_columns
 from .models import (
     Category,
     CrossReference,
@@ -198,6 +199,7 @@ def search_parts(
     low_stock=None,
     active_only=True,
     sort="part_number",
+    column_filters=None,
     organization_id=None,
 ):
     """בונה שאילתת חיפוש מק"טים לפי כל הפילטרים.
@@ -205,6 +207,10 @@ def search_parts(
     מחיר ומלאי פרטיים לארגון, ולכן סינון או מיון לפיהם דורש
     organization_id. בלעדיו הם מתעלמים בשקט - מבקר אנונימי רואה
     את הקטלוג המשותף בלבד.
+
+    column_filters הוא הסינון שמגיע משורת הכותרות של הטבלה, ממופה לפי
+    שם הפרמטר. הכללים עצמם יושבים ב-app/part_columns.py, ליד הגדרת
+    העמודה - כך שעמודה חדשה מביאה איתה את הסינון שלה.
     """
     query = Part.query
 
@@ -273,15 +279,20 @@ def search_parts(
     if active_only:
         query = query.filter(Part.is_active.is_(True))
 
+    # סינון ומיון לפי עמודה. ה-join לשכבה הפרטית נעשה פעם אחת לכל
+    # היותר, גם כשגם המיון וגם הסינון זקוקים לה.
+    query, org_joined = part_columns.apply_filters(
+        query, column_filters or {}, organization_id, False
+    )
+    query, org_joined, sorted_column, _ = part_columns.apply_sort(
+        query, sort, organization_id, org_joined
+    )
+    if sorted_column is not None:
+        return query
+
     org_sorts = {"price_asc", "price_desc", "stock"}
     if sort in org_sorts and organization_id:
-        query = query.outerjoin(
-            OrgPart,
-            db.and_(
-                OrgPart.part_id == Part.id,
-                OrgPart.organization_id == organization_id,
-            ),
-        )
+        query, org_joined = part_columns.join_org(query, organization_id, org_joined)
         order = {
             "price_asc": OrgPart.price.asc(),
             "price_desc": OrgPart.price.desc(),
@@ -843,3 +854,35 @@ def low_stock_parts(organization_id, limit=8):
         .limit(limit)
         .all()
     )
+
+
+# ---------- פריסת העמודות ----------
+
+PARTS_TABLE = "parts"
+
+
+def column_layout(table_key=PARTS_TABLE):
+    """העמודות המוצגות בטבלה, לפי סדרן.
+
+    אין שורה שמורה = ברירת המחדל שבקוד. כך הטבלה עובדת ביום הראשון,
+    לפני שמנהל האפליקציה נגע בה בכלל.
+    """
+    from .models import TableLayout
+
+    layout = TableLayout.query.filter_by(table_key=table_key).first()
+    return part_columns.resolve(layout.keys if layout else part_columns.DEFAULT_KEYS)
+
+
+def save_column_layout(keys, table_key=PARTS_TABLE, user=None):
+    """שומר את הפריסה. רשימה ריקה תחזיר את ברירת המחדל בקריאה הבאה."""
+    from .models import TableLayout
+
+    layout = TableLayout.query.filter_by(table_key=table_key).first()
+    if layout is None:
+        layout = TableLayout(table_key=table_key)
+        db.session.add(layout)
+    layout.keys = list(keys)
+    if user is not None:
+        layout.updated_by_id = user.id
+    db.session.commit()
+    return layout

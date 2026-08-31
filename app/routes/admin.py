@@ -3,10 +3,18 @@
 מה שנמצא כאן משפיע על כל הלקוחות במערכת ולא על מוסך בודד, ולכן הכל
 מוגן ב-superadmin_required ולא בתפקידים שבתוך הארגון.
 """
-from flask import Blueprint, jsonify, render_template, request
+from flask import (
+    Blueprint,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user
 
-from .. import activity, fleet_stats, parts_discovery
+from .. import activity, fleet_stats, part_columns, parts_discovery, services
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
@@ -287,3 +295,62 @@ def discovery_delete():
         count=len(deleted),
     )
     return jsonify({"deleted": deleted, "catalog_size": Part.query.count()})
+
+
+# ---------- עמודות טבלת המק"טים ----------
+
+@admin_bp.get("/columns")
+@superadmin_required
+def columns():
+    """מה מוצג בטבלת המק"טים, ובאיזה סדר.
+
+    ההחלטה הזאת היא של מנהל האפליקציה ולא של המוסך: הטבלה אחת לכולם,
+    ומי שמשנה אותה משנה אותה לכל המשתמשים.
+    """
+    shown = services.column_layout()
+    shown_keys = {column.key for column in shown}
+    return render_template(
+        "admin/columns.html",
+        shown=shown,
+        available=[c for c in part_columns.COLUMNS if c.key not in shown_keys],
+        is_default=[c.key for c in shown] == list(part_columns.DEFAULT_KEYS),
+    )
+
+
+@admin_bp.post("/columns")
+@superadmin_required
+def columns_save():
+    """הוספה, הסרה והזזה - כולן מגיעות לכאן ומשנות רשימה אחת.
+
+    הרשימה עצמה נשלחת מהטופס בכל פעם, ולכן פעולה שנשלחה פעמיים מתוך
+    מסך ישן לא תזיז עמודה שכבר זזה.
+    """
+    keys = [key for key in request.form.getlist("key") if part_columns.by_key(key)]
+    # "up:price" - הפעולה והעמודה שהיא מדברת עליה, בערך אחד של הכפתור
+    action, _, target = (request.form.get("action") or "").partition(":")
+
+    if action == "reset":
+        keys = list(part_columns.DEFAULT_KEYS)
+    elif action == "add" and part_columns.by_key(target) and target not in keys:
+        keys.append(target)
+    elif action == "remove" and target in keys:
+        keys.remove(target)
+    elif action in ("up", "down") and target in keys:
+        index = keys.index(target)
+        swap = index - 1 if action == "up" else index + 1
+        if 0 <= swap < len(keys):
+            keys[index], keys[swap] = keys[swap], keys[index]
+
+    if not keys:
+        flash("חייבת להישאר לפחות עמודה אחת.", "warning")
+        return redirect(url_for("admin.columns"))
+
+    services.save_column_layout(keys, user=current_user)
+    activity.note(
+        summary=f"{len(keys)} עמודות: " + ", ".join(
+            part_columns.by_key(key).label for key in keys
+        ),
+        columns=keys,
+        action=action or "save",
+    )
+    return redirect(url_for("admin.columns"))
