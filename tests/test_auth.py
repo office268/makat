@@ -1,4 +1,5 @@
 """ארגונים, משתמשים והרשאות."""
+from urllib.parse import unquote
 import pytest
 
 from app import auth
@@ -177,16 +178,16 @@ def test_welcome_page_renders_the_car(client):
 def test_welcome_car_links_into_the_app(client):
     """הלחיצה על המכונית היא קישור אמיתי, גם בלי JavaScript."""
     html = client.get("/welcome").get_data(as_text=True)
-    assert 'id="enter-app" href="/enter?next=/"' in html
+    assert 'id="enter-app" href="/enter?next=%2F"' in html
 
 
 def test_welcome_honours_next_but_not_external_targets(client):
     html = client.get("/welcome?next=/parts").get_data(as_text=True)
-    assert 'id="enter-app" href="/enter?next=/parts"' in html
+    assert 'id="enter-app" href="/enter?next=%2Fparts"' in html
 
     html = client.get("/welcome?next=https://evil.example/x").get_data(as_text=True)
     assert "evil.example" not in html
-    assert 'id="enter-app" href="/enter?next=/"' in html
+    assert 'id="enter-app" href="/enter?next=%2F"' in html
 
 
 # ---------- שער הכניסה ----------
@@ -202,7 +203,44 @@ def test_the_car_leads_to_the_single_field(visitor):
     """מי שלא הזדהה - הלחיצה על המכונית מביאה אותו לשדה, לא לאפליקציה."""
     response = visitor.get("/enter?next=/parts")
     assert response.status_code == 302
-    assert response.headers["Location"] == "/login?next=/parts"
+    assert response.headers["Location"] == "/login?next=%2Fparts"
+
+
+def test_the_gate_sends_a_link_that_actually_opens(visitor):
+    """ההפניה להזדהות חייבת להיות כתובת שאפשר לבקש, לא רק להסתכל בה.
+
+    בייצור היא לא הייתה: /parts החזיר הפניה ל-/login?next=/parts? -
+    שני סימני שאלה באותה כתובת - ומי שנרמל אותה בדרך הפך אותה לנתיב
+    /login%3Fnext=/parts, שאין לו מסלול. המכונאי ביקש להזדהות וקיבל
+    404. הבדיקה הולכת בעקבות ההפניה עד הסוף.
+    """
+    response = visitor.get("/parts", headers={"Referer": "http://localhost/x"})
+    assert response.status_code == 302
+
+    location = response.headers["Location"]
+    assert "?" not in location.split("?", 1)[1]
+    assert visitor.get(location, headers={"Referer": "http://localhost/x"}).status_code == 200
+
+
+def test_the_gate_keeps_the_query_of_the_page_it_stopped(visitor, org):
+    """מי שנעצר על טבלה ממוינת ומסוננת חוזר אליה, לא לטבלה חשופה."""
+    stopped = "/parts?sort=price_asc&q=בלם"
+    location = visitor.get(
+        stopped, headers={"Referer": "http://localhost/x"}
+    ).headers["Location"]
+
+    assert visitor.get(location, headers={"Referer": "http://localhost/x"}).status_code == 200
+    landed = visitor.post(location, data={"phone": OWNER})
+    # העברית חוזרת מקודדת, וזו אותה כתובת עצמה.
+    assert unquote(landed.headers["Location"]) == stopped
+
+
+def test_a_page_without_a_query_does_not_grow_one(visitor):
+    """full_path מוסיף "?" לכל בקשה; היעד לא אמור לסחוב אותו."""
+    location = visitor.get(
+        "/parts", headers={"Referer": "http://localhost/x"}
+    ).headers["Location"]
+    assert location == "/login?next=%2Fparts"
 
 
 def test_identifying_continues_to_where_the_car_pointed(visitor, org):

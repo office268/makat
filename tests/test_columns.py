@@ -643,3 +643,27 @@ def test_the_layout_is_one_for_everyone(admin_client, app, client, catalog):
     client.post("/logout")
     client.post("/login", data={"phone": "0500000001"})
     assert "עלות" in client.get("/parts").get_data(as_text=True)
+
+
+def test_an_empty_fleet_does_not_sort_by_a_column_number(app):
+    """ב-Postgres "ORDER BY 0" הוא מספר סידורי של עמודה, לא הערך אפס.
+
+    כשאין צילום צי, עמודות החשיבות מחזירות אפס לכל מק"ט. אפס חשוף
+    ב-ORDER BY נפסל שם ("position 0 is not in select list") והמסך
+    נופל - בדיוק במצב שבו הוא נמצא לפני הספירה הראשונה. SQLite ממיין
+    לפי הקבוע בשקט, ולכן הבדיקה קוראת את ה-SQL עצמו.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    with app.app_context():
+        expression = part_columns.fleet_value("vehicles")
+
+    sql = str(expression.compile(dialect=postgresql.dialect()))
+    assert "CAST" in sql.upper()
+
+
+def test_sorting_by_importance_without_a_snapshot_reaches_the_database(client, vehicles):
+    """אותו מצב, מקצה לקצה: הטבלה נטענת גם לפני הספירה הראשונה."""
+    for key in ("fleet_vehicles", "fleet_prime", "fleet_gap"):
+        assert client.get(f"/parts?sort={key}:desc").status_code == 200
+        assert client.get(f"/parts?sort={key}:asc").status_code == 200
