@@ -45,9 +45,18 @@ CSV_COLUMNS = [
 
 
 def current_org_id():
-    """מזהה הארגון של המשתמש המחובר, או None למבקר אנונימי."""
+    """מזהה הארגון של המשתמש המחובר, או None למבקר אנונימי.
+
+    גם מחוץ לבקשה התשובה היא None ולא שגיאה: הביטויים של עמודות
+    הקבוצה שואלים מי הארגון בזמן שהם נבנים, ולפעמים הם נבנים בבדיקה
+    או בסקריפט שאין בהם בקשה כלל. "אין ארגון" הוא מצב חוקי - הוא
+    בדיוק מה שקורה למבקר אנונימי - ואין סיבה שיפיל.
+    """
+    from flask import has_request_context
     from flask_login import current_user
 
+    if not has_request_context():
+        return None
     if current_user.is_authenticated:
         return current_user.organization_id
     return None
@@ -856,7 +865,7 @@ def low_stock_parts(organization_id, limit=8):
     )
 
 
-def column_counts(parts, columns):
+def column_counts(parts, columns, organization_id=None):
     """הספירות שהעמודות המחושבות מציגות, לשורות שעל המסך בלבד.
 
     {מזהה מק"ט: {"catalog_parts": n, "substitutes": n}}
@@ -867,8 +876,11 @@ def column_counts(parts, columns):
     """
     keys = {column.key for column in columns}
     counted = {"catalog_parts", "substitutes"} & keys
-    fleet_keys = {"fleet_vehicles", "fleet_prime", "fleet_gap"} & keys
-    if not parts or not (counted or fleet_keys):
+    # "ביקוש" מציג את אותם מספרי צי בתא אחד, ולכן צריך אותם בדיוק כמו
+    # שתי עמודות הצי הנפרדות
+    fleet_keys = {"fleet_vehicles", "fleet_prime", "fleet_gap", "demand"} & keys
+    group_keys = {"group_stock", "group_price"} & keys
+    if not parts or not (counted or fleet_keys or group_keys):
         return {}
 
     values = {part.id: {} for part in parts}
@@ -888,7 +900,73 @@ def column_counts(parts, columns):
             )
     if fleet_keys:
         values = _add_fleet_numbers(values, parts)
+    if group_keys:
+        values = _add_group_numbers(values, parts, organization_id)
     return values
+
+
+def _add_group_numbers(values, parts, organization_id=None):
+    """המלאי והמחירים של המק"ט יחד עם כל תחליפיו.
+
+    שאילתה אחת לכל הדף, ובאותם ביטויים שלפיהם ממיינים - התא והסדר
+    חייבים לומר את אותו דבר.
+
+    "מקורי" נקבע לפי הסימן היחיד שיש בנתונים: יצרן החלק זהה למותג
+    שרשום על המק"ט המקורי. בקטלוג היום זה כמעט לא קורה, ולכן התא
+    יישאר ריק ברוב השורות - וזה עדיף על ניחוש.
+    """
+    if organization_id is None:
+        organization_id = current_org_id()
+    if not organization_id:
+        return values
+
+    rows = (
+        db.session.query(
+            Part.id,
+            part_columns.group_stock(organization_id),
+            part_columns.group_cheapest(organization_id),
+            part_columns.group_dearest(organization_id),
+        )
+        .filter(Part.id.in_(list(values)))
+        .all()
+    )
+    for part_id, stock, cheapest, dearest in rows:
+        values[part_id].update(
+            group_stock=stock or 0,
+            cheapest=cheapest,
+            dearest=dearest,
+        )
+    for part in parts:
+        values[part.id]["original_price"] = (
+            _own_price(part, organization_id) if is_original_part(part) else None
+        )
+    return values
+
+
+def _own_price(part, organization_id):
+    for link in part.org_links:
+        if link.organization_id == organization_id:
+            return link.price_with_vat
+    return None
+
+
+def is_original_part(part):
+    """האם המק"ט הזה הוא החלק המקורי של יצרן הרכב, ולא תחליפי.
+
+    אין במערכת שדה שאומר את זה. הסימן היחיד שיש: החלק נושא את שם
+    היצרן שרשום על המק"ט המקורי שלו - כלומר "TOYOTA" שמוכר חלק
+    שהמקור שלו רשום על שם Toyota. חלק של BOSCH לאותו מספר הוא תחליפי.
+    """
+    maker = (part.manufacturer.name if part.manufacturer else "").strip().lower()
+    if not maker:
+        return False
+    for ref in part.cross_refs:
+        brand = (ref.ref_brand or "").strip().lower()
+        if not brand or ref.ref_type != "OEM":
+            continue
+        if maker == brand or maker in brand or brand in maker:
+            return True
+    return False
 
 
 def _add_fleet_numbers(values, parts):
@@ -924,6 +1002,7 @@ def _add_fleet_numbers(values, parts):
 # ---------- פריסת העמודות ----------
 
 PARTS_TABLE = "parts"
+SALES_TABLE = "parts_sales"
 
 
 def column_layout(table_key=PARTS_TABLE):
@@ -934,8 +1013,13 @@ def column_layout(table_key=PARTS_TABLE):
     """
     from .models import TableLayout
 
+    fallback = (
+        part_columns.SALES_KEYS
+        if table_key == SALES_TABLE
+        else part_columns.DEFAULT_KEYS
+    )
     layout = TableLayout.query.filter_by(table_key=table_key).first()
-    return part_columns.resolve(layout.keys if layout else part_columns.DEFAULT_KEYS)
+    return part_columns.resolve(layout.keys if layout else fallback, fallback)
 
 
 def save_column_layout(keys, table_key=PARTS_TABLE, user=None):

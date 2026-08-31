@@ -152,6 +152,103 @@ def fleet_value(field):
     )
 
 
+# ---------- הקבוצה: המק"ט וכל התחליפים שלו יחד ----------
+#
+# טבלת המכירה שואלת שאלה אחרת מטבלת הקטלוג. שם השורה היא מק"ט; כאן
+# השורה היא מק"ט *ומה שאפשר להציע במקומו*. המלאי והמחיר בטבלה הזאת
+# הם של הקבוצה כולה, כי מוכר שנשאל "יש לך?" לא מוגבל למק"ט אחד.
+#
+# חברות בקבוצה נקבעת באותו כלל בדיוק כמו עמודת "תחליפים" ורשימת
+# המק"טים השקולים בכרטיס - מספר מקביל משותף - ובתוספת המק"ט עצמו.
+
+_GROUP_MEMBERS = union(
+    db.select(Part.id.label("part_id"), Part.id.label("member_id")),
+    db.select(
+        _MY_NUMBERS.c.part_id.label("part_id"),
+        CrossReference.part_id.label("member_id"),
+    )
+    .select_from(_MY_NUMBERS)
+    .join(
+        CrossReference,
+        db.and_(
+            func.lower(CrossReference.ref_number) == _MY_NUMBERS.c.ref,
+            CrossReference.part_id != _MY_NUMBERS.c.part_id,
+        ),
+    ),
+).subquery()
+
+
+def _current_org():
+    """הארגון של הבקשה הנוכחית.
+
+    המלאי והמחיר יושבים בשכבה הפרטית, ולכן הביטויים האלה נבנים לכל
+    בקשה ולא פעם אחת בטעינת המודול - כמו עמודות הצי.
+    """
+    from .services import current_org_id
+
+    return current_org_id()
+
+
+def _group_aggregate(value, combine, organization_id=None):
+    """ביטוי על כל חברי הקבוצה: סכום מלאי, מחיר הזול ביותר וכדומה.
+
+    הארגון מגיע במפורש כשהקורא יודע אותו, ומהבקשה כשלא - כי המיון
+    והסינון נבנים מתוך רישום העמודות ואין להם דרך להעביר אותו.
+    """
+    if organization_id is None:
+        organization_id = _current_org()
+    if not organization_id:
+        # בלי ארגון אין שכבה פרטית. cast ולא אפס חשוף: ב-Postgres
+        # "ORDER BY 0" הוא מספר סידורי של עמודה ולא הערך אפס.
+        return cast(db.literal(0), db.Integer)
+    grouped = (
+        db.select(
+            _GROUP_MEMBERS.c.part_id.label("part_id"),
+            combine(value).label("value"),
+        )
+        .select_from(_GROUP_MEMBERS)
+        .join(
+            OrgPart,
+            db.and_(
+                OrgPart.part_id == _GROUP_MEMBERS.c.member_id,
+                OrgPart.organization_id == organization_id,
+            ),
+        )
+        .group_by(_GROUP_MEMBERS.c.part_id)
+        .subquery()
+    )
+    return func.coalesce(
+        db.select(grouped.c.value)
+        .where(grouped.c.part_id == Part.id)
+        .correlate(Part)
+        .scalar_subquery(),
+        0,
+    )
+
+
+def group_stock(organization_id=None):
+    """כמה יחידות יש בסך הכול - של המק"ט הזה ושל כל תחליפיו."""
+    return _group_aggregate(func.coalesce(OrgPart.stock_qty, 0), func.sum, organization_id)
+
+
+def group_cheapest(organization_id=None):
+    """המחיר הזול ביותר שאפשר להציע מהקבוצה, כולל מע"מ."""
+    return _group_aggregate(PRICE_WITH_VAT, func.min, organization_id)
+
+
+def group_dearest(organization_id=None):
+    """הקצה השני של הטווח. שני המספרים יחד הם "בין כמה לכמה"."""
+    return _group_aggregate(PRICE_WITH_VAT, func.max, organization_id)
+
+
+def _image_condition(raw):
+    """סינון לפי קיום תמונה. שימושי בעיקר כדי למצוא את מה שחסר."""
+    wanted = (raw or "").strip()
+    if wanted not in ("1", "0"):
+        return None
+    has_image = db.and_(Part.image_url.isnot(None), Part.image_url != "")
+    return has_image if wanted == "1" else db.not_(has_image)
+
 # ">100", "<=50", "10-20" או "7". מה שאי אפשר לקרוא כמספר לא מסנן כלום -
 # מסננים שהוקלדו למחצה לא אמורים לרוקן את הטבלה.
 _COMPARISON = re.compile(r"^(>=|<=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$")
@@ -476,6 +573,77 @@ COLUMNS = (
         needs_org=True,
         text=lambda part, op: (op.location if op and op.location else "—"),
     ),
+
+    # ---------- עמודות טבלת המכירה ----------
+    #
+    # שש עמודות שכל אחת מהן מאחדת כמה נתונים לתא אחד. הן קיימות באותו
+    # רישום ולא בנפרד, כי המיון והסינון עובדים על הרישום הזה - ומי
+    # שרוצה אחת מהן גם בטבלת הקטלוג יכול פשוט להוסיף אותה.
+    Column(
+        "vehicle", "רכב",
+        sort_by=db.select(func.min(Fitment.make))
+        .where(Fitment.part_id == Part.id).correlate(Part).scalar_subquery(),
+        param="f_vehicle", kind="text",
+        apply=lambda raw: _in_related(
+            Fitment,
+            db.or_(
+                Fitment.make.ilike(f"%{raw.strip()}%"),
+                Fitment.model.ilike(f"%{raw.strip()}%"),
+                Fitment.engine_code.ilike(f"%{raw.strip()}%"),
+                Fitment.fuel.ilike(f"%{raw.strip()}%"),
+            ),
+        ),
+        hint="קורולה, 1.6, בנזין",
+    ),
+    Column(
+        "part_name", "חלק",
+        sort_by=Part.name_he, param="f_part_name", kind="text",
+        apply=lambda raw: db.or_(
+            Part.name_he.ilike(f"%{raw.strip()}%"),
+            Part.side.ilike(f"%{raw.strip()}%"),
+        ),
+        hint="בולם, קדמי ימין",
+    ),
+    Column(
+        "oe_all", 'מק"ט OE',
+        # רשימה, ולכן אין לה סדר אחד נכון - אבל מחפשים בה
+        param="f_oe_all", kind="text",
+        apply=lambda raw: _in_related(
+            CrossReference,
+            db.and_(
+                CrossReference.ref_type == "OEM",
+                CrossReference.ref_number.ilike(f"%{raw.strip()}%"),
+            ),
+        ),
+    ),
+    Column(
+        "image", "תמונה",
+        sort_by=Part.image_url, param="f_image", kind="select",
+        apply=_image_condition,
+        options=lambda: [("1", "יש תמונה"), ("0", "אין תמונה")],
+    ),
+    Column(
+        "demand", "ביקוש",
+        # ממוין לפי מי שבטווח הקנייה ולא לפי הצי כולו: אלה הקונים
+        sort_by=lambda: fleet_value("prime"),
+        param="f_demand", kind="number",
+        apply=lambda raw: number_condition(fleet_value("prime"), raw),
+        align="text-end", hint=">5000",
+    ),
+    Column(
+        "group_stock", "מלאי בקבוצה",
+        sort_by=group_stock, param="f_group_stock", kind="number",
+        apply=lambda raw: number_condition(group_stock(), raw),
+        needs_org=False, align="text-end", hint=">0",
+    ),
+    Column(
+        "group_price", "מחיר", 
+        # ממוין לפי הזול ביותר בקבוצה - זה המספר שמעניין מי שנשאל
+        # "כמה זה יוצא לי", והוא גם אחד מהמספרים שהתא מציג
+        sort_by=group_cheapest, param="f_group_price", kind="number",
+        apply=lambda raw: number_condition(group_cheapest(), raw),
+        needs_org=False, align="text-end", hint="<200",
+    ),
     Column(
         "created_at", "נוצר ב",
         sort_by=Part.created_at, align="text-end",
@@ -487,6 +655,14 @@ BY_KEY = {column.key: column for column in COLUMNS}
 # מה שמוצג כשאיש עוד לא נגע בפריסה - בדיוק הטבלה שהייתה כאן קודם
 DEFAULT_KEYS = (
     "part_number", "oem", "name_he", "manufacturer", "fitments", "price", "stock",
+)
+
+# טבלת המכירה: שמונה תאים שכל אחד עונה על שאלה שנשאלת מעבר לדלפק -
+# לאיזה רכב, איזה חלק, מה המספר המקורי, איך זה נראה, כמה כאלה על
+# הכביש, כמה חלופות אני מכיר, כמה יש לי, וכמה זה עולה.
+SALES_KEYS = (
+    "vehicle", "part_name", "oe_all", "image",
+    "demand", "substitutes", "group_stock", "group_price",
 )
 
 
@@ -518,14 +694,15 @@ def by_key(key):
     return BY_KEY.get(key)
 
 
-def resolve(keys):
+def resolve(keys, fallback=DEFAULT_KEYS):
     """רשימת מפתחות -> עמודות. מפתח שאינו מוכר נופל בשקט.
 
     פריסה שמורה עשויה להצביע על עמודה שהוסרה מהקוד; טבלה שנשברת
-    בגלל זה גרועה מטבלה שחסרה בה עמודה.
+    בגלל זה גרועה מטבלה שחסרה בה עמודה. fallback הוא ברירת המחדל של
+    הטבלה המבקשת - לכל טבלה יש משלה.
     """
     columns = [BY_KEY[key] for key in keys if key in BY_KEY]
-    return columns or [BY_KEY[key] for key in DEFAULT_KEYS]
+    return columns or [BY_KEY[key] for key in fallback]
 
 
 # שמות המיון שקדמו לעמודות. "stock" לבדו פירושו מלאי *יורד*, ולכן הוא
