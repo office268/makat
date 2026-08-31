@@ -333,6 +333,70 @@ def test_gap_view_ranks_by_vehicles_per_part(client, app):
     assert "אין כיסוי" in html  # לדגם בלי מק"טים אין יחס להציג
 
 
+def test_gap_view_merges_model_codes_and_maker_spellings(client, app):
+    """אותו דגם בשני קודי דגם ובשני כתיבי יצרן הוא שוק אחד, לא שניים."""
+    snapshot(app, [
+        {"make": "מזדה יפן", "model": "MAZDA 2", "model_code": "DJ1",
+         "vehicles": 20000, "prime": 12000},
+        {"make": "מזדה תאילנד", "model": "MAZDA 2", "model_code": "DJ5",
+         "vehicles": 12000, "prime": 10000},
+        {"make": "טויוטה יפן", "model": "COROLLA", "model_code": "ZRE",
+         "vehicles": 90000, "prime": 50000},
+    ])
+    with app.app_context():
+        rows = fleet_stats.grouped_by_model()
+        merged = {(row.make, row.model): (row.vehicles, row.prime) for row in rows}
+        assert merged[("מזדה", "MAZDA 2")] == (32000, 22000)
+        assert len(rows) == 2
+
+    html = client.get("/stats?sort=gap").get_data(as_text=True)
+    assert html.count("MAZDA 2") == 1  # שורה אחת, לא שתיים זהות
+
+
+def test_registry_name_longer_than_the_catalog_still_matches(app):
+    """הבאג שנצפה בייצור: COROLLA HSD SDN לא מצא את 265 המק"טים של COROLLA."""
+    from app.models import Fitment, Part, db
+
+    with app.app_context():
+        part = Part(part_number="COR-1", name_he="מסנן שמן COROLLA",
+                    part_type="oil_filter")
+        part.fitments = [Fitment(make="טויוטה", model="COROLLA")]
+        db.session.add(part)
+        db.session.commit()
+
+        # שלושת השמות שבמרשם מוצאים בדיוק את אותם מק"טים
+        counts = {
+            model: services.part_counts_for([("טויוטה", model)])[("טויוטה", model)]
+            for model in ("COROLLA", "COROLLA HSD SDN", "COROLLA CROSS")
+        }
+        assert counts["COROLLA"][0] >= 1
+        assert len(set(counts.values())) == 1, counts
+
+        # ושם קצר לא נדבק לכל דגם שמכיל את אותן אותיות
+        assert services.model_matches_name("I35", "I3") is False
+        assert services.model_matches_name("MAZDA 3", "3") is False
+
+
+def test_maker_spelling_is_bridged(app):
+    """המרשם כותב "מזדה", הקטלוג "מאזדה" - אותו יצרן."""
+    from app.models import Fitment, Part, db
+
+    with app.app_context():
+        part = Part(part_number="MZ-1", name_he="מסנן שמן", part_type="oil_filter")
+        part.fitments = [Fitment(make="מאזדה", model="MAZDA 2")]
+        db.session.add(part)
+        db.session.commit()
+
+        total, _ = services.part_counts_for(
+            [("מזדה", "MAZDA 2")])[("מזדה", "MAZDA 2")]
+        assert total == 1
+        assert services.search_parts(make="מזדה", model="MAZDA 2").count() == 1
+
+        # הנורמליזציה זהירה: היא לא ממזגת יצרנים שונים
+        assert services.normalize_make("מאזדה") == services.normalize_make("מזדה")
+        assert services.normalize_make("קיה") != services.normalize_make("סקודה")
+
+
 def test_batch_counts_match_the_single_lookup(app):
     with app.app_context():
         pairs = [("טויוטה", "COROLLA"), ("מאזדה", "3")]

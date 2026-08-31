@@ -333,10 +333,9 @@ def _fleet_gaps(q, make, taken_at):
     אינו הזדמנות, והוא היה מציף את הרשימה. המכנה הוא מק"טים+1, כך שדגם
     בלי מק"טים כלל עולה לראש לפי גודלו במקום להתחלק באפס.
     """
-    top = (
-        fleet_stats.search(q=q, make=make, taken_at=taken_at, sort="prime")
-        .limit(current_app.config["FLEET_GAP_MODELS"])
-        .all()
+    top = fleet_stats.grouped_by_model(
+        q=q, make=make, taken_at=taken_at,
+        limit=current_app.config["FLEET_GAP_MODELS"],
     )
     counts = services.part_counts_for([(row.search_make, row.model) for row in top])
     return sorted(

@@ -639,6 +639,52 @@ def search(q=None, make=None, taken_at=None, sort="vehicles"):
     )
 
 
+def grouped_by_model(q=None, make=None, taken_at=None, limit=None):
+    """שורות הצילום מקובצות לדגם אחד, בלי הפיצול לקודי דגם ולכתיבי יצרן.
+
+    לאותו דגם יש כמה קודי דגם, ולפעמים גם כמה כתיבי יצרן ("מזדה יפן"
+    ו-"מזדה תאילנד"). לקטלוג החלפים אין הבחנה ביניהם, ולכן בדירוג
+    הפערים הם הופיעו כשורות נפרדות עם אותו מספר בדיוק - רעש, לא מידע.
+
+    מוחזרות שורות זמניות (לא נשמרות), כדי שהמסך יוכל להשתמש באותן
+    תכונות בדיוק כמו בשורה רגילה מהצילום.
+    """
+    totals = _filtered(
+        db.session.query(
+            FleetModelCount.make,
+            FleetModelCount.model,
+            db.func.sum(FleetModelCount.vehicles),
+            db.func.sum(FleetModelCount.prime),
+            db.func.min(FleetModelCount.year_from),
+            db.func.max(FleetModelCount.year_to),
+        ),
+        q,
+        make,
+        taken_at,
+    ).group_by(FleetModelCount.make, FleetModelCount.model).order_by(
+        db.desc(db.func.sum(FleetModelCount.prime))
+    )
+    if limit:
+        totals = totals.limit(limit)
+
+    merged = {}
+    for maker, model, vehicles, prime, year_from, year_to in totals.all():
+        key = ((maker or "").split()[0] if maker else maker, model)
+        row = merged.get(key)
+        if row is None:
+            row = merged[key] = FleetModelCount(
+                make=key[0], model=model, vehicles=0, prime=0, young=0, old=0
+            )
+            row.id = len(merged)  # מפתח לשורה במסך; אינו נשמר לעולם
+        row.vehicles += vehicles or 0
+        row.prime += prime or 0
+        if year_from and (row.year_from is None or year_from < row.year_from):
+            row.year_from = year_from
+        if year_to and (row.year_to is None or year_to > row.year_to):
+            row.year_to = year_to
+    return list(merged.values())
+
+
 def total_vehicles(q=None, make=None, taken_at=None):
     """כמה רכבים יש בסינון הנוכחי - לא כמה שורות, כמה רכבים."""
     return (
