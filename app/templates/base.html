@@ -136,7 +136,9 @@
   </div>
 </nav>
 
-<main class="container-fluid py-4">
+{# py-4 היה כופה ריפוד קבוע ב-!important; app-main מרפד באותה מידה,
+   אבל מתכווץ כשגודל הטקסט גדל. ראה static/css/style.css #}
+<main class="container-fluid app-main">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
       <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">

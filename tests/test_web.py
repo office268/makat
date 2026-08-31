@@ -493,6 +493,34 @@ def test_the_display_script_is_served(client):
     assert "--app-font-scale" in body
 
 
+def test_the_steps_are_five_percent_and_the_zoom_reaches_a_half(client):
+    """צעד גס מדי מדלג על הגודל הנוח; זום שנעצר גבוה לא מכניס טבלה למסך."""
+    body = client.get("/static/js/display.js").get_data(as_text=True)
+    assert "step: 0.05" in body
+    assert body.count("step: 0.05") == 2          # גם לזום וגם לטקסט
+    zoom_line = [line for line in body.splitlines() if "zoom: { min" in line][0]
+    assert "min: 0.5" in zoom_line
+
+
+def test_bigger_text_gets_tighter_padding(client):
+    """ריפוד נמדד ב-rem וגדל עם הגופן. כאן הוא הולך בכיוון ההפוך,
+    אחרת ההגדלה הייתה מוסיפה בעיקר רווח לבן."""
+    css = client.get("/static/css/style.css").get_data(as_text=True)
+    assert "--app-pad-scale" in css
+    # התאים עצמם, והקונטיינר שעוטף את התוכן
+    assert ".table > :not(caption) > * > *" in css
+    assert css.count("var(--app-pad-scale)") >= 6
+    assert ".app-main" in css
+
+
+def test_the_main_container_can_tighten(client):
+    """py-4 של Bootstrap מסומן !important ולא היה מתכווץ."""
+    html = client.get("/parts").get_data(as_text=True)
+    main = html.split("<main")[1].split(">")[0]
+    assert "app-main" in main
+    assert "py-4" not in main
+
+
 def test_the_size_is_a_device_setting_not_an_account_one(client):
     """נשמר במכשיר: אותו אדם על מסך גדול ועל טלפון רוצה גדלים שונים."""
     body = client.get("/static/js/display.js").get_data(as_text=True)

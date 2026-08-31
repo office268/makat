@@ -8,6 +8,46 @@
 html { font-size: calc(100% * var(--app-font-scale)); }
 body { zoom: var(--app-zoom); }
 
+/* הריפוד הולך בכיוון ההפוך לטקסט.
+   ריפוד נמדד ב-rem, ולכן הוא גדל עם הגופן מעצמו - והגדלת הטקסט הייתה
+   מוסיפה בעיקר רווח לבן ודוחקת שורות אל מחוץ למסך. כאן הוא מתכווץ
+   במקום: ב-140% טקסט הריפוד הוא 80% מגודלו הרגיל, וב-180% הוא 60%.
+   כך ההגדלה מוסיפה אותיות, לא אוויר.
+
+   החישוב מחזיר את המכפיל שצריך *על גבי* ה-rem שכבר גדל, ולכן הוא
+   מחלק בגודל הגופן. מתחת ל-100% הוא נעצר על 1: כשהטקסט קטן, הריפוד
+   פשוט מתכווץ איתו, ואין סיבה לנפח אותו. */
+:root {
+  --app-pad-scale: clamp(
+    0.3,
+    calc((1.5 - var(--app-font-scale) * 0.5) / var(--app-font-scale)),
+    1
+  );
+}
+
+/* התאים עצמם - שם ההפרש בין שורה לשורה מצטבר לכל אורך הטבלה */
+.table > :not(caption) > * > * {
+  padding: calc(.6rem * var(--app-pad-scale)) calc(.75rem * var(--app-pad-scale));
+}
+
+/* והקונטיינרים שעוטפים את הטקסט. Bootstrap מחזיק את הריפוד שלהם
+   במשתני CSS משלו, ולכן די להחליף את הערך - בלי !important ובלי
+   לשכפל את הכלל עצמו. */
+.card {
+  --bs-card-spacer-y: calc(1rem * var(--app-pad-scale));
+  --bs-card-spacer-x: calc(1rem * var(--app-pad-scale));
+  --bs-card-cap-padding-y: calc(.5rem * var(--app-pad-scale));
+  --bs-card-cap-padding-x: calc(1rem * var(--app-pad-scale));
+}
+.list-group {
+  --bs-list-group-item-padding-y: calc(.5rem * var(--app-pad-scale));
+  --bs-list-group-item-padding-x: calc(1rem * var(--app-pad-scale));
+}
+.app-main {
+  padding-top: calc(1.5rem * var(--app-pad-scale));
+  padding-bottom: calc(1.5rem * var(--app-pad-scale));
+}
+
 /* התפריט מבקש רוחב נוח, אבל לא יותר מהמסך. שתי המידות נחוצות:
    min-width הוא רצפה בלבד, והתוכן עצמו - שנמדד ב-rem וגדל עם גודל
    הטקסט - היה מותח את התפריט מעבר לקצה בטלפון צר. */
@@ -46,8 +86,6 @@ body { background: #f5f7f9; }
    אינם נקודות שבירה. הטבלאות עטופות ב-table-responsive ולכן
    מק"ט ארוך גולל ולא שובר את הפריסה. */
 .sku { white-space: nowrap; }
-
-.table > :not(caption) > * > * { padding: .6rem .75rem; }
 
 footer a { color: var(--brand); }
 
