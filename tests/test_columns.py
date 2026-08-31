@@ -284,7 +284,8 @@ def test_a_part_with_nothing_attached_counts_zero(app, client, catalog):
         db.session.commit()
         part = Part.query.filter_by(part_number="LONE-1").first()
         counts = services.column_counts([part], part_columns.COLUMNS)
-        assert counts[part.id] == {"catalog_parts": 0, "substitutes": 0}
+        assert counts[part.id]["catalog_parts"] == 0
+        assert counts[part.id]["substitutes"] == 0
 
 
 @pytest.mark.parametrize("sort", [
@@ -318,6 +319,163 @@ def test_the_counts_are_fetched_in_one_query_for_the_whole_page(app, client, veh
         plain = [c for c in services.column_layout() if c.key != "catalog_parts"]
         assert services.column_counts(parts, plain) == {}
         assert len(services.column_counts(parts, part_columns.COLUMNS)) == len(parts)
+
+
+# ---------- חשיבות החלק: הצי שמאחורי הרכב ----------
+
+@pytest.fixture
+def fleet(app, vehicles):
+    """צילום מרשם: קורולה נפוצה, ריו נדירה, ורכב שאין לו חלפים בקטלוג.
+
+    שמות היצרן והדגם נכתבים כמו במרשם ולא כמו בקטלוג - "טויוטה יפן"
+    מול "טויוטה", ו-"COROLLA HSD SDN" מול "COROLLA" - כי זה בדיוק
+    הפער שההצלבה קיימת בשבילו.
+    """
+    from datetime import datetime, timezone
+
+    from app.fleet_stats import FleetModelCount, forget_fleet_index
+
+    # חותמת אחת לכל השורות: צילום הוא רגע אחד, וזה גם מה שמזהה אותו
+    taken_at = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    with app.app_context():
+        forget_fleet_index()
+        db.session.add_all([
+            FleetModelCount(make="טויוטה יפן", model="COROLLA HSD SDN", taken_at=taken_at,
+                            vehicles=90000, young=1000, prime=60000, old=29000),
+            FleetModelCount(make="טויוטה יפן", model="COROLLA", taken_at=taken_at,
+                            vehicles=30000, young=500, prime=20000, old=9500),
+            FleetModelCount(make="קיה קוריאה", model="RIO", taken_at=taken_at,
+                            vehicles=4000, young=100, prime=2000, old=1900),
+        ])
+        db.session.commit()
+        yield
+        forget_fleet_index()
+
+
+def test_the_fleet_columns_are_on_the_shelf(client):
+    labels = {c.key: c.label for c in part_columns.COLUMNS}
+    assert labels["fleet_vehicles"] == "רכבים על הכביש"
+    assert labels["fleet_prime"] == "בטווח הקנייה"
+    assert labels["fleet_gap"] == 'רכבים למק"ט'
+
+
+def test_the_registry_spelling_is_bridged_to_the_catalog(app, fleet):
+    """המרשם כותב "טויוטה יפן" ו-"COROLLA HSD SDN"; הקטלוג "טויוטה"
+    ו-"COROLLA". שתי שורות המרשם נספרות יחד לאותו רכב בקטלוג."""
+    from app import fleet_stats
+
+    with app.app_context():
+        row = fleet_stats.catalog_fleet_numbers()[("טויוטה", "COROLLA")]
+        assert row["vehicles"] == 120000
+        assert row["prime"] == 80000
+
+
+def test_the_cell_shows_the_fleet_behind_the_part(app, client, fleet):
+    with app.app_context():
+        parts = Part.query.filter(Part.part_number.in_(["AA-1", "BB-2"])).all()
+        counts = services.column_counts(parts, part_columns.COLUMNS)
+        by_number = {p.part_number: counts[p.id] for p in parts}
+    assert by_number["AA-1"]["fleet_vehicles"] == 120000     # קורולה
+    assert by_number["AA-1"]["fleet_prime"] == 80000
+    assert by_number["BB-2"]["fleet_vehicles"] == 0          # אין לו רכב במרשם
+
+
+def test_the_gap_is_prime_over_the_parts_we_have(app, client, fleet):
+    """אותו מדד של מסך הצי: רכבים בטווח הקנייה חלקי מק"טים לדגם."""
+    with app.app_context():
+        part = Part.query.filter_by(part_number="AA-1").first()
+        counts = services.column_counts([part], part_columns.COLUMNS)
+        catalog_parts = services.vehicle_part_counts("טויוטה", "COROLLA")[0]
+        assert catalog_parts == 3
+        assert counts[part.id]["fleet_gap"] == pytest.approx(80000 / 3)
+
+
+def test_sorting_by_the_fleet_agrees_with_the_cell(app, client, fleet):
+    """הסדר נבנה ב-SQL והתא בפייתון, ושניהם מאותה מפה - אסור שיסתרו."""
+    with app.app_context():
+        services.save_column_layout(["part_number", "fleet_vehicles"])
+    order = numbers(client.get("/parts?sort=fleet_vehicles:desc"))
+    assert order[0] in ("AA-1", "CC-3", "TEST-001")      # כולם קורולה
+    assert order[-1] == "BB-2"                           # ואין לו רכב במרשם
+
+    with app.app_context():
+        parts = {p.part_number: p for p in Part.query.all()}
+        counts = services.column_counts(list(parts.values()), part_columns.COLUMNS)
+        by_number = {n: counts[p.id]["fleet_vehicles"] for n, p in parts.items()}
+    assert [by_number[n] for n in order] == sorted(
+        (by_number[n] for n in order), reverse=True)
+
+
+def test_the_gap_agrees_with_the_cell_for_a_part_that_fits_two_cars(app, client, fleet):
+    """המלכודת: "הרכבים הגדולים חלקי המק"טים הרבים" אינו "הפער הגדול".
+
+    AA-1 מתאים גם לקורולה (80,000 בטווח / 3 מק"טים) וגם לריו
+    (2,000 / 1 מק"ט). הפער הנכון הוא הגדול מבין השניים, ולא חלוקה של
+    המקסימומים זה בזה. התא והמיון חייבים לומר את אותו דבר.
+    """
+    from app.models import Fitment
+
+    with app.app_context():
+        aa = Part.query.filter_by(part_number="AA-1").first()
+        db.session.add(Fitment(part=aa, make="קיה", model="RIO", year_from=2016))
+        db.session.commit()
+        services.save_column_layout(["part_number", "fleet_gap"])
+
+        part = Part.query.filter_by(part_number="AA-1").first()
+        cell = services.column_counts([part], part_columns.COLUMNS)[part.id]["fleet_gap"]
+        corolla = 80000 / services.vehicle_part_counts("טויוטה", "COROLLA")[0]
+        rio = 2000 / services.vehicle_part_counts("קיה", "RIO")[0]
+        assert cell == pytest.approx(max(corolla, rio))
+        # ולא החלוקה של המקסימומים, שהיא מספר אחר לגמרי
+        assert cell != pytest.approx(80000 / services.vehicle_part_counts("קיה", "RIO")[0])
+
+        # והמיון, שנבנה ב-SQL, מסכים עם התא
+        parts = Part.query.all()
+        by_id = services.column_counts(parts, part_columns.COLUMNS)
+        expected = sorted(
+            (p.part_number for p in parts),
+            key=lambda n: -by_id[
+                next(p.id for p in parts if p.part_number == n)]["fleet_gap"],
+        )
+    assert numbers(client.get("/parts?sort=fleet_gap:desc"))[0] == expected[0]
+
+
+def test_the_fleet_columns_filter_as_numbers(client, fleet):
+    assert sorted(numbers(client.get("/parts?f_fleet_vehicles=%3E1000"))) == [
+        "AA-1", "CC-3", "TEST-001"]
+    assert numbers(client.get("/parts?f_fleet_prime=%3E100000")) == []
+
+
+def test_without_a_fleet_snapshot_the_cell_says_unknown_not_zero(app, client, vehicles):
+    """"לא נטענה ספירה" אינו "אין רכבים כאלה"."""
+    with app.app_context():
+        part = Part.query.filter_by(part_number="AA-1").first()
+        counts = services.column_counts([part], part_columns.COLUMNS)
+        assert counts[part.id]["fleet_vehicles"] is None
+        services.save_column_layout(["part_number", "fleet_vehicles"])
+    html = client.get("/parts").get_data(as_text=True)
+    assert "לא נטענה ספירת צי" in html
+
+
+def test_without_a_snapshot_sorting_still_works(client, vehicles):
+    """בלי צילום אין CASE לבנות ממנו, והמיון לא אמור להתפוצץ."""
+    assert client.get("/parts?sort=fleet_gap:desc").status_code == 200
+    assert client.get("/parts?f_fleet_vehicles=%3E0").status_code == 200
+
+
+def test_a_new_snapshot_is_not_served_from_the_old_memory(app, fleet):
+    """הצי המנורמל נשמר בזיכרון לפי חותמת הצילום; צילום חדש פוסל אותו."""
+    from app import fleet_stats
+    from app.fleet_stats import FleetModelCount
+
+    with app.app_context():
+        assert fleet_stats.catalog_fleet_numbers()[("טויוטה", "COROLLA")]["vehicles"] == 120000
+        fleet_stats.replace_snapshot([{
+            "make": "טויוטה יפן", "model": "COROLLA", "model_code": "1",
+            "vehicles": 7, "young": 1, "prime": 5, "old": 1,
+            "year_from": 2015, "year_to": 2020,
+        }])
+        assert fleet_stats.catalog_fleet_numbers()[("טויוטה", "COROLLA")]["vehicles"] == 7
 
 
 # ---------- מה ש-SQLite סלח עליו ו-Postgres לא ----------
