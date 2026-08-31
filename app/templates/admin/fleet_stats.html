@@ -25,15 +25,18 @@
         </span>
       </div>
 
-      {# אין למאגר "סה"כ קבוצות", ולכן אין אחוז התקדמות אמיתי. פס נע
-         שאומר "עובד" עדיף על אחוז מומצא, והמונים מספרים את האמת. #}
+      {# אחוז אמיתי יש רק בסריקה, שבה המאגר מוסר סה"כ רשומות. בספירה
+         אצלו אין למה להשוות, ופס נע שאומר "עובד" עדיף על אחוז מומצא. #}
       <div class="progress mb-2 d-none" id="progress" style="height: 1.4rem">
         <div class="progress-bar progress-bar-striped progress-bar-animated"
-             style="width: 100%">סופר...</div>
+             id="progress-bar" style="width: 100%">סופר...</div>
       </div>
 
       <p class="small text-muted mb-3" id="job-counters">
         {% if job %}
+          {{ job.mode_label }} ·
+          {%- if job.total %} נסרקו {{ "{:,}".format(job.offset) }} מתוך
+          {{ "{:,}".format(job.total) }} ·{% endif %}
           נספרו {{ "{:,}".format(job.models) }} דגמים ·
           {{ "{:,}".format(job.vehicles) }} רכבים
         {% else %}עדיין לא הופעלה ספירה.{% endif %}
@@ -58,6 +61,10 @@
         הספירה רצה במנות. אפשר לעצור באמצע ולהמשיך מאוחר יותר מאותה נקודה —
         גם אחרי סגירת הדפדפן או פריסה מחדש. הצילום הקודם ממשיך להיות מוצג
         עד שהחדש שלם, ורק אז הוא מוחלף.
+      </p>
+      <p class="small text-muted mt-2 mb-0">
+        קודם מבקשים מהמאגר לספור בעצמו. כשהנקודה הזאת אינה זמינה אצלו,
+        ההרצה עוברת מעצמה לסריקה מלאה — אותה תוצאה, לוקח יותר זמן.
       </p>
     </div></div>
   </div>
@@ -86,6 +93,7 @@
 <script>
 (function () {
   const progress = document.getElementById("progress");
+  const bar = document.getElementById("progress-bar");
   const status = document.getElementById("job-status");
   const counters = document.getElementById("job-counters");
   const errorBox = document.getElementById("job-error");
@@ -129,8 +137,20 @@
       : job.status === "running" ? "bg-primary" : "bg-secondary");
     progress.classList.toggle("d-none", job.status !== "running");
 
-    counters.textContent = "נספרו " + num(job.models) + " דגמים · "
-      + num(job.vehicles) + " רכבים";
+    // בסריקה יש סה"כ אמיתי מהמאגר ולכן אחוז אמיתי; בספירה אצלו אין
+    if (job.progress_pct === null || job.progress_pct === undefined) {
+      bar.className = "progress-bar progress-bar-striped progress-bar-animated";
+      bar.style.width = "100%";
+      bar.textContent = "סופר...";
+    } else {
+      bar.className = "progress-bar";
+      bar.style.width = job.progress_pct + "%";
+      bar.textContent = job.progress_pct + "%";
+    }
+
+    counters.textContent = (job.mode_label ? job.mode_label + " · " : "")
+      + (job.total ? "נסרקו " + num(job.offset) + " מתוך " + num(job.total) + " · " : "")
+      + "נספרו " + num(job.models) + " דגמים · " + num(job.vehicles) + " רכבים";
 
     errorBox.classList.toggle("d-none", !job.error);
     if (job.error) errorBox.textContent = job.error;

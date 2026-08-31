@@ -14,9 +14,11 @@
 הכביש. דגם עם 90 אלף רכבים ודגם עם 300 נראים אותו דבר ברשימת הדגמים, והם
 לא אותו דבר כשמחליטים איזה מק"ט להחזיק במלאי.
 """
+import base64
 import csv
 import io
 import json
+import zlib
 import os
 import urllib.parse
 import urllib.request
@@ -132,6 +134,11 @@ class FleetStatsJob(db.Model):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+    # שני מסלולים לאותה תוצאה: המאגר סופר בעצמו, או שאנחנו סורקים וסופרים
+    SQL = "sql"
+    SCAN = "scan"
+    MODE_LABELS = {SQL: "ספירה אצל המאגר", SCAN: "סריקה מלאה"}
+
     STATUS_LABELS = {
         RUNNING: "בתהליך",
         DONE: "הושלם",
@@ -146,6 +153,12 @@ class FleetStatsJob(db.Model):
     vehicles = db.Column(db.Integer, default=0, nullable=False)  # רכבים שנספרו
     error = db.Column(db.Text)
     failures = db.Column(db.Integer, default=0, nullable=False)  # כשלונות רצופים
+    mode = db.Column(db.String(10), default=SQL, nullable=False)
+    total = db.Column(db.Integer)   # סה"כ רשומות במאגר, בסריקה בלבד
+    # מצב הספירה בזמן סריקה: מיליוני שורות מתכווצות לעשרות אלפי דגמים,
+    # והן חייבות להיצבר בין בקשה לבקשה. שדה אחד שנקרא ונכתב פעם אחת למנה,
+    # במקום מיליון שורות ביניים בטבלה
+    counts = db.Column(db.Text)
     snapshot_at = db.Column(db.DateTime, nullable=False, default=_now, index=True)
     started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     started_at = db.Column(db.DateTime, default=_now)
@@ -163,13 +176,36 @@ class FleetStatsJob(db.Model):
         return self.STATUS_LABELS.get(self.status, self.status)
 
     @property
+    def mode_label(self):
+        return self.MODE_LABELS.get(self.mode, self.mode)
+
+    @property
+    def progress_pct(self):
+        """אחוז אמיתי רק בסריקה, שבה המאגר מוסר סה"כ רשומות.
+
+        בספירה אצל המאגר אין למה להשוות - GROUP BY לא מחזיר כמה קבוצות
+        יהיו - ולכן שם אין אחוז, ולא ממציאים אחד.
+        """
+        if self.mode != self.SCAN or not self.total:
+            return None
+        return min(100, round(self.offset * 100 / self.total))
+
+    @property
     def action_label(self):
         """מה הכפתור עושה בפועל מהמצב הנוכחי.
 
         אין למאגר "סה\"כ קבוצות" להשוות אליו, ולכן אין אחוז התקדמות ואי
         אפשר להסתמך עליו כדי להסביר את הכפתור - הטקסט הוא ההסבר.
+
+        הרצה שנפלה על העמוד הראשון לא השאירה מה להמשיך, ו"המשך" הוא
+        תיאור שגוי של מה שיקרה בלחיצה - שם היא מתחילה מאפס, וכך היא
+        גם אומרת.
         """
-        return "ספירה מחדש" if self.status == self.DONE else "המשך ספירה"
+        if self.status == self.DONE:
+            return "ספירה מחדש"
+        if self.offset or self.models:
+            return "המשך ספירה"
+        return "התחל ספירה"
 
     def to_dict(self):
         return {
@@ -183,6 +219,10 @@ class FleetStatsJob(db.Model):
             "error": self.error,
             "failures": self.failures,
             "is_running": self.is_running,
+            "mode": self.mode,
+            "mode_label": self.mode_label,
+            "total": self.total,
+            "progress_pct": self.progress_pct,
         }
 
     def __repr__(self):
@@ -252,6 +292,10 @@ def scan_page(offset, page_size=SCAN_PAGE_SIZE, resource_id=None, timeout=TIMEOU
 
     מבקש רק את ארבעת השדות שהספירה צריכה - שורה מלאה במאגר הזה היא
     27 שדות, ומשיכה של שלושה מיליון מהן מבזבזת רוחב פס על כלום.
+
+    sort=_id אינו קישוט: בלי סדר מוגדר, offset בבקשה אחת לא מצביע על
+    אותו מקום כמו בבקשה הקודמת, וסריקה של תשעים עמודים הייתה סופרת
+    רכבים פעמיים ומדלגת על אחרים.
     """
     params = urllib.parse.urlencode(
         {
@@ -259,6 +303,7 @@ def scan_page(offset, page_size=SCAN_PAGE_SIZE, resource_id=None, timeout=TIMEOU
             "limit": page_size,
             "offset": offset,
             "fields": ",".join(SCAN_FIELDS),
+            "sort": "_id",
         }
     )
     payload = _fetch_json(f"{CKAN_URL}?{params}", timeout)
@@ -349,6 +394,33 @@ def aggregate_records(records, counts=None):
     return counts
 
 
+def pack_counts(counts):
+    """מכווץ את מצב הספירה לשדה אחד, לשמירה בין מנה למנה.
+
+    כמה עשרות אלפי דגמים כ-JSON הם כמה מגהבייטים; דחיסה מורידה אותם
+    לסדר גודל של מאות קילובייטים, וזה מה שנקרא ונכתב בכל מנה.
+    """
+    payload = json.dumps(
+        [
+            [key[0], key[1], key[2], row["vehicles"], row["year_from"], row["year_to"]]
+            for key, row in counts.items()
+        ],
+        ensure_ascii=False,
+    )
+    return base64.b64encode(zlib.compress(payload.encode("utf-8"), 6)).decode("ascii")
+
+
+def unpack_counts(blob):
+    """מחזיר את מצב הספירה למבנה שאפשר להמשיך לצבור אליו."""
+    if not blob:
+        return {}
+    payload = zlib.decompress(base64.b64decode(blob)).decode("utf-8")
+    return {
+        (make, model, code): _row(make, model, code, vehicles, year_from, year_to)
+        for make, model, code, vehicles, year_from, year_to in json.loads(payload)
+    }
+
+
 def sort_rows(rows, min_count=1):
     """הגדול ראשון. זה הסדר שבו קוראים את הטבלה הזאת בפועל."""
     kept = [row for row in rows if row["vehicles"] >= min_count]
@@ -399,6 +471,14 @@ def publish(taken_at):
     ממשיך להיענות למסך.
     """
     FleetModelCount.query.filter(FleetModelCount.taken_at != taken_at).delete(
+        synchronize_session=False
+    )
+    db.session.commit()
+
+
+def discard(taken_at):
+    """מוחק צילום חלקי שלא יגיע לכלל שלמות."""
+    FleetModelCount.query.filter(FleetModelCount.taken_at == taken_at).delete(
         synchronize_session=False
     )
     db.session.commit()

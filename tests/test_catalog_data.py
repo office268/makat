@@ -1,4 +1,5 @@
 """קובץ הקטלוג: הוא מה שנטען בפרודקשן, ולכן זה מה שנבדק."""
+import re
 import pathlib
 
 import pytest
@@ -337,7 +338,10 @@ def test_spark_plugs_are_petrol_only(app):
                   "MAZDA 3", "NIRO", "PICANTO", "YARIS", "RIO", "AURIS",
                   "AYGO", "CAMRY", "CARENS", "CEED", "CX-3", "CX-30",
                   "MAZDA 2", "MAZDA 6", "MX-5", "PRIUS", "SELTOS",
-                  "SORENTO", "SOUL", "STONIC"}
+                  "SORENTO", "SOUL", "STONIC",
+                  # אושרו בסבב הרכבים הנפוצים בישראל: כל ההתאמות
+                  # שנאספו להם הן בנזין (1.2, 1.0 MPi, 1.4 MPI, 1.4 TSI)
+                  "i10", "i20", "i30", "OCTAVIA", "RAPID"}
         assert models <= petrol, models - petrol
 
 
@@ -345,13 +349,16 @@ def test_the_korean_front_disc_serves_tucson_and_sportage(app):
     """אותו מק"ט, 305x25, מופיע בעמוד הטוסון ובעמוד הספורטג'.
 
     שתי השורות האלה כבר היו בקטלוג עבור טוסון; עמוד הספורטג' הוא
-    שהוסיף להן את ההתאמה השנייה, ולא ניחוש על סמך פלטפורמה משותפת."""
+    שהוסיף להן את ההתאמה השנייה, ולא ניחוש על סמך פלטפורמה משותפת.
+
+    הבדיקה היא הכלה ולא שוויון: הדיסק הזה משרת גם את i30, וסבב
+    איסוף שמוסיף עוד רכב אמיתי אינו אמור להפיל בדיקה."""
     _load(app)
     with app.app_context():
         for number in ("ADG043221", "108575"):
             part = Part.query.filter_by(part_number=number).one()
-            assert {(f.make, f.model) for f in part.fitments} == {
-                ("יונדאי", "TUCSON"), ("קיה", "SPORTAGE")}, number
+            assert {("יונדאי", "TUCSON"), ("קיה", "SPORTAGE")} <= {
+                (f.make, f.model) for f in part.fitments}, number
 
 
 def test_front_brake_pads_are_a_real_category_now(app):
@@ -471,13 +478,17 @@ def test_an_oe_reference_belongs_to_the_car_it_fits(app):
             for raw in brands:
                 if raw not in he:
                     unknown.append((part.part_number, raw))
-            # יונדאי וקיה הן קבוצה אחת ומספרות חלפים באותה סדרה,
-            # ולכן OE של יונדאי על חלף של קיה אינו זר
-            group = set()
-            for m in makes:
-                group.add(m)
-                if m in ("קיה", "יונדאי"):
-                    group |= {"קיה", "יונדאי"}
+            # קבוצות שמספרות חלפים באותה סדרה: OE של יונדאי על חלף
+            # של קיה אינו זר, וכך גם מק"ט VAG על אוקטביה - טבלת ה-OE
+            # רושמת אותו על שם פולקסווגן, והוא בכל זאת המק"ט המקורי
+            shared = ({"קיה", "יונדאי"},
+                      {"סקודה", "פולקסווגן", "סיאט", "אאודי"},
+                      {"טויוטה", "לקסוס"},
+                      {"פיג'ו", "סיטרואן"})
+            group = set(makes)
+            for family in shared:
+                if family & makes:
+                    group |= family
             if not any(he.get(b) in group for b in brands):
                 orphan.append((part.part_number, brands, sorted(makes)))
         assert unknown == [], unknown[:5]
@@ -544,3 +555,55 @@ def test_a_part_that_fits_two_makes_carries_both_originals(app):
             if len(makes) > 1 and len(brands) > 1:
                 mixed += 1
         assert mixed >= 10, mixed
+
+
+def test_the_original_number_agrees_with_the_side(app):
+    """אצל טויוטה 87910 הוא ימין ו-87940 הוא שמאל - חמש הספרות
+    הראשונות של המק"ט המקורי כוללות את הצד.
+
+    זו בדיקה חיצונית למקור: אפילו אם AUTODOC יטעה, המספר עצמו
+    יסגיר את הטעות. חלק פח שמוזמן לפי מספר של הצד ההפוך מגיע הפוך."""
+    _load(app)
+    prefix = {
+        "Toyota": {"87910": "ימין", "87940": "שמאל", "81551": "ימין",
+                   "81561": "שמאל", "81581": "ימין", "81591": "שמאל",
+                   "53801": "ימין", "53802": "שמאל", "53811": "ימין",
+                   "53812": "שמאל", "81210": "ימין", "81220": "שמאל"},
+        # יונדאי וקיה חולקות את אותו מספור
+        "Kia": {"92201": "שמאל", "92202": "ימין", "92401": "שמאל",
+                "92402": "ימין", "92405": "שמאל", "92406": "ימין",
+                "66311": "שמאל", "66321": "ימין", "87610": "שמאל",
+                "87620": "ימין", "92101": "שמאל", "92102": "ימין"},
+    }
+    prefix["Hyundai"] = prefix["Kia"]
+    checked = 0
+    with app.app_context():
+        for part in Part.query.filter(Part.side.isnot(None)):
+            if not part.side:
+                continue
+            for ref in part.cross_refs:
+                table = prefix.get(ref.ref_brand)
+                if not table:
+                    continue
+                head = re.sub(r"[^0-9A-Z]", "", ref.ref_number.upper())[:5]
+                if head not in table:
+                    continue
+                checked += 1
+                assert table[head] == part.side, (
+                    f'{part.part_number} מסומן {part.side} אבל '
+                    f'{ref.ref_number} הוא {table[head]}')
+    assert checked >= 20, checked
+
+
+def test_a_diesel_never_gets_spark_plugs(app):
+    """מנוע דיזל אין לו מצתים, ולכן אין מצת שתלוי בהתאמה לדיזל.
+
+    דף המצתים של טוסון 2.0 CRDi ב-AUTODOC בכל זאת מציג פריטים,
+    ככל הנראה מדגמים אחרים באותה משפחה."""
+    _load(app)
+    diesel = re.compile(r"CRDi|TDI|CDTI|dCi|HDi|D-4D|BlueHDi|CDI", re.I)
+    with app.app_context():
+        for part in Part.query.filter_by(part_type="spark_plug"):
+            for fit in part.fitments:
+                assert not (fit.engine_code and diesel.search(fit.engine_code)), (
+                    f"{part.part_number} תלוי במנוע דיזל {fit.engine_code}")

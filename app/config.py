@@ -88,6 +88,11 @@ class Config:
     FLEET_STATS_PAGES_PER_CHUNK = int(
         os.environ.get("FLEET_STATS_PAGES_PER_CHUNK", 1)
     )
+    # מסלול הסריקה מושך שורות רכב גולמיות. CKAN מגביל ל-32,000 לבקשה,
+    # וזה ההבדל בין תשעים בקשות לשלושת אלפים.
+    FLEET_STATS_SCAN_PAGE_SIZE = int(
+        os.environ.get("FLEET_STATS_SCAN_PAGE_SIZE", 32000)
+    )
     FLEET_STATS_TIME_BUDGET = float(os.environ.get("FLEET_STATS_TIME_BUDGET", 25))
     FLEET_STATS_FETCH_ATTEMPTS = int(os.environ.get("FLEET_STATS_FETCH_ATTEMPTS", 3))
     FLEET_STATS_RETRY_PAUSE = float(os.environ.get("FLEET_STATS_RETRY_PAUSE", 2))

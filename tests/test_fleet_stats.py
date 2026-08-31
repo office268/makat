@@ -2,7 +2,7 @@
 import json
 from contextlib import contextmanager
 
-from app import fleet_stats
+from app import fleet_stats, services
 from app.fleet_stats import FleetModelCount
 
 
@@ -218,6 +218,49 @@ def test_stats_page_lists_models(client, app):
     assert "90,000" in html
     assert "COROLLA" in html
     assert "150,000" in html  # סה"כ הצי
+
+
+def test_stats_page_counts_matching_parts(client, app):
+    """הקטלוג של הבדיקות מחזיק רפידות קדמיות ל-COROLLA של טויוטה."""
+    snapshot(app, [
+        {"make": "טויוטה יפן", "model": "COROLLA", "model_code": "A1",
+         "vehicles": 90000},
+        {"make": "מאזדה יפן", "model": "3", "model_code": "B2", "vehicles": 60000},
+    ])
+    html = client.get("/stats?make=טויוטה יפן").get_data(as_text=True)
+    assert "חלפים במאגר" in html
+    assert "מתוכם מתכלים" in html
+    # שורת COROLLA: מק"ט אחד מתאים, והוא מתכלה
+    row = html[html.index("COROLLA"):]
+    assert "badge bg-success-subtle" in row
+
+
+def test_part_counts_match_what_the_search_opens(app):
+    """המספר בעמודה הוא בדיוק מה שנפתח בלחיצה עליו."""
+    with app.app_context():
+        total, wear = services.vehicle_part_counts("טויוטה", "COROLLA")
+        assert total == services.search_parts(make="טויוטה", model="COROLLA").count()
+        assert (total, wear) == (1, 1)
+
+
+def test_part_counts_are_zero_for_a_model_we_carry_nothing_for(app):
+    with app.app_context():
+        assert services.vehicle_part_counts("מאזדה", "3") == (0, 0)
+
+
+def test_wear_count_excludes_parts_that_are_not_consumables(app):
+    """פגוש מתאים לרכב אבל אינו מתכלה - הוא נספר רק בעמודה הכללית."""
+    from app.models import Fitment, Part, db
+
+    with app.app_context():
+        part = Part(part_number="BUMPER-1", name_he="פגוש קדמי COROLLA",
+                    part_type="front_bumper")
+        part.fitments = [Fitment(make="טויוטה", model="COROLLA")]
+        db.session.add(part)
+        db.session.commit()
+
+        total, wear = services.vehicle_part_counts("טויוטה", "COROLLA")
+        assert (total, wear) == (2, 1)
 
 
 def test_stats_page_filters(client, app):
