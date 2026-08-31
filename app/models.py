@@ -2,13 +2,23 @@
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, func
 
 db = SQLAlchemy()
 
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def squash(column):
+    """שם בצורה שבה משווים אותו: בלי רווחים, בלי מקפים, אותיות קטנות.
+
+    "RAV 4" ו-"RAV4" הם אותו דגם, ו-"2ZR-FAE" ו-"2ZRFAE" אותו מנוע.
+    יושב כאן ולא ב-services כדי שגם רישום העמודות יוכל להשתמש בו בלי
+    לייבא את services ולסגור מעגל.
+    """
+    return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
 
 
 class Manufacturer(db.Model):

@@ -9,7 +9,7 @@
 """
 import re
 
-from sqlalchemy import case
+from sqlalchemy import case, func, union
 
 from .models import (
     Category,
@@ -19,11 +19,90 @@ from .models import (
     OrgPart,
     Part,
     db,
+    squash,
 )
 
 # הביטוי שמחשב מחיר כולל מע"מ בצד בסיס הנתונים. חייב להתאים ל-
 # OrgPart.price_with_vat, אחרת המיון יסתור את מה שכתוב בעמודה.
 PRICE_WITH_VAT = case((OrgPart.vat_included.is_(True), OrgPart.price), else_=OrgPart.price * 1.18)
+
+# ---------- ספירות שמחושבות בבסיס הנתונים ----------
+#
+# שתי העמודות שסופרות שורות אחרות בקטלוג - כמה חלפים יש לרכב הזה,
+# וכמה מק"טים שקולים יש לחלק הזה - מקובצות פעם אחת בתת-שאילתה ולא
+# נספרות מחדש לכל שורה. זה ההבדל בין מיון שלוקח רגע לבין מיון שסורק
+# את הקטלוג פעם לכל מק"ט.
+
+# כמה מק"טים בקטלוג מתאימים לכל (יצרן, דגם). הכיווץ זהה לזה שבחיפוש,
+# כך ש-"RAV 4" ו-"RAV4" נספרים יחד.
+_PARTS_PER_VEHICLE = (
+    db.select(
+        squash(Fitment.make).label("make"),
+        squash(Fitment.model).label("model"),
+        func.count(func.distinct(Fitment.part_id)).label("parts"),
+    )
+    .group_by(squash(Fitment.make), squash(Fitment.model))
+    .subquery()
+)
+
+# חלק מתאים לפעמים לכמה רכבים. המספר הוא של הרכב שיש לו הכי הרבה
+# חלפים בקטלוג - הרחב מביניהם, ולא סכום שסופר את אותו מק"ט פעמיים.
+CATALOG_PARTS = (
+    db.select(func.max(_PARTS_PER_VEHICLE.c.parts))
+    .select_from(Fitment)
+    .join(
+        _PARTS_PER_VEHICLE,
+        db.and_(
+            _PARTS_PER_VEHICLE.c.make == squash(Fitment.make),
+            _PARTS_PER_VEHICLE.c.model == squash(Fitment.model),
+        ),
+    )
+    .where(Fitment.part_id == Part.id)
+    .correlate(Part)
+    .scalar_subquery()
+)
+
+# תחליף = מק"ט אחר בקטלוג שחולק מספר מקביל עם החלק הזה. אותו כלל
+# בדיוק כמו רשימת "מק"טים שקולים בקטלוג" שבכרטיס המק"ט
+# (services.equivalent_parts): המספרים שלי הם המקבילים שלי *וגם*
+# המק"ט שלי עצמו, והם נבדקים מול המקבילים של האחרים.
+_MY_NUMBERS = union(
+    db.select(
+        CrossReference.part_id.label("part_id"),
+        func.lower(CrossReference.ref_number).label("ref"),
+    ),
+    db.select(Part.id.label("part_id"), func.lower(Part.part_number).label("ref")),
+).subquery()
+
+# הספירה לכל המק"טים בבת אחת. הניסוח המתבקש - תת-שאילתה שרצה מחדש
+# לכל שורה - לקח שבע שניות על קטלוג של 2,400 מק"טים, כי lower() מבטל
+# את האינדקס והחיפוש הופך לסריקה מלאה לכל מק"ט. כאן הצירוף נעשה פעם
+# אחת ומקובץ, וזה יורד לעשרות אלפיות.
+_SUBSTITUTES_PER_PART = (
+    db.select(
+        _MY_NUMBERS.c.part_id.label("part_id"),
+        func.count(func.distinct(CrossReference.part_id)).label("parts"),
+    )
+    .select_from(_MY_NUMBERS)
+    .join(
+        CrossReference,
+        db.and_(
+            func.lower(CrossReference.ref_number) == _MY_NUMBERS.c.ref,
+            CrossReference.part_id != _MY_NUMBERS.c.part_id,
+        ),
+    )
+    .group_by(_MY_NUMBERS.c.part_id)
+    .subquery()
+)
+
+# מק"ט בלי מקבילים אינו "חסר ערך" אלא אפס תחליפים, וכך הוא גם ממוין
+SUBSTITUTES = func.coalesce(
+    db.select(_SUBSTITUTES_PER_PART.c.parts)
+    .where(_SUBSTITUTES_PER_PART.c.part_id == Part.id)
+    .correlate(Part)
+    .scalar_subquery(),
+    0,
+)
 
 # ">100", "<=50", "10-20" או "7". מה שאי אפשר לקרוא כמספר לא מסנן כלום -
 # מסננים שהוקלדו למחצה לא אמורים לרוקן את הטבלה.
@@ -205,6 +284,40 @@ COLUMNS = (
         hint="יצרן או דגם",
     ),
     Column(
+        "vehicle_make", "יצרן רכב",
+        sort_by=db.select(func.min(Fitment.make))
+        .where(Fitment.part_id == Part.id).correlate(Part).scalar_subquery(),
+        param="f_vehicle_make", kind="text",
+        apply=lambda raw: _in_related(
+            Fitment, Fitment.make.ilike(f"%{raw.strip()}%")
+        ),
+        text=lambda part, op: _vehicle_names(part, "make"),
+    ),
+    Column(
+        "vehicle_model", "דגם רכב",
+        sort_by=db.select(func.min(Fitment.model))
+        .where(Fitment.part_id == Part.id).correlate(Part).scalar_subquery(),
+        param="f_vehicle_model", kind="text",
+        apply=lambda raw: _in_related(
+            Fitment, Fitment.model.ilike(f"%{raw.strip()}%")
+        ),
+        text=lambda part, op: _vehicle_names(part, "model"),
+    ),
+    Column(
+        "catalog_parts", "חלפים במאגר",
+        sort_by=CATALOG_PARTS, param="f_catalog_parts", kind="number",
+        apply=lambda raw: number_condition(CATALOG_PARTS, raw),
+        align="text-end",
+        hint=">10",
+    ),
+    Column(
+        "substitutes", "תחליפים",
+        sort_by=SUBSTITUTES, param="f_substitutes", kind="number",
+        apply=lambda raw: number_condition(SUBSTITUTES, raw),
+        align="text-end",
+        hint=">0",
+    ),
+    Column(
         "barcode", "ברקוד",
         sort_by=Part.barcode, param="f_barcode", kind="text",
         apply=lambda raw: _text_condition(Part.barcode, raw),
@@ -280,6 +393,18 @@ BY_KEY = {column.key: column for column in COLUMNS}
 DEFAULT_KEYS = (
     "part_number", "oem", "name_he", "manufacturer", "fitments", "price", "stock",
 )
+
+
+def _vehicle_names(part, field):
+    """יצרני הרכב או הדגמים שהחלק מתאים להם, בלי כפילויות."""
+    seen = []
+    for fitment in part.fitments:
+        value = getattr(fitment, field)
+        if value and value not in seen:
+            seen.append(value)
+    if not seen:
+        return "—"
+    return " · ".join(seen[:2]) + (f" ועוד {len(seen) - 2}" if len(seen) > 2 else "")
 
 
 def _type_name(key):

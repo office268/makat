@@ -114,14 +114,16 @@ def parts_list():
         filtered=is_filtered,
     )
     sorted_column, direction = part_columns.parse_sort(filters["sort"])
+    columns = services.column_layout()
     return render_template(
         "parts/list.html",
         pagination=pagination,
         parts=pagination.items,
+        counts=services.column_counts(pagination.items, columns),
         filters=filters,
         is_filtered=is_filtered,
         total_parts=Part.query.count(),
-        columns=services.column_layout(),
+        columns=columns,
         sorted_key=sorted_column.key if sorted_column else None,
         sort_direction=direction,
     )
