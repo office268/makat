@@ -274,39 +274,75 @@ def stats():
     """
     q = request.args.get("q", "").strip() or None
     make = request.args.get("make", "").strip() or None
+    sort = request.args.get("sort", "vehicles")
     page = request.args.get("page", 1, type=int)
     # הצילום החי נקבע פעם אחת ומועבר לכל השאילתות: אחרת ספירה שרצה
     # ברקע הייתה יכולה להתפרסם באמצע הבקשה, והמסך היה מציג טבלה מצילום
     # אחד וסכומים מצילום אחר
     taken_at = fleet_stats.live_taken_at()
-    pagination = fleet_stats.search(q=q, make=make, taken_at=taken_at).paginate(
-        page=page, per_page=current_app.config["PER_PAGE"], error_out=False
-    )
     totals = fleet_stats.summary(taken_at=taken_at)
-    # ספירת החלפים היא שאילתה לכל דגם, ולכן היא נעשית לשורות העמוד
-    # בלבד - ולא לכל עשרות אלפי הדגמים שבצילום. דגם שחוזר בכמה קודי
-    # דגם נספר פעם אחת.
-    memo, part_counts = {}, {}
-    for row in pagination.items:
-        key = (row.search_make, row.model)
-        if key not in memo:
-            memo[key] = services.vehicle_part_counts(*key)
-        part_counts[row.id] = memo[key]
+
+    if sort == "gap":
+        rows, pagination = _fleet_gaps(q, make, taken_at), None
+    else:
+        pagination = fleet_stats.search(
+            q=q, make=make, taken_at=taken_at, sort=sort
+        ).paginate(
+            page=page, per_page=current_app.config["PER_PAGE"], error_out=False
+        )
+        rows = pagination.items
+
+    part_counts = _part_counts_for_rows(rows)
     activity.note(
-        summary=(f'צי הרכב: {q or make or "הכל"} · {pagination.total} דגמים'),
-        results=pagination.total,
+        summary=(f'צי הרכב: {q or make or "הכל"} · {sort}'),
+        results=pagination.total if pagination else len(rows),
         page=page,
+        sort=sort,
     )
     return render_template(
         "stats.html",
         pagination=pagination,
-        rows=pagination.items,
+        rows=rows,
         totals=totals,
         part_counts=part_counts,
+        gap_limit=current_app.config["FLEET_GAP_MODELS"],
         # סך הרכבים בסינון הנוכחי - "8% מהצי" הוא מספר אחר כשמסננים יצרן
         filtered_vehicles=fleet_stats.total_vehicles(q=q, make=make, taken_at=taken_at),
         makes=fleet_stats.makes(taken_at=taken_at),
-        selected={"q": q, "make": make},
+        sorts=fleet_stats.SORTS,
+        selected={"q": q, "make": make, "sort": sort},
+    )
+
+
+def _part_counts_for_rows(rows):
+    """{מזהה שורה: (מק"טים, מתוכם מתכלים)}, בשאילתה אחת לכל הדגמים.
+
+    דגם שחוזר בכמה קודי דגם נספר פעם אחת - הקטלוג לא יודע להבחין
+    ביניהם, ושתי שורות שיציגו את אותו מספר אינן שתי בדיקות.
+    """
+    counts = services.part_counts_for(
+        [(row.search_make, row.model) for row in rows]
+    )
+    return {row.id: counts[(row.search_make, row.model)] for row in rows}
+
+
+def _fleet_gaps(q, make, taken_at):
+    """הדגמים שבהם הפער בין רכבים בטווח הקנייה למק"טים שלנו הוא הגדול ביותר.
+
+    הדירוג נעשה על הדגמים הגדולים בלבד: פער אצל דגם עם שלושים רכבים
+    אינו הזדמנות, והוא היה מציף את הרשימה. המכנה הוא מק"טים+1, כך שדגם
+    בלי מק"טים כלל עולה לראש לפי גודלו במקום להתחלק באפס.
+    """
+    top = (
+        fleet_stats.search(q=q, make=make, taken_at=taken_at, sort="prime")
+        .limit(current_app.config["FLEET_GAP_MODELS"])
+        .all()
+    )
+    counts = services.part_counts_for([(row.search_make, row.model) for row in top])
+    return sorted(
+        top,
+        key=lambda row: (row.prime or 0) / (counts[(row.search_make, row.model)][0] + 1),
+        reverse=True,
     )
 
 

@@ -1,5 +1,6 @@
 """ספירת הרכבים הפעילים לפי דגם: משיכה, צבירה, צילום מצב והמסך."""
 import json
+from datetime import datetime
 from contextlib import contextmanager
 
 from app import fleet_stats, services
@@ -201,9 +202,11 @@ def test_stats_page_links_to_parts_search(client, app):
 def test_to_csv_has_bom_and_rows():
     output = fleet_stats.to_csv([{"make": "טויוטה", "model": "COROLLA",
                                   "model_code": None, "vehicles": 90000,
+                                  "young": 10000, "prime": 60000, "old": 20000,
                                   "year_from": 2010, "year_to": 2024}])
     assert output.startswith("﻿")  # בלי זה אקסל פותח ג'יבריש
-    assert "COROLLA,,90000,2010,2024" in output
+    assert "בטווח הקנייה" in output
+    assert "COROLLA,,90000,10000,60000,20000,2010,2024" in output
 
 
 # ---- המסך ----
@@ -261,6 +264,84 @@ def test_wear_count_excludes_parts_that_are_not_consumables(app):
 
         total, wear = services.vehicle_part_counts("טויוטה", "COROLLA")
         assert (total, wear) == (2, 1)
+
+
+# ---- פילוח גיל ויחס הפער ----
+
+
+def test_age_buckets_split_the_aftermarket_window(app):
+    """4-12 שנים הוא חלון הקנייה: מחוץ לאחריות ועדיין על הכביש."""
+    assert fleet_stats.age_bucket(2024, this_year=2026) == "young"
+    assert fleet_stats.age_bucket(2022, this_year=2026) == "prime"   # בן 4
+    assert fleet_stats.age_bucket(2014, this_year=2026) == "prime"   # בן 12
+    assert fleet_stats.age_bucket(2013, this_year=2026) == "old"     # בן 13
+    assert fleet_stats.age_bucket(None) is None
+
+
+def test_aggregate_counts_each_age_group(app, monkeypatch):
+    monkeypatch.setattr(fleet_stats, "_now", lambda: datetime(2026, 1, 1))
+    rows = [{fleet_stats.FIELD_MAKE: "טויוטה יפן",
+             fleet_stats.FIELD_MODEL: "COROLLA",
+             fleet_stats.FIELD_CODE: "A1",
+             fleet_stats.FIELD_YEAR: year}
+            for year in (2025, 2020, 2018, 2005, None)]
+    row = fleet_stats.sort_rows(fleet_stats.aggregate_records(rows).values())[0]
+
+    assert row["vehicles"] == 5
+    assert (row["young"], row["prime"], row["old"]) == (1, 2, 1)
+    # רכב בלי שנת ייצור אינו בשום דלי, ולכן הסכום קטן מסך הרכבים
+    assert row["young"] + row["prime"] + row["old"] == 4
+
+
+def test_packed_counts_keep_the_age_split():
+    counts = {("טויוטה", "COROLLA", "A1"): {
+        "make": "טויוטה", "model": "COROLLA", "model_code": "A1",
+        "vehicles": 9, "year_from": 2010, "year_to": 2024,
+        "young": 2, "prime": 5, "old": 2}}
+    restored = fleet_stats.unpack_counts(fleet_stats.pack_counts(counts))
+    assert restored == counts
+
+
+def test_vehicles_per_part_has_no_denominator_without_parts(app):
+    with app.app_context():
+        row = FleetModelCount(make="טויוטה", model="COROLLA", vehicles=100, prime=80)
+        assert row.vehicles_per_part(4) == 20
+        # אין מק"טים -> אין יחס, וזה לא "אפס" אלא הפער המרבי
+        assert row.vehicles_per_part(0) is None
+
+
+def test_prime_sort_puts_the_buying_window_first(app):
+    snapshot(app, [
+        {"make": "טויוטה יפן", "model": "COROLLA", "vehicles": 90000, "prime": 20000},
+        {"make": "סקודה צכיה", "model": "OCTAVIA", "vehicles": 60000, "prime": 50000},
+    ])
+    with app.app_context():
+        by_fleet = [r.model for r in fleet_stats.search().all()]
+        by_prime = [r.model for r in fleet_stats.search(sort="prime").all()]
+    assert by_fleet == ["COROLLA", "OCTAVIA"]
+    assert by_prime == ["OCTAVIA", "COROLLA"]
+
+
+def test_gap_view_ranks_by_vehicles_per_part(client, app):
+    """COROLLA גדול יותר, אבל יש לנו מק"ט אחד עבורו; OCTAVIA - אף אחד."""
+    snapshot(app, [
+        {"make": "טויוטה יפן", "model": "COROLLA", "vehicles": 90000, "prime": 50000},
+        {"make": "סקודה צכיה", "model": "OCTAVIA", "vehicles": 60000, "prime": 40000},
+    ])
+    html = client.get("/stats?sort=gap").get_data(as_text=True)
+    assert html.index("OCTAVIA") < html.index("COROLLA")
+    assert "אין כיסוי" in html  # לדגם בלי מק"טים אין יחס להציג
+
+
+def test_batch_counts_match_the_single_lookup(app):
+    with app.app_context():
+        pairs = [("טויוטה", "COROLLA"), ("מאזדה", "3")]
+        batch = services.part_counts_for(pairs)
+        for pair in pairs:
+            assert batch[pair] == services.vehicle_part_counts(*pair)
+            assert batch[pair][0] == services.search_parts(
+                make=pair[0], model=pair[1]
+            ).count()
 
 
 def test_stats_page_filters(client, app):
