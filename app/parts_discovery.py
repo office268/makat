@@ -194,6 +194,13 @@ def validate(candidates, make, model, part_type):
                 "source_url": str(raw.get("source_url") or "").strip()[:500],
                 "make": make,
                 "model": model,
+                # שדות שהשליפה החיה מוסיפה (app/catalog_sources). הגילוי
+                # מ-/admin/discovery לא ממלא אותם, והם נשארים ריקים.
+                "image_url": str(raw.get("image_url") or "").strip()[:500],
+                "variant_key": str(raw.get("variant_key") or "").strip()[:80],
+                "tier": str(raw.get("tier") or "").strip(),
+                "source_key": str(raw.get("source_key") or "").strip(),
+                "name": str((raw.get("extra") or {}).get("name") or "").strip()[:200],
             })
     return accepted, rejected
 
@@ -432,8 +439,15 @@ def cancel_job(job):
     return job
 
 
-def save(accepted):
-    """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו)."""
+def save(accepted, source_note=None, source_mark=None):
+    """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו).
+
+    ``source_note``/``source_mark`` מאפשרים לשליפה החיה לסמן את מה
+    שהיא הכניסה בסימון משלה, כדי שסקירת הגילוי לא תציג את שתי הצנרות
+    כאותו דבר - ומחיקה של אחת לא תיקח איתה את השנייה.
+    """
+    note_text = source_note or SOURCE_NOTE
+    mark = source_mark or SOURCE_MARK
     created = updated = 0
     for row in accepted:
         part = Part.query.filter_by(part_number=row["part_number"]).first()
@@ -441,18 +455,22 @@ def save(accepted):
         if is_new:
             part = Part(part_number=row["part_number"])
             db.session.add(part)
-            part.name_he = f'{type_name(row["part_type"])} {row["model"]}'
+            part.name_he = row.get("name") or f'{type_name(row["part_type"])} {row["model"]}'
             part.part_type = row["part_type"]
             part.category = get_or_create_category(
                 CATEGORY_OF.get(row["part_type"], "כללי")
             )
         part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
+        # תמונה נכתבת רק כשאין - מק"ט שכבר קיבל תמונה מייבוא או מעריכה
+        # ידנית לא נדרס על ידי מה שנמצא בעמוד חיפוש.
+        if row.get("image_url") and not part.image_url:
+            part.image_url = row["image_url"]
         # מק"ט קיים שומר את ההערה שלו. דריסה הייתה מוחקת את סימון
         # המקור הקודם ומציגה חלף שנאסף קודם כאילו הגיע מהחיפוש.
-        source = f'{SOURCE_NOTE} {row.get("source_url") or ""}'.strip()
+        source = f'{note_text} {row.get("source_url") or ""}'.strip()
         if is_new:
             part.notes = source
-        elif SOURCE_MARK not in (part.notes or ""):
+        elif mark not in (part.notes or ""):
             part.notes = f'{part.notes or ""} | {source}'.strip(" |")
 
         # התאמה חדשה מתווספת; קיימת לא משוכפלת
@@ -462,8 +480,17 @@ def save(accepted):
             for f in part.fitments
         )
         if not exists:
+            # השליפה החיה יודעת גם מנוע, שנה ווריאנט - וזה ההבדל בין
+            # התאמה שתימצא לרכב הנכון לבין התאמה לכל הדגם.
             part.fitments.append(
-                Fitment(make=fitment_make(row["make"]), model=row["model"])
+                Fitment(
+                    make=fitment_make(row["make"]),
+                    model=row["model"],
+                    engine_code=row.get("engine_code") or None,
+                    year_from=row.get("year"),
+                    year_to=row.get("year"),
+                    variant_key=row.get("variant_key") or None,
+                )
             )
         if row.get("oe_number") and not any(
             r.ref_number == row["oe_number"] for r in part.cross_refs
