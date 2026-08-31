@@ -2,13 +2,23 @@
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import UniqueConstraint, func
+from sqlalchemy import UniqueConstraint, func, literal_column
 
 db = SQLAlchemy()
 
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+# הרווח והמקף נכתבים לתוך ה-SQL ולא נשלחים כפרמטרים, וזה לא קוסמטיקה:
+# Postgres מזהה ש-GROUP BY מכסה ביטוי ב-SELECT לפי *טקסט* הביטוי. שני
+# מופעים של אותו ביטוי עם פרמטרים מקבלים מספרים שונים ($1 מול $9), ואז
+# הוא טוען שהעמודה אינה מקובצת ומסרב לרוץ. SQLite סלחן ולא אמר כלום,
+# ולכן הכשל הזה מגיע רק בפרודקשן. הערכים קבועים בקוד, ואין כאן קלט.
+_SPACE = literal_column("' '")
+_HYPHEN = literal_column("'-'")
+_NOTHING = literal_column("''")
 
 
 def squash(column):
@@ -18,7 +28,9 @@ def squash(column):
     יושב כאן ולא ב-services כדי שגם רישום העמודות יוכל להשתמש בו בלי
     לייבא את services ולסגור מעגל.
     """
-    return func.replace(func.replace(func.lower(column), " ", ""), "-", "")
+    return func.replace(
+        func.replace(func.lower(column), _SPACE, _NOTHING), _HYPHEN, _NOTHING
+    )
 
 
 class Manufacturer(db.Model):

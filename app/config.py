@@ -147,10 +147,21 @@ class Config:
 
 
 class TestConfig(Config):
-    """הגדרות לבדיקות."""
+    """הגדרות לבדיקות.
+
+    ברירת המחדל היא SQLite בזיכרון - מהיר, ולא דורש שרת. אבל SQLite
+    סלחן במקומות ש-Postgres אינו, ופרודקשן רץ על Postgres: שאילתה
+    שעברה כאן ונפלה שם כבר קרתה. לכן אפשר להריץ את אותה חבילת בדיקות
+    מול Postgres אמיתי:
+
+        TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5432/makat_test \
+            python -m pytest
+    """
 
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        "TEST_DATABASE_URL", "sqlite:///:memory:"
+    )
     SUPERADMIN_EMAILS = frozenset()
     VEHICLE_IMPORT_RETRY_PAUSE = 0  # בלי המתנות אמיתיות בבדיקות
     VEHICLE_IMPORT_PAGE_PAUSE = 0

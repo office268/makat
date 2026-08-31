@@ -47,7 +47,12 @@ _PARTS_PER_VEHICLE = (
 
 # חלק מתאים לפעמים לכמה רכבים. המספר הוא של הרכב שיש לו הכי הרבה
 # חלפים בקטלוג - הרחב מביניהם, ולא סכום שסופר את אותו מק"ט פעמיים.
-CATALOG_PARTS = (
+#
+# ה-coalesce אינו קישוט: מק"ט בלי התאמה לרכב מחזיר NULL, והתא מציג
+# עליו 0. בלי ההשוואה הזאת המיון היה סותר את מה שכתוב במסך - ולא
+# באותה צורה בשני בסיסי הנתונים: SQLite ממיין NULL ראשון ו-Postgres
+# אחרון, כך שאותה לחיצה הייתה נותנת שתי תשובות שונות.
+CATALOG_PARTS = func.coalesce(
     db.select(func.max(_PARTS_PER_VEHICLE.c.parts))
     .select_from(Fitment)
     .join(
@@ -59,7 +64,8 @@ CATALOG_PARTS = (
     )
     .where(Fitment.part_id == Part.id)
     .correlate(Part)
-    .scalar_subquery()
+    .scalar_subquery(),
+    0,
 )
 
 # תחליף = מק"ט אחר בקטלוג שחולק מספר מקביל עם החלק הזה. אותו כלל
