@@ -865,22 +865,60 @@ def column_counts(parts, columns):
     המספר שבתא היה יכול לסתור את הסדר שהוא עצמו יצר. כשאף אחת משתי
     העמודות אינה מוצגת, אין כאן שאילתה בכלל.
     """
-    wanted = {"catalog_parts", "substitutes"} & {column.key for column in columns}
-    if not wanted or not parts:
+    keys = {column.key for column in columns}
+    counted = {"catalog_parts", "substitutes"} & keys
+    fleet_keys = {"fleet_vehicles", "fleet_prime", "fleet_gap"} & keys
+    if not parts or not (counted or fleet_keys):
         return {}
-    rows = (
-        db.session.query(
-            Part.id,
-            part_columns.CATALOG_PARTS,
-            part_columns.SUBSTITUTES,
+
+    values = {part.id: {} for part in parts}
+    if counted:
+        rows = (
+            db.session.query(
+                Part.id,
+                part_columns.CATALOG_PARTS,
+                part_columns.SUBSTITUTES,
+            )
+            .filter(Part.id.in_(list(values)))
+            .all()
         )
-        .filter(Part.id.in_([part.id for part in parts]))
-        .all()
-    )
-    return {
-        part_id: {"catalog_parts": catalog or 0, "substitutes": substitutes or 0}
-        for part_id, catalog, substitutes in rows
-    }
+        for part_id, catalog, substitutes in rows:
+            values[part_id].update(
+                catalog_parts=catalog or 0, substitutes=substitutes or 0
+            )
+    if fleet_keys:
+        values = _add_fleet_numbers(values, parts)
+    return values
+
+
+def _add_fleet_numbers(values, parts):
+    """מוסיף לכל שורה את מספרי הצי של הרכב שהחלק מתאים לו.
+
+    מפייתון ולא מ-SQL, ומאותה מפה שממנה נבנה גם ביטוי המיון - כך התא
+    והסדר אומרים את אותו דבר. בלי צילום צי אין מספרים, וזה "—" ולא
+    אפס: "לא ידוע" אינו "אין רכבים כאלה".
+    """
+    from . import fleet_stats
+
+    numbers = fleet_stats.catalog_fleet_numbers()
+    for part in parts:
+        if not numbers:
+            values[part.id].update(fleet_vehicles=None, fleet_prime=None, fleet_gap=None)
+            continue
+        # הגדול מבין הרכבים שהחלק מתאים להם - הנפוץ שבהם. אותו כלל
+        # בדיוק כמו ה-CASE שממיין (ראה part_columns.fleet_value).
+        best = {"vehicles": 0, "prime": 0, "gap": 0.0}
+        for fitment in part.fitments:
+            row = numbers.get((fitment.make, fitment.model))
+            if row:
+                for field in best:
+                    best[field] = max(best[field], row[field])
+        values[part.id].update(
+            fleet_vehicles=best["vehicles"],
+            fleet_prime=best["prime"],
+            fleet_gap=best["gap"],
+        )
+    return values
 
 
 # ---------- פריסת העמודות ----------

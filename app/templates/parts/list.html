@@ -52,6 +52,17 @@
   {%- elif column.key == 'stock' -%}
     {% if op %}<span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
     {% else %}<span class="text-muted">—</span>{% endif %}
+  {%- elif column.key in ('fleet_vehicles', 'fleet_prime') -%}
+    {# מספרי הצי. "—" ולא 0 כשאין צילום מרשם: לא ידוע אינו אפס #}
+    {% set value = counts.get(part.id, {}).get(column.key) %}
+    {% if value is none %}<span class="text-muted" title="לא נטענה ספירת צי">—</span>
+    {% elif value %}{{ "{:,}".format(value) }}
+    {% else %}<span class="text-muted">0</span>{% endif %}
+  {%- elif column.key == 'fleet_gap' -%}
+    {% set value = counts.get(part.id, {}).get(column.key) %}
+    {% if value is none %}<span class="text-muted" title="לא נטענה ספירת צי">—</span>
+    {% elif value %}<span title="רכבים בטווח הקנייה על כל מק&#34;ט שיש לדגם">{{ "{:,.0f}".format(value) }}</span>
+    {% else %}<span class="text-muted">0</span>{% endif %}
   {%- elif column.key in ('catalog_parts', 'substitutes') -%}
     {# נספר בשאילתה אחת לכל הדף, באותו ביטוי שלפיו ממיינים #}
     {% set value = counts.get(part.id, {}).get(column.key, 0) %}

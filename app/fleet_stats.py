@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from .models import db
+from .models import Fitment, db
 from .vehicles import RESOURCE_ID  # מקור אמת אחד למאגר הרכבים הפעילים
 
 CKAN_SQL_URL = "https://data.gov.il/api/3/action/datastore_search_sql"
@@ -544,6 +544,7 @@ def publish(taken_at):
         synchronize_session=False
     )
     db.session.commit()
+    forget_fleet_index()
 
 
 def discard(taken_at):
@@ -560,6 +561,7 @@ def replace_snapshot(rows, taken_at=None):
     FleetModelCount.query.delete()
     models, _ = add_rows(rows, taken_at)
     db.session.commit()
+    forget_fleet_index()
     return models
 
 
@@ -757,3 +759,105 @@ def makes(taken_at=None):
         .all()
     )
     return [row[0] for row in rows]
+
+
+# ---------- חשיבות החלק: הצי שמאחורי כל התאמה בקטלוג ----------
+
+# הצי המנורמל, לפי חותמת הצילום. הנרמול של עשרות אלפי שורות הוא
+# עשיריות שנייה, והצילום מתחלף אולי פעם בחודש - אין סיבה לשלם על זה
+# בכל טעינת מסך. החותמת היא זהות הצילום במערכת (ראה live_taken_at),
+# ולכן צילום חדש פוסל את הזיכרון מאליו.
+_FLEET_INDEX = {}
+
+
+def _normalized_fleet(taken_at):
+    """{יצרן מנורמל: [(דגם מכווץ, רכבים, בטווח הקנייה)]} לצילום נתון."""
+    cached = _FLEET_INDEX.get(taken_at)
+    if cached is not None:
+        return cached
+
+    from .services import _squash_text, normalize_make
+
+    rows = db.session.query(
+        FleetModelCount.make,
+        FleetModelCount.model,
+        FleetModelCount.vehicles,
+        FleetModelCount.prime,
+    )
+    if taken_at is not None:
+        rows = rows.filter(FleetModelCount.taken_at == taken_at)
+
+    index = {}
+    for make, model, vehicles, prime in rows:
+        # במרשם היצרן הוא "טויוטה יפן"; בקטלוג הוא "טויוטה"
+        head = make.split()[0] if make else ""
+        index.setdefault(normalize_make(head), []).append(
+            (_squash_text(model), vehicles or 0, prime or 0)
+        )
+
+    _FLEET_INDEX.clear()          # צילום אחד בזיכרון, לא היסטוריה
+    _FLEET_INDEX[taken_at] = index
+    return index
+
+
+def forget_fleet_index():
+    """שוכח את הצי המנורמל. נקרא כשנכתב צילום חדש."""
+    _FLEET_INDEX.clear()
+
+
+def catalog_fleet_numbers():
+    """{(יצרן בקטלוג, דגם בקטלוג): {"vehicles", "prime", "gap"}}.
+
+    לכל צמד רכב שמופיע בהתאמות של הקטלוג - כמה רכבים כאלה על הכביש,
+    וכמה מהם בטווח הקנייה. ההצלבה היא בדיוק זו של מסך /stats: היצרן
+    מנורמל (מזדה = מאזדה) והדגם מוכל בשני הכיוונים, אחרת המספר בעמודה
+    היה סותר את המספר שבמסך הצי.
+
+    הקטלוג מחזיק כמה עשרות צמדי רכב בלבד, ולכן ההצלבה עצמה היא
+    אלפיות. מה שיקר - נרמול הצי - נשמר בזיכרון לפי הצילום.
+    """
+    from .services import (
+        MIN_MODEL_PREFIX,
+        _squash_text,
+        normalize_make,
+        part_counts_for,
+    )
+
+    taken_at = live_taken_at()
+    if taken_at is None:
+        return {}
+
+    fleet = _normalized_fleet(taken_at)
+    pairs = (
+        db.session.query(Fitment.make, Fitment.model)
+        .filter(Fitment.make.isnot(None), Fitment.model.isnot(None))
+        .distinct()
+        .all()
+    )
+
+    numbers = {}
+    for make, model in pairs:
+        catalog = _squash_text(model)
+        vehicles = prime = 0
+        if catalog:
+            for registry, count, in_prime in fleet.get(normalize_make(make), ()):
+                # אותו כלל כמו services.model_matches_name, אחרי שכל צד
+                # כווץ פעם אחת: השוואה בתוך לולאה על עשרות אלפי שורות
+                # שילמה על הכיווץ שוב ושוב
+                if registry and (
+                    registry in catalog
+                    or (len(catalog) >= MIN_MODEL_PREFIX and registry.startswith(catalog))
+                ):
+                    vehicles += count
+                    prime += in_prime
+        numbers[(make, model)] = {"vehicles": vehicles, "prime": prime}
+
+    # הפער מחושב כאן, לכל צמד רכב בנפרד - ולא כחלוקה של שני מספרים
+    # מצטברים. לחלק שמתאים לשני רכבים, "הגדול מבין הפערים" אינו
+    # "הרכבים הגדולים חלקי המק"טים הרבים", והתא והמיון היו נותנים שתי
+    # תשובות שונות.
+    per_vehicle = part_counts_for(list(numbers))
+    for pair, row in numbers.items():
+        catalog_parts = per_vehicle.get(pair, (0, 0))[0]
+        row["gap"] = row["prime"] / catalog_parts if catalog_parts else 0.0
+    return numbers

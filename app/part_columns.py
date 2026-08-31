@@ -110,6 +110,46 @@ SUBSTITUTES = func.coalesce(
     0,
 )
 
+# ---------- חשיבות החלק: כמה רכבים כאלה על הכביש ----------
+#
+# המספרים באים ממסך הצי, וההצלבה בין דגם במרשם לדגם בקטלוג היא לוגיקה
+# של פייתון (נרמול יצרן והכלת שם דגם) - אי אפשר לכתוב אותה ב-SQL בלי
+# לשנות אותה, ומספר שסותר את מסך הצי גרוע ממספר שחסר.
+#
+# מה שכן אפשר: הקטלוג כולו מחזיק כמה עשרות צמדי רכב בלבד. ההצלבה
+# נעשית בפייתון פעם אחת, והתוצאה - טבלה קטנה - נכתבת לתוך השאילתה
+# כ-CASE. כך המיון והסינון רצים בבסיס הנתונים, על אותם מספרים בדיוק
+# שהתא מציג.
+#
+# הביטויים האלה נבנים בכל בקשה ולא פעם אחת בטעינת המודול, כי הם תלויים
+# בצילום הצי הנוכחי. לכן sort_by של העמודות האלה הוא פונקציה.
+
+def fleet_value(field):
+    """ביטוי SQL: המספר מהצי של הרכב שהחלק מתאים לו.
+
+    לחלק שמתאים לכמה רכבים - הגדול מביניהם, כלומר הרכב הנפוץ ביותר.
+    סכום היה סופר פעמיים דגם שנספר לשני שמות בקטלוג.
+    """
+    from . import fleet_stats
+
+    numbers = fleet_stats.catalog_fleet_numbers()
+    branches = [
+        (db.and_(Fitment.make == make, Fitment.model == model), values[field])
+        for (make, model), values in numbers.items()
+        if values[field]
+    ]
+    if not branches:
+        # אין צילום צי, או שאף רכב בקטלוג אינו במרשם
+        return db.literal(0)
+    return func.coalesce(
+        db.select(func.max(case(*branches, else_=0)))
+        .where(Fitment.part_id == Part.id)
+        .correlate(Part)
+        .scalar_subquery(),
+        0,
+    )
+
+
 # ">100", "<=50", "10-20" או "7". מה שאי אפשר לקרוא כמספר לא מסנן כלום -
 # מסננים שהוקלדו למחצה לא אמורים לרוקן את הטבלה.
 _COMPARISON = re.compile(r"^(>=|<=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$")
@@ -175,7 +215,9 @@ class Column:
     """עמודה אחת בטבלה.
 
     sort_by    מה ממיינים לפיו. None = העמודה אינה ניתנת למיון (רשימה
-               של ערכים, כמו ההתאמות, אין לה סדר אחד נכון)
+               של ערכים, כמו ההתאמות, אין לה סדר אחד נכון). פונקציה =
+               ביטוי שנבנה לכל בקשה, כי הוא תלוי בנתונים שמשתנים
+               (עמודות הצי נשענות על צילום המרשם הנוכחי)
     param      שם הפרמטר של הסינון בשורת הכתובת
     kind       "text" / "number" / "select" - איך נראה שדה הסינון
     needs_org  הערך יושב בשכבה הפרטית של הארגון (מחיר, מלאי, מיקום)
@@ -324,6 +366,27 @@ COLUMNS = (
         hint=">0",
     ),
     Column(
+        "fleet_vehicles", "רכבים על הכביש",
+        sort_by=lambda: fleet_value("vehicles"),
+        param="f_fleet_vehicles", kind="number",
+        apply=lambda raw: number_condition(fleet_value("vehicles"), raw),
+        align="text-end", hint=">10000",
+    ),
+    Column(
+        "fleet_prime", "בטווח הקנייה",
+        sort_by=lambda: fleet_value("prime"),
+        param="f_fleet_prime", kind="number",
+        apply=lambda raw: number_condition(fleet_value("prime"), raw),
+        align="text-end", hint=">5000",
+    ),
+    Column(
+        "fleet_gap", 'רכבים למק"ט',
+        sort_by=lambda: fleet_value("gap"),
+        param="f_fleet_gap", kind="number",
+        apply=lambda raw: number_condition(fleet_value("gap"), raw),
+        align="text-end", hint=">100",
+    ),
+    Column(
         "barcode", "ברקוד",
         sort_by=Part.barcode, param="f_barcode", kind="text",
         apply=lambda raw: _text_condition(Part.barcode, raw),
@@ -469,7 +532,8 @@ def apply_sort(query, raw, organization_id, org_joined):
         query, org_joined = join_org(query, organization_id, org_joined)
     if column.join is not None:
         query = query.outerjoin(column.join)
-    order = column.sort_by.desc() if direction == "desc" else column.sort_by.asc()
+    expression = column.sort_by() if callable(column.sort_by) else column.sort_by
+    order = expression.desc() if direction == "desc" else expression.asc()
     return query.order_by(order), org_joined, column, direction
 
 
