@@ -85,6 +85,8 @@ ACTION_LABELS = {
     "admin.discovery_start": 'התחלת גילוי מק"טים',
     "admin.discovery_cancel": 'ביטול גילוי מק"טים',
     "admin.discovery_review": "סקירת מה שהתגלה",
+    "admin.columns": 'מסך עמודות טבלת המק"טים',
+    "admin.columns_save": "שינוי עמודות הטבלה",
     "admin.discovery_verify": 'אימות מק"ט מול הרשת',
     "admin.discovery_delete": 'מחיקת מק"טים שנפסלו',
     "api.list_parts": 'רשימת מק"טים (API)',

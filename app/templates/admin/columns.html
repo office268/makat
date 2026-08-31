@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}עמודות טבלת המק"טים{% endblock %}
+{% block content %}
+
+<h1 class="h5 mb-1">עמודות טבלת המק"טים</h1>
+<p class="text-muted small mb-4">
+  הסדר ואילו עמודות מוצגות — לכל המשתמשים במערכת.
+  <a href="{{ url_for('web.parts_list') }}">לטבלה עצמה</a>
+</p>
+
+{# רשימת המפתחות נשלחת בשלמותה בכל פעולה, וכל כפתור אומר רק מה לעשות
+   בה ובאיזו עמודה ("up:price"). הכל בערך של הכפתור עצמו, כך שהמסך
+   עובד גם בלי JavaScript. #}
+<form method="post" action="{{ url_for('admin.columns_save') }}">
+  {{ csrf_field() }}
+  {% for column in shown %}<input type="hidden" name="key" value="{{ column.key }}">{% endfor %}
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>מוצגות ({{ shown | length }})</span>
+          {% if not is_default %}
+          <button class="btn btn-sm btn-outline-secondary" name="action" value="reset">
+            חזרה לברירת המחדל
+          </button>
+          {% endif %}
+        </div>
+        <div class="table-responsive"><table class="table mb-0 align-middle">
+          <thead class="table-light"><tr>
+            <th style="width: 5rem">סדר</th><th>עמודה</th><th>מיון</th><th>סינון</th><th></th>
+          </tr></thead>
+          <tbody>
+            {% for column in shown %}
+            <tr>
+              <td class="text-nowrap">
+                <button class="btn btn-sm btn-outline-secondary" name="action"
+                        value="up:{{ column.key }}" {% if loop.first %}disabled{% endif %}
+                        aria-label="הזזת {{ column.label }} למעלה">▲</button>
+                <button class="btn btn-sm btn-outline-secondary" name="action"
+                        value="down:{{ column.key }}" {% if loop.last %}disabled{% endif %}
+                        aria-label="הזזת {{ column.label }} למטה">▼</button>
+              </td>
+              <td>{{ column.label }}</td>
+              <td class="small text-muted">{{ 'לפי לחיצה' if column.sortable else '—' }}</td>
+              <td class="small text-muted">
+                {{ {'text': 'טקסט', 'number': 'מספר', 'select': 'בחירה'}.get(column.kind, '—') }}
+              </td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-danger" name="action"
+                        value="remove:{{ column.key }}"
+                        {% if shown | length == 1 %}disabled{% endif %}
+                        aria-label="הסרת {{ column.label }}">הסרה</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card">
+        <div class="card-header">אפשר להוסיף ({{ available | length }})</div>
+        {% if available %}
+        <div class="table-responsive"><table class="table mb-0 align-middle">
+          <tbody>
+            {% for column in available %}
+            <tr>
+              <td>{{ column.label }}</td>
+              <td class="small text-muted">
+                {{ {'text': 'סינון טקסט', 'number': 'סינון מספרי', 'select': 'סינון מרשימה'}.get(column.kind, 'בלי סינון') }}
+              </td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-primary" name="action"
+                        value="add:{{ column.key }}"
+                        aria-label="הוספת {{ column.label }}">הוספה</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table></div>
+        {% else %}
+        <div class="card-body text-muted small mb-0">כל העמודות שיש כבר מוצגות.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

@@ -12,7 +12,7 @@ from flask import (
 )
 from sqlalchemy.orm import selectinload
 
-from .. import activity, fleet_stats, services
+from .. import activity, fleet_stats, part_columns, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
 from ..taxonomy import all_types
@@ -25,6 +25,22 @@ def _known_makes():
     from ..vehicle_catalog import makes
 
     return makes() or services.vehicle_makes()
+
+
+def _column_filters():
+    """הסינון שהוקלד בשורת הכותרות, ממופה לפי שם הפרמטר.
+
+    נקרא מהרישום ולא מרשימה קבועה: עמודה חדשה מביאה איתה את הסינון
+    שלה, ואין מקום שני שצריך לזכור לעדכן.
+    """
+    values = {}
+    for column in part_columns.COLUMNS:
+        if not column.filterable:
+            continue
+        typed = request.args.get(column.param, "").strip()
+        if typed:
+            values[column.param] = typed
+    return values
 
 
 def _filters_from_request():
@@ -40,6 +56,7 @@ def _filters_from_request():
         "low_stock": request.args.get("low_stock") == "1",
         "active_only": request.args.get("show_inactive") != "1",
         "sort": request.args.get("sort", "part_number"),
+        "column_filters": _column_filters(),
         "organization_id": services.current_org_id(),
     }
 
@@ -88,7 +105,7 @@ def parts_list():
         filters[key]
         for key in ("q", "category_id", "manufacturer_id", "make", "model",
                     "year", "engine", "in_stock", "low_stock")
-    )
+    ) or bool(filters["column_filters"])
     activity.note(
         summary=(f'חיפוש "{filters["q"]}"' if filters["q"] else 'רשימת מק"טים')
         + f" · {pagination.total} תוצאות",
@@ -96,6 +113,7 @@ def parts_list():
         page=page,
         filtered=is_filtered,
     )
+    sorted_column, direction = part_columns.parse_sort(filters["sort"])
     return render_template(
         "parts/list.html",
         pagination=pagination,
@@ -103,6 +121,9 @@ def parts_list():
         filters=filters,
         is_filtered=is_filtered,
         total_parts=Part.query.count(),
+        columns=services.column_layout(),
+        sorted_key=sorted_column.key if sorted_column else None,
+        sort_direction=direction,
     )
 
 

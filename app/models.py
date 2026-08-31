@@ -435,3 +435,45 @@ class OrgPart(db.Model):
 
     def __repr__(self):
         return f"<OrgPart org={self.organization_id} part={self.part_id}>"
+
+
+class TableLayout(db.Model):
+    """אילו עמודות מוצגות בטבלה, ובאיזה סדר.
+
+    שורה אחת לכל טבלה, לכל המערכת. הפריסה אינה העדפה של משתמש אלא
+    החלטה של מנהל האפליקציה מה נכון להראות - ולכן היא לא נשמרת לפי
+    משתמש ולא לפי ארגון, ומי שמשנה אותה משנה אותה לכולם.
+
+    הסדר נשמר כרשימת מפתחות ולא כמספרי מיקום: מיקומים היו צריכים
+    סידור מחדש בכל הזזה, ורשימה פשוט אומרת מה בא אחרי מה. המפתחות
+    עצמם מוגדרים ב-app/part_columns.py.
+    """
+
+    __tablename__ = "table_layouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    table_key = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    column_keys = db.Column(db.Text, nullable=False)  # JSON: רשימת מפתחות לפי סדר
+    updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id])
+
+    @property
+    def keys(self):
+        import json
+
+        try:
+            keys = json.loads(self.column_keys or "[]")
+        except ValueError:
+            return []
+        return [key for key in keys if isinstance(key, str)]
+
+    @keys.setter
+    def keys(self, values):
+        import json
+
+        self.column_keys = json.dumps(list(values), ensure_ascii=False)
+
+    def __repr__(self):
+        return f"<TableLayout {self.table_key}>"

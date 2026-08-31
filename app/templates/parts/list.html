@@ -1,5 +1,46 @@
 {% extends "base.html" %}
 {% block title %}קטלוג מק"טים{% endblock %}
+
+{# כיוון המיון הבא של עמודה: לחיצה ראשונה ממיינת עולה, השנייה הופכת #}
+{% macro sort_link(column) -%}
+  {%- set next = 'desc' if (sorted_key == column.key and sort_direction == 'asc') else 'asc' -%}
+  {{ url_for('web.parts_list', **dict(request.args, sort=column.key ~ ':' ~ next, page=1)) }}
+{%- endmacro %}
+
+{# התאים העשירים - קישור, תגית, חיתוך - מצוירים כאן. השאר יוצא
+   מ-column.text, שיושב ליד הגדרת העמודה ב-app/part_columns.py #}
+{% macro cell(column, part, op) -%}
+  {%- if column.key == 'part_number' -%}
+    <a class="font-monospace fw-bold sku" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a>
+  {%- elif column.key == 'oem' -%}
+    {% if part.oem_numbers %}
+      <span class="sku">{{ part.oem_numbers[0] }}</span>{% if part.oem_numbers | length > 1 %}
+      <span class="text-muted" title="{{ part.oem_numbers | join(' · ') }}">+{{ part.oem_numbers | length - 1 }}</span>{% endif %}
+    {% else %}—{% endif %}
+  {%- elif column.key == 'name_he' -%}
+    <div class="cell-truncate" title="{{ part.name_he }}">{{ part.name_he }}</div>
+  {%- elif column.key == 'fitments' -%}
+    {% set fit_labels = [] %}
+    {% for fit in part.fitments %}
+      {%- set _ = fit_labels.append(fit.make ~ ' ' ~ (fit.model or '') ~ (' ' ~ fit.year_from ~ '–' ~ (fit.year_to or '') if fit.year_from else '')) -%}
+    {% endfor %}
+    {% set fit_text = fit_labels[:3] | join(' · ') %}
+    {% if fit_labels | length > 3 %}{% set fit_text = fit_text ~ ' ועוד ' ~ (fit_labels | length - 3) %}{% endif %}
+    <div class="cell-truncate cell-wide" title="{{ fit_labels | join(' · ') }}">{{ fit_text or '—' }}</div>
+  {%- elif column.key == 'price' -%}
+    {{ op.price_with_vat | ils if op else '—' }}
+  {%- elif column.key == 'cost' -%}
+    {{ op.cost | ils if op else '—' }}
+  {%- elif column.key == 'stock' -%}
+    {% if op %}<span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  {%- elif column.key == 'created_at' -%}
+    <span class="small text-muted">{{ part.created_at | localtime('%d/%m/%Y') }}</span>
+  {%- else -%}
+    {{ column.text(part, op) }}
+  {%- endif -%}
+{%- endmacro %}
+
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -10,15 +51,22 @@
       {% else %}{{ total_parts }} מק"טים{% endif %}
     </span>
   </h1>
-  {# בטלפון הסינון דחף את הרשימה מתחת לקיפול, והרשימה היא מה שבאו לראות #}
-  <button class="btn btn-sm btn-outline-secondary d-lg-none" type="button"
-          data-bs-toggle="collapse" data-bs-target="#filters">
-    סינון{% if is_filtered %} ✓{% endif %}
-  </button>
+  <div class="d-flex gap-2">
+    {% if current_user.is_superadmin %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.columns') }}">עמודות</a>
+    {% endif %}
+    {# בטלפון הסינון דחף את הרשימה מתחת לקיפול, והרשימה היא מה שבאו לראות #}
+    <button class="btn btn-sm btn-outline-secondary d-lg-none" type="button"
+            data-bs-toggle="collapse" data-bs-target="#filters">
+      סינון{% if is_filtered %} ✓{% endif %}
+    </button>
+  </div>
 </div>
 
 <form class="card mb-3 collapse d-lg-block {% if is_filtered %}show{% endif %}"
       id="filters" method="get">
+  {# המיון נשמר כשמסננים - אחרת כל סינון היה מחזיר את הטבלה למיון ברירת המחדל #}
+  <input type="hidden" name="sort" value="{{ filters.sort }}">
   <div class="card-body row g-2">
     <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q or '' }}" placeholder='מק"ט, שם, ברקוד או מק"ט מקביל'></div>
     <div class="col-md-2">
@@ -44,6 +92,9 @@
     <div class="col-12 d-flex gap-3 align-items-center pt-1">
       <div class="form-check"><input class="form-check-input" type="checkbox" name="in_stock" value="1" id="s1" {% if filters.in_stock %}checked{% endif %}><label class="form-check-label small" for="s1">במלאי בלבד</label></div>
       <div class="form-check"><input class="form-check-input" type="checkbox" name="low_stock" value="1" id="s2" {% if filters.low_stock %}checked{% endif %}><label class="form-check-label small" for="s2">מלאי נמוך</label></div>
+      {% if is_filtered %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('web.parts_list', sort=filters.sort) }}">ניקוי סינון</a>
+      {% endif %}
       <a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ url_for('web.export_csv', **request.args) }}">ייצוא CSV</a>
     </div>
   </div>
@@ -52,41 +103,55 @@
 <div class="card">
   <div class="table-responsive">
     <table class="table table-hover table-nowrap mb-0 align-middle">
-      <thead class="table-light"><tr>
-        <th>מק"ט</th><th>מק"ט מקורי</th><th>שם</th><th>יצרן</th><th>מתאים ל</th>
-        <th class="text-end">מחיר כולל מע"מ</th><th class="text-center">מלאי</th>
-      </tr></thead>
+      <thead class="table-light">
+        <tr>
+          {% for column in columns %}
+          <th class="{{ column.align }}">
+            {% if column.sortable %}
+            <a class="text-decoration-none text-reset" href="{{ sort_link(column) }}">
+              {{ column.label }}{% if sorted_key == column.key %}
+              <span aria-hidden="true">{{ '▲' if sort_direction == 'asc' else '▼' }}</span>
+              <span class="visually-hidden">{{ 'ממוין עולה' if sort_direction == 'asc' else 'ממוין יורד' }}</span>
+              {% endif %}
+            </a>
+            {% else %}{{ column.label }}{% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+        {# שורת הסינון. השדות שייכים לטופס שמעל דרך תכונת form, כי
+           טופס אינו יכול לעטוף שורת טבלה. #}
+        <tr class="column-filters">
+          {% for column in columns %}
+          <th class="{{ column.align }}">
+            {% if column.kind == 'select' %}
+            <select class="form-select form-select-sm" form="filters" name="{{ column.param }}"
+                    aria-label="סינון לפי {{ column.label }}">
+              <option value="">הכל</option>
+              {% for value, label in column.options() %}
+              <option value="{{ value }}" {% if request.args.get(column.param) == value | string %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% elif column.filterable %}
+            <input class="form-control form-control-sm" form="filters" name="{{ column.param }}"
+                   value="{{ request.args.get(column.param, '') }}"
+                   placeholder="{{ column.hint or ('>10' if column.kind == 'number' else 'סינון') }}"
+                   title="{% if column.kind == 'number' %}מספר, טווח (10-20) או השוואה (>10){% else %}מכיל{% endif %}"
+                   aria-label="סינון לפי {{ column.label }}">
+            {% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
       <tbody>
         {% for part in parts %}
+        {% set op = part.for_org(org_id) %}
         <tr>
-          <td><a class="font-monospace fw-bold sku" href="{{ url_for('web.part_detail', part_id=part.id) }}">{{ part.part_number }}</a></td>
-          {# המק"ט המקורי הוא מה שהלקוח מביא מהמוסך, ולכן הוא בעמודה משלו
-             ליד המק"ט הפנימי. כשיש כמה - הראשון מוצג והשאר בספירה. #}
-          <td class="font-monospace small">
-            {% if part.oem_numbers %}
-              <span class="sku">{{ part.oem_numbers[0] }}</span>{% if part.oem_numbers | length > 1 %}
-              <span class="text-muted" title="{{ part.oem_numbers | join(' · ') }}">+{{ part.oem_numbers | length - 1 }}</span>{% endif %}
-            {% else %}—{% endif %}
-          </td>
-          <td><div class="cell-truncate" title="{{ part.name_he }}">{{ part.name_he }}</div></td>
-          <td>{{ part.manufacturer.name if part.manufacturer else '-' }}</td>
-          {# התאמות הן הטקסט הארוך בשורה, ולכן הן נחתכות בשלוש נקודות ולא גולשות #}
-          {% set fit_labels = [] %}
-          {% for fit in part.fitments %}
-            {%- set _ = fit_labels.append(fit.make ~ ' ' ~ (fit.model or '') ~ (' ' ~ fit.year_from ~ '–' ~ (fit.year_to or '') if fit.year_from else '')) -%}
+          {% for column in columns %}
+          <td class="{{ column.align }}">{{ cell(column, part, op) }}</td>
           {% endfor %}
-          {% set fit_text = fit_labels[:3] | join(' · ') %}
-          {% if fit_labels | length > 3 %}{% set fit_text = fit_text ~ ' ועוד ' ~ (fit_labels | length - 3) %}{% endif %}
-          <td class="small text-muted"><div class="cell-truncate cell-wide" title="{{ fit_labels | join(' · ') }}">{{ fit_text or '—' }}</div></td>
-          {% set op = part.for_org(org_id) %}
-          <td class="text-end">{{ op.price_with_vat | ils if op else '—' }}</td>
-          <td class="text-center">
-            {% if op %}<span class="badge {% if op.in_stock %}bg-success{% else %}bg-secondary{% endif %}">{{ op.stock_qty }}</span>
-            {% else %}<span class="text-muted">—</span>{% endif %}
-          </td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="text-muted text-center py-4">
+        <tr><td colspan="{{ columns | length }}" class="text-muted text-center py-4">
           {% if is_filtered %}
             לא נמצאו מק"טים לסינון הזה.
             <a href="{{ url_for('web.parts_list') }}">להצגת כל הקטלוג</a>
