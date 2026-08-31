@@ -5,15 +5,18 @@
 <p class="text-muted small mb-4">{{ current_user.organization.name }}</p>
 
 <div class="card mb-4">
-  <div class="card-header">הזמנת עובד</div>
+  <div class="card-header">הוספת מורשה</div>
   <div class="card-body">
-    <form method="post" action="{{ url_for('team.invite') }}" class="row g-2">
+    <form method="post" action="{{ url_for('team.add_user') }}" class="row g-2">
       {{ csrf_field() }}
-      <div class="col-md-6">
-        <input class="form-control" type="email" name="email" dir="ltr"
-               placeholder='דוא"ל של העובד' required>
+      <div class="col-md-4">
+        <input class="form-control" type="tel" name="phone" dir="ltr" inputmode="tel"
+               placeholder="050-000-0000" required>
       </div>
       <div class="col-md-4">
+        <input class="form-control" name="full_name" placeholder="שם (לא חובה)">
+      </div>
+      <div class="col-md-2">
         <select class="form-select" name="role">
           {% for role in roles %}
           <option value="{{ role }}" {% if role == 'mechanic' %}selected{% endif %}>
@@ -22,57 +25,19 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2 d-grid"><button class="btn btn-primary">הזמן</button></div>
+      <div class="col-md-2 d-grid"><button class="btn btn-primary">הוספה</button></div>
     </form>
+    <p class="text-muted small mb-0 mt-2">
+      המספר הזה הוא ההזדהות. מרגע ההוספה אפשר להיכנס איתו - אין סיסמה ואין הזמנה לשלוח.
+    </p>
   </div>
 </div>
-
-{% if invitations %}
-<div class="card mb-4">
-  <div class="card-header">הזמנות ממתינות</div>
-  <div class="table-responsive"><table class="table mb-0 align-middle">
-    <thead class="table-light"><tr>
-      <th>דוא"ל</th><th>תפקיד</th><th>קישור ההזמנה</th><th>תוקף</th><th></th>
-    </tr></thead>
-    <tbody>
-      {% for inv in invitations %}
-      <tr class="{% if inv.is_expired %}text-muted{% endif %}">
-        <td dir="ltr">{{ inv.email }}</td>
-        <td>{{ inv.role_label }}</td>
-        <td>
-          {% if inv.is_expired %}<span class="text-muted small">פג תוקף</span>
-          {% else %}
-          <input class="form-control form-control-sm font-monospace" readonly dir="ltr"
-                 onclick="this.select()"
-                 value="{{ url_for('team.accept', token=inv.token, _external=True) }}">
-          {% endif %}
-        </td>
-        <td class="small">{{ inv.expires_at.strftime('%d/%m/%Y') }}</td>
-        <td>
-          <form method="post" action="{{ url_for('team.revoke', invitation_id=inv.id) }}">
-            {{ csrf_field() }}
-            <button class="btn btn-sm btn-outline-danger">ביטול</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-  <div class="card-footer small text-muted">
-    {% if mail_configured %}
-      ההזמנות נשלחות בדוא"ל אוטומטית. הקישור מוצג כאן לגיבוי.
-    {% else %}
-      <strong>שליחת דוא"ל אינה מוגדרת בסביבה הזו</strong> — העתק את הקישור ושלח אותו לעובד.
-    {% endif %}
-  </div>
-</div>
-{% endif %}
 
 <div class="card">
   <div class="card-header">משתמשים ({{ users | length }})</div>
   <div class="table-responsive"><table class="table mb-0 align-middle">
     <thead class="table-light"><tr>
-      <th>שם</th><th>דוא"ל</th><th>תפקיד</th><th>כניסה אחרונה</th><th>סטטוס</th><th></th>
+      <th>שם</th><th>טלפון</th><th>תפקיד</th><th>כניסה אחרונה</th><th>סטטוס</th><th></th>
     </tr></thead>
     <tbody>
       {% for user in users %}
@@ -81,7 +46,7 @@
           {{ user.full_name or '—' }}
           {% if user.id == current_user.id %}<span class="badge bg-primary">אתה</span>{% endif %}
         </td>
-        <td dir="ltr" class="small">{{ user.email }}</td>
+        <td dir="ltr" class="small">{{ user.phone_display }}</td>
         <td>
           <form method="post" action="{{ url_for('team.change_role', user_id=user.id) }}"
                 class="d-flex gap-1">

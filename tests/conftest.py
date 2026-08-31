@@ -12,6 +12,11 @@ from app.models import CrossReference, Fitment, OrgPart, Part, db  # noqa: E402
 from app.services import get_or_create_category, get_or_create_manufacturer  # noqa: E402
 
 
+# הזהות של משתמש ה-fixture. ההזדהות היא מספר טלפון, ולכן זה מה
+# שהבדיקות מזינות.
+FIXTURE_PHONE = "0500000001"
+
+
 def _build_app():
     """בונה אפליקציה עם הקטלוג המשותף. מוחזר כגנרטור כדי ששני
     ה-fixtures - זה שלכל בדיקה וזה שלכל קובץ - יחלקו את אותו קוד."""
@@ -47,8 +52,10 @@ def _build_app():
                 price=200.0, cost=140.0, stock_qty=4, min_stock=2, location="A-01",
             )
         )
-        user = User(email="fixture@t.test", role="manager", organization=organization)
-        user.set_password("password123")
+        user = User(
+            phone=FIXTURE_PHONE, email="fixture@t.test", role="manager",
+            organization=organization,
+        )
         db.session.add(user)
         db.session.commit()
 
@@ -73,10 +80,12 @@ def shared_app():
 
 @pytest.fixture
 def client(app):
-    """לקוח שכבר בתוך האפליקציה.
+    """לקוח שכבר בתוך האפליקציה: הזדהה, ומנווט בין המסכים.
 
     בקשותיו נושאות מפנה מהאתר עצמו, כמו כל ניווט פנימי - זה מה שמבדיל
-    אותו ממי שרק עכשיו פותח את האפליקציה ומקבל את מסך הפתיחה.
+    אותו ממי שרק עכשיו פותח את האפליקציה ומקבל את מסך הפתיחה. מאז
+    שהאפליקציה סגורה למי שלא הזדהה, הוא גם מזדהה: בלי זה כל בדיקה
+    הייתה בודקת את מסך ההזדהות במקום את המסך שהיא באה לבדוק.
     """
     test_client = app.test_client()
     navigate = test_client.open
@@ -87,6 +96,7 @@ def client(app):
         return navigate(*args, headers=headers, **kwargs)
 
     test_client.open = from_inside
+    test_client.post("/login", data={"phone": FIXTURE_PHONE})
     return test_client
 
 
@@ -94,6 +104,19 @@ def client(app):
 def visitor(app):
     """לקוח שנוחת על האפליקציה בפעם הראשונה, לפני מסך הפתיחה."""
     return app.test_client()
+
+
+@pytest.fixture
+def identified(app):
+    """מכשיר שכבר הזדהה, ומעכשיו פותח את האפליקציה כמו כל יום.
+
+    בלי המפנה של client - הוא *פותח* את האפליקציה ולא מנווט בתוכה,
+    וזה בדיוק מה שבדיקות מסך הפתיחה בוחנות.
+    """
+    test_client = app.test_client()
+    test_client.post("/login", data={"phone": FIXTURE_PHONE})
+    test_client.get("/")  # שורף את אסימון הכניסה שההזדהות נתנה
+    return test_client
 
 
 @pytest.fixture
@@ -105,6 +128,9 @@ def org_id(app):
 
 @pytest.fixture
 def auth_client(app, client):
-    """לקוח מחובר כמנהל בארגון ברירת המחדל."""
-    client.post("/login", data={"email": "fixture@t.test", "password": "password123"})
+    """לקוח מזוהה כמנהל בארגון ברירת המחדל.
+
+    נשאר כשם נפרד גם אחרי ש-client עצמו מזדהה, כי הוא מה שבדיקה
+    אומרת כשחשוב לה *מי* מבצע את הפעולה ולא רק שהיא בוצעה.
+    """
     return client

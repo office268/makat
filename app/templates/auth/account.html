@@ -7,7 +7,10 @@
     <div class="card h-100"><div class="card-header">משתמש</div><div class="card-body">
       <dl class="row mb-0">
         <dt class="col-4">שם</dt><dd class="col-8">{{ current_user.full_name or '-' }}</dd>
+        <dt class="col-4">טלפון</dt><dd class="col-8" dir="ltr">{{ current_user.phone_display }}</dd>
+        {% if current_user.email %}
         <dt class="col-4">דוא"ל</dt><dd class="col-8" dir="ltr">{{ current_user.email }}</dd>
+        {% endif %}
         <dt class="col-4">תפקיד</dt><dd class="col-8">
           <span class="badge bg-primary">{{ current_user.role_label }}</span></dd>
         <dt class="col-4">כניסה אחרונה</dt>

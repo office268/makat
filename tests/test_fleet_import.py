@@ -346,16 +346,20 @@ def test_html_error_page_is_not_pasted_into_the_message():
 # ---- הרשאות ומסך ----
 
 
+SUPERADMIN_PHONE = "0506660001"
+
+
 @pytest.fixture
 def superadmin_client(app, client):
     app.config["SUPERADMIN_EMAILS"] = frozenset({SUPERADMIN})
     with app.app_context():
         organization = Organization.query.filter_by(slug="fixture-org").first()
-        user = User(email=SUPERADMIN, role="owner", organization=organization)
-        user.set_password("password123")
+        user = User(phone=SUPERADMIN_PHONE, email=SUPERADMIN, role="owner",
+                    organization=organization)
         db.session.add(user)
         db.session.commit()
-    client.post("/login", data={"email": SUPERADMIN, "password": "password123"})
+    client.post("/logout")
+    client.post("/login", data={"phone": SUPERADMIN_PHONE})
     return client
 
 
@@ -366,8 +370,8 @@ ADMIN_POSTS = (
 )
 
 
-def test_anonymous_is_sent_to_login(client):
-    response = client.get("/admin/fleet-stats")
+def test_the_unidentified_are_sent_to_login(visitor):
+    response = visitor.get("/admin/fleet-stats")
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
 

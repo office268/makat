@@ -1,34 +1,29 @@
 {% extends "base.html" %}
-{% block title %}התחברות{% endblock %}
+{% block title %}הזדהות{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-md-5">
-    <div class="card mt-4">
-      <div class="card-body p-4">
-        <h1 class="h4 mb-1">התחברות</h1>
+  <div class="col-md-5 col-lg-4">
+    <div class="card mt-5">
+      <div class="card-body p-4 text-center">
+        <h1 class="h4 mb-1">מי מזדהה?</h1>
         <p class="text-muted small mb-4">קטלוג מק"טים לחלקי רכב</p>
+
+        {# שדה אחד. inputmode="tel" מעלה במכשיר את מקלדת הספרות,
+           ו-autocomplete נותן לדפדפן להשלים את המספר של בעל המכשיר. #}
         <form method="post">
           {{ csrf_field() }}
-          <div class="mb-3">
-            <label class="form-label">דוא"ל</label>
-            <input class="form-control" type="email" name="email" dir="ltr"
-                   value="{{ form.get('email','') }}" required autofocus>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">סיסמה</label>
-            <input class="form-control" type="password" name="password" required>
-          </div>
-          <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" name="remember" value="1" id="remember">
-            <label class="form-check-label small" for="remember">זכור אותי</label>
-          </div>
-          <button class="btn btn-primary w-100">כניסה</button>
+          <label class="form-label visually-hidden" for="phone">מספר טלפון</label>
+          <input class="form-control form-control-lg text-center" id="phone"
+                 type="tel" name="phone" dir="ltr" inputmode="tel"
+                 autocomplete="tel" placeholder="050-000-0000" maxlength="20"
+                 value="{{ form.get('phone','') }}" required autofocus>
+          <button class="btn btn-primary btn-lg w-100 mt-3">כניסה</button>
         </form>
-        <hr class="my-4">
-        <p class="text-center small mb-1">
-          אין לך חשבון? <a href="{{ url_for('auth.signup') }}">רישום ארגון חדש</a>
+
+        <p class="text-muted small mt-4 mb-0">
+          אין לך גישה? מנהל המערכת מוסיף מספרים במסך הצוות.
         </p>
-        <p class="text-center small mb-0">
+        <p class="small mt-2 mb-0">
           <a class="text-muted" href="{{ url_for('auth.welcome') }}">חזרה למסך הפתיחה</a>
         </p>
       </div>

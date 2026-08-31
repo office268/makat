@@ -1,17 +1,18 @@
 """ניהול המשתמשים של הארגון.
 
-בעלים מזמין עובדים, קובע להם תפקיד, ומשבית מי שעזב. כל הפעולות
+בעלים מוסיף מספר טלפון, קובע לו תפקיד, ומשבית מי שעזב. כל הפעולות
 מוגבלות לארגון של המשתמש המחובר - אין דרך להגיע למשתמש של ארגון אחר.
+
+המסך הזה *הוא* רשימת המורשים: מרגע שהזהות היא מספר טלפון, הוספת שורה
+כאן היא מתן הגישה, והשבתתה היא שלילתה. אין הזמנה בדוא"ל ואין סיסמה
+לקבוע - העובד מקבל את המספר שלו, וזה כל מה שהוא מזין.
 """
-import secrets
-from datetime import datetime, timedelta, timezone
-
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
-from flask_login import current_user, login_required, login_user
+from flask_login import current_user
 
-from .. import activity, mailer
-from ..auth import EMAIL_RE, MIN_PASSWORD, role_required
-from ..auth_models import Invitation, User
+from .. import activity, phones
+from ..auth import role_required
+from ..auth_models import User
 from ..models import db
 
 team_bp = Blueprint("team", __name__)
@@ -33,74 +34,45 @@ def index():
         .order_by(User.created_at)
         .all()
     )
-    invitations = (
-        Invitation.query.filter_by(
-            organization_id=current_user.organization_id, accepted_at=None
-        )
-        .order_by(Invitation.created_at.desc())
-        .all()
-    )
-    return render_template(
-        "team/index.html", users=users, invitations=invitations,
-        roles=User.ROLES, mail_configured=mailer.is_configured(),
-    )
+    return render_template("team/index.html", users=users, roles=User.ROLES)
 
 
-@team_bp.post("/team/invite")
+@team_bp.post("/team/add")
 @role_required("owner")
-def invite():
-    email = (request.form.get("email") or "").strip().lower()
-    role = request.form.get("role") or "mechanic"
+def add_user():
+    """הוספת מורשה: מספר טלפון, שם ותפקיד.
 
-    if not EMAIL_RE.match(email):
-        flash('כתובת דוא"ל לא תקינה.', "danger")
+    המספר נשמר מנורמל (ראה app/phones.py), אחרת אותו אדם היה נכנס
+    כשהקליד 052-1234567 ונדחה כשהקליד 0521234567.
+    """
+    typed = (request.form.get("phone") or "").strip()
+    phone = phones.normalize(typed)
+    role = request.form.get("role") or "mechanic"
+    full_name = (request.form.get("full_name") or "").strip() or None
+
+    if phone is None:
+        flash("מספר הטלפון אינו תקין.", "danger")
     elif role not in User.ROLES:
         flash("תפקיד לא מוכר.", "danger")
-    elif User.query.filter_by(email=email).first():
-        flash("כתובת הדוא\"ל כבר רשומה במערכת.", "warning")
+    elif User.query.filter_by(phone=phone).first():
+        flash("המספר כבר רשום במערכת.", "warning")
     else:
-        invitation = Invitation(
-            email=email,
+        user = User(
+            phone=phone,
+            full_name=full_name,
             role=role,
             organization_id=current_user.organization_id,
-            token=secrets.token_urlsafe(32),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=14),
-            invited_by_id=current_user.id,
         )
-        db.session.add(invitation)
+        db.session.add(user)
         db.session.commit()
-
         activity.note(
-            summary=f"{email} ({invitation.role_label})",
-            entity_type="invitation",
-            entity_id=invitation.id,
-            invited_email=email,
+            summary=f"{user.display_name} ({user.role_label})",
+            entity_type="user",
+            entity_id=user.id,
+            phone=phone,
             role=role,
         )
-        accept_url = url_for("team.accept", token=invitation.token, _external=True)
-        if mailer.send_invitation(invitation, accept_url, current_user):
-            flash(f"נשלחה הזמנה אל {email}.", "success")
-        else:
-            flash(
-                f"נוצרה הזמנה עבור {email}, אך שליחת הדוא\"ל אינה מוגדרת — "
-                "העתק את הקישור מהטבלה ושלח אותו ידנית.",
-                "warning",
-            )
-    return redirect(url_for("team.index"))
-
-
-@team_bp.post("/team/invite/<int:invitation_id>/revoke")
-@role_required("owner")
-def revoke(invitation_id):
-    invitation = db.session.get(Invitation, invitation_id)
-    if invitation is None or invitation.organization_id != current_user.organization_id:
-        abort(404)
-    activity.note(
-        summary=invitation.email, entity_type="invitation", entity_id=invitation.id
-    )
-    db.session.delete(invitation)
-    db.session.commit()
-    flash("ההזמנה בוטלה.", "info")
+        flash(f"{user.display_name} יכול להיכנס עכשיו.", "success")
     return redirect(url_for("team.index"))
 
 
@@ -120,12 +92,12 @@ def change_role(user_id):
         user.role = role
         db.session.commit()
         activity.note(
-            summary=f"{user.email}: {previous} → {user.role_label}",
+            summary=f"{user.display_name}: {previous} → {user.role_label}",
             entity_type="user",
             entity_id=user.id,
             role=role,
         )
-        flash(f"{user.email} הוגדר כ{user.role_label}.", "success")
+        flash(f"{user.display_name} הוגדר כ{user.role_label}.", "success")
     return redirect(url_for("team.index"))
 
 
@@ -141,13 +113,13 @@ def toggle_active(user_id):
         user.active = not user.active
         db.session.commit()
         activity.note(
-            summary=f"{user.email} {'הופעל' if user.active else 'הושבת'}",
+            summary=f"{user.display_name} {'הופעל' if user.active else 'הושבת'}",
             entity_type="user",
             entity_id=user.id,
             active=user.active,
         )
         flash(
-            f"{user.email} {'הופעל' if user.active else 'הושבת'}.",
+            f"{user.display_name} {'הופעל' if user.active else 'הושבת'}.",
             "success" if user.active else "info",
         )
     return redirect(url_for("team.index"))
@@ -158,46 +130,3 @@ def _owner_count():
     return User.query.filter_by(
         organization_id=current_user.organization_id, role="owner", active=True
     ).count()
-
-
-@team_bp.route("/invite/<token>", methods=["GET", "POST"])
-def accept(token):
-    """קבלת הזמנה - המוזמן קובע סיסמה ונכנס לארגון."""
-    if current_user.is_authenticated:
-        flash("יש להתנתק לפני קבלת הזמנה.", "warning")
-        return redirect(url_for("identify.index"))
-
-    invitation = Invitation.query.filter_by(token=token, accepted_at=None).first()
-    if invitation is None or invitation.is_expired:
-        return render_template("team/invalid_invite.html"), 404
-
-    if request.method == "POST":
-        password = request.form.get("password") or ""
-        if len(password) < MIN_PASSWORD:
-            flash(f"הסיסמה חייבת להכיל לפחות {MIN_PASSWORD} תווים.", "danger")
-        elif password != request.form.get("password_confirm"):
-            flash("הסיסמאות אינן תואמות.", "danger")
-        elif User.query.filter_by(email=invitation.email).first():
-            flash("כתובת הדוא\"ל כבר רשומה במערכת.", "danger")
-        else:
-            user = User(
-                email=invitation.email,
-                full_name=(request.form.get("full_name") or "").strip() or None,
-                role=invitation.role,
-                organization_id=invitation.organization_id,
-            )
-            user.set_password(password)
-            invitation.accepted_at = datetime.now(timezone.utc)
-            db.session.add(user)
-            db.session.commit()
-            login_user(user)
-            activity.note(
-                summary=f"{user.email} הצטרף כ{user.role_label}",
-                entity_type="user",
-                entity_id=user.id,
-                invitation_id=invitation.id,
-            )
-            flash(f"ברוך הבא ל{user.organization.name}!", "success")
-            return redirect(url_for("identify.index"))
-
-    return render_template("team/accept.html", invitation=invitation)

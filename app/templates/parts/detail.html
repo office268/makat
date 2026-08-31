@@ -45,15 +45,13 @@
           <span class="badge {% if org_part.low_stock %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ org_part.stock_qty }}</span>
           <span class="text-muted small">מינימום {{ org_part.min_stock }}</span></dd>
       </dl>
-      {% elif org_id %}
+      {% else %}
       <p class="text-muted mb-2">המק"ט הזה עדיין לא מתומחר בארגון שלך.</p>
       {% if current_user.can_edit_catalog %}
       <a class="btn btn-sm btn-outline-primary" href="{{ url_for('web.part_edit', part_id=part.id) }}">
         הוספת מחיר ומלאי
       </a>
       {% endif %}
-      {% else %}
-      <p class="text-muted mb-0">מחירים ומלאי פרטיים לכל ארגון. <a href="{{ url_for('auth.login') }}">התחבר</a> כדי לראות את שלך.</p>
       {% endif %}
       </div>
     </div>
