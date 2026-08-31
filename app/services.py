@@ -104,7 +104,7 @@ def normalize_make(name):
     return "".join(collapsed)
 
 
-def _catalog_make(make):
+def catalog_make(make):
     """שם היצרן ככתיבתו בקטלוג, אם הוא מוכר שם בכתיב אחר."""
     wanted = normalize_make(make)
     if not wanted:
@@ -246,7 +246,7 @@ def search_parts(
         fit = db.session.query(Fitment.part_id)
         if make:
             # הרכב מגיע בכתיב המרשם, ההתאמות נכתבו בכתיב הקטלוג
-            fit = fit.filter(Fitment.make.ilike(_catalog_make(make)))
+            fit = fit.filter(Fitment.make.ilike(catalog_make(make)))
         if model:
             fit = fit.filter(_model_matches(model))
         if engine:

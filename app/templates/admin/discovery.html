@@ -167,7 +167,8 @@
         const plan = await response.json();
         costNote.textContent = plan.count
           ? `${plan.count} חיפושים ירוצו — קריאה נפרדת ל-Claude לכל אחד.` +
-            (plan.capped ? ` נחתך לתקרה של ${plan.max}.` : "")
+            (plan.capped ? ` נחתך לתקרה של ${plan.max}.` : "") +
+            (plan.source ? ` המטרות נבחרו ${plan.source}.` : "")
           : "לא נמצאו דגמים לחיפוש.";
         costNote.className = plan.count > 10
           ? "form-text mb-1 text-danger fw-bold" : "form-text mb-1";

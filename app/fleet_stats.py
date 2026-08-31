@@ -639,6 +639,29 @@ def search(q=None, make=None, taken_at=None, sort="vehicles"):
     )
 
 
+def gap_ranking(q=None, make=None, taken_at=None, limit=None):
+    """הדגמים שבהם הפער בין רכבים בטווח הקנייה למק"טים שלנו הוא הגדול ביותר.
+
+    זה החישוב שמאחורי מיון "הפער הגדול ביותר" במסך, והוא משותף גם
+    למנוע הגילוי: אין טעם ששני מקומות ידרגו הזדמנויות בשתי שיטות.
+
+    הדירוג נעשה על הדגמים הגדולים בלבד - פער אצל דגם עם שלושים רכבים
+    אינו הזדמנות - והמכנה הוא מק"טים+1, כך שדגם בלי מק"טים כלל עולה
+    לראש לפי גודלו במקום להתחלק באפס.
+    """
+    from . import services
+
+    rows = grouped_by_model(q=q, make=make, taken_at=taken_at, limit=limit)
+    counts = services.part_counts_for([(row.search_make, row.model) for row in rows])
+    ranked = sorted(
+        rows,
+        key=lambda row: (row.prime or 0)
+        / (counts[(row.search_make, row.model)][0] + 1),
+        reverse=True,
+    )
+    return ranked, counts
+
+
 def grouped_by_model(q=None, make=None, taken_at=None, limit=None):
     """שורות הצילום מקובצות לדגם אחד, בלי הפיצול לקודי דגם ולכתיבי יצרן.
 

@@ -164,10 +164,14 @@ def _requested_plan(source):
 def discovery_plan():
     """כמה חיפושים יירוצו, ואילו - לפני שמתחייבים לתשלום."""
     targets, capped = _requested_plan(request.args)
+    source = parts_discovery.plan_source(
+        request.args.get("make"), request.args.get("model")
+    )
     return jsonify({
         "count": len(targets),
         "capped": capped,
         "max": parts_discovery.MAX_TARGETS,
+        "source": parts_discovery.PLAN_SOURCES.get(source, ""),
         "sample": [
             f"{mk} {md} · {type_name(t)}" for mk, md, t in targets[:6]
         ],
