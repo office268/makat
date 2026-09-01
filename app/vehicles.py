@@ -18,6 +18,7 @@
 """
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,7 +30,27 @@ CKAN_URL = "https://data.gov.il/api/3/action/datastore_search"
 RESOURCE_ID = os.environ.get(
     "GOV_VEHICLES_RESOURCE_ID", "053cea08-09bc-40ec-8f7a-156f0677aff3"
 )
-TIMEOUT = float(os.environ.get("GOV_API_TIMEOUT", "8"))
+
+# המאגרים שנשאלים כברירת מחדל, לפי הסדר.
+#
+# הראשון הוא זה שהיה כאן מאז ומתמיד - וזו הייתה הבעיה: המרשם של משרד
+# התחבורה **מפוצל לשני משאבים**, "מספרי רישוי של כלי רכב פרטיים
+# ומסחריים" ו-"...המשך". רכב שיושב בחלק השני החזיר "לא נמצא" למרות
+# שהמאגר ענה כראוי - הוא פשוט נשאל על חצי מהמרשם.
+#
+# השלישי הוא הרכבים שירדו מהכביש. רכב שבוטל אינו במרשם הפעיל, ומכונאי
+# שמחזיק אותו בחצר עדיין צריך לו חלפים.
+DEFAULT_RESOURCES = [
+    (RESOURCE_ID, "רכב פרטי ומסחרי"),
+    ("0866573c-40cd-4ca8-91d2-9dd2d7a492e5", "רכב פרטי ומסחרי · המשך"),
+    ("851ecab1-0622-4dbe-a6c7-f950cf82abf9", "ירדו מהכביש · ביטול סופי"),
+]
+
+TIMEOUT = float(os.environ.get("GOV_API_TIMEOUT", "6"))
+# תקציב זמן לכל החיפוש. מספר מאגרים כפול מספר אסטרטגיות זה הרבה
+# בקשות, ו-gunicorn הורג בקשה אחרי 60 שניות. עדיף להפסיק ולומר
+# "המאגר איטי" מאשר להיחתך באמצע בלי הודעה.
+LOOKUP_BUDGET = float(os.environ.get("GOV_LOOKUP_BUDGET", "20"))
 
 SAMPLE_PATH = Path(__file__).resolve().parent.parent / "data" / "vehicles_sample.json"
 
@@ -117,13 +138,13 @@ def resources():
     """
     raw = os.environ.get("GOV_VEHICLE_RESOURCES", "").strip()
     if not raw:
-        return [(RESOURCE_ID, "רכב פרטי ומסחרי")]
+        return list(DEFAULT_RESOURCES)
     found = []
     for chunk in raw.split(","):
         resource_id, _, label = chunk.strip().partition(":")
         if resource_id.strip():
             found.append((resource_id.strip(), label.strip() or resource_id.strip()))
-    return found or [(RESOURCE_ID, "רכב פרטי ומסחרי")]
+    return found or list(DEFAULT_RESOURCES)
 
 
 def _query(resource_id, params):
@@ -251,8 +272,19 @@ def lookup_detail(plate):
         return result
 
     reached = False
+    deadline = time.monotonic() + LOOKUP_BUDGET
     for resource_id, label in resources():
         for name, params in _strategies(digits):
+            if time.monotonic() > deadline:
+                result["attempts"].append(
+                    {"resource": label, "strategy": name,
+                     "error": "נגמר תקציב הזמן", "records": None}
+                )
+                result["status"] = "unreachable" if not reached else "not_found"
+                result["error"] = result["error"] or (
+                    f"החיפוש עבר {LOOKUP_BUDGET:.0f} שניות ונעצר."
+                )
+                return result
             records, error = _query(resource_id, params)
             result["attempts"].append(
                 {
@@ -268,6 +300,7 @@ def lookup_detail(plate):
             if records:
                 result["vehicle"] = _normalize_record(records[0], "data.gov.il")
                 result["status"] = "found"
+                result["found_in"] = {"resource": resource_id, "label": label}
                 return result
 
     if not reached:

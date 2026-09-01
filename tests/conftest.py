@@ -64,6 +64,21 @@ def _build_app():
         db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def offline_registry(monkeypatch):
+    """אף בדיקה לא יוצאת לרשת.
+
+    מרשם הרכב נשאל היום בכמה מאגרים כפול כמה אסטרטגיות, וכל בקשה
+    שיוצאת באמת מחכה ל-timeout. בדיקה שתלויה בכך שאין רשת גם משנה
+    התנהגות ברגע שיש - "המאגר לא נגיש" מול "אין רכב כזה" הן שתי
+    תשובות נכונות ושונות. ברירת המחדל כאן היא מאגר שעונה ואין בו
+    כלום; מי שצריך אחרת מחליף בעצמו.
+    """
+    from app import vehicles
+
+    monkeypatch.setattr(vehicles, "_query", lambda resource_id, params: ([], None))
+
+
 @pytest.fixture
 def app():
     yield from _build_app()

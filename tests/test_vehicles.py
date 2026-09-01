@@ -113,8 +113,9 @@ def test_the_registry_answering_nothing_is_not_found(monkeypatch):
     monkeypatch.setattr(vehicles, "_query", FakeCkan())
     found = vehicles.lookup_detail("10732802")
     assert found["status"] == "not_found"
-    assert len(found["attempts"]) == 3
     assert all(a["error"] is None for a in found["attempts"])
+    # כל אסטרטגיה נוסתה בכל מאגר לפני שוויתרנו
+    assert len(found["attempts"]) == len(vehicles.resources()) * 3
 
 
 def test_the_registry_being_down_is_not_the_same_as_not_found(monkeypatch):
@@ -187,8 +188,10 @@ def test_the_api_can_show_what_it_tried(client, monkeypatch):
     monkeypatch.setattr(vehicles, "_query", FakeCkan())
     payload = client.get("/api/vehicle/10732802?debug=1").get_json()
     assert payload["status"] == "not_found"
-    assert len(payload["attempts"]) == 3
     assert payload["attempts"][0]["strategy"] == "סינון מספרי"
+    assert {a["resource"] for a in payload["attempts"]} == {
+        label for _, label in vehicles.resources()
+    }
 
 
 # --------------------------------------------------------------------------
@@ -337,3 +340,88 @@ def test_the_scan_is_not_run_on_the_normal_request(client, monkeypatch):
     )
     client.post("/", data={"plate": "10732802", "action": "vehicle"})
     client.get("/api/vehicle/10732802?debug=1")
+
+
+# --------------------------------------------------------------------------
+# המרשם מפוצל לשניים
+# --------------------------------------------------------------------------
+
+CONTINUATION = "0866573c-40cd-4ca8-91d2-9dd2d7a492e5"
+OFF_ROAD = "851ecab1-0622-4dbe-a6c7-f950cf82abf9"
+
+
+def test_all_three_registries_are_asked_by_default(monkeypatch):
+    """המרשם מפוצל, וזה מה שהחזיר "לא נמצא" לרכב שקיים.
+
+    "מספרי רישוי של כלי רכב פרטיים ומסחריים" ו-"...המשך" הם שני משאבים
+    נפרדים. שאילת הראשון בלבד היא שאילת חצי מהמרשם.
+    """
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    ids = [resource for resource, _ in vehicles.resources()]
+    assert ids[0] == vehicles.RESOURCE_ID
+    assert CONTINUATION in ids
+    assert OFF_ROAD in ids
+
+
+def test_a_vehicle_in_the_continuation_registry_is_found(monkeypatch):
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == CONTINUATION and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    found = vehicles.lookup_detail("107-32-802")
+    assert found["status"] == "found"
+    assert found["found_in"]["resource"] == CONTINUATION
+    assert found["vehicle"]["model"] == "COROLLA"
+
+
+def test_a_cancelled_vehicle_is_still_found(monkeypatch):
+    """רכב שירד מהכביש עדיין עומד בחצר של מישהו וצריך לו חלפים."""
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == OFF_ROAD and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    assert vehicles.lookup_detail("10732802")["found_in"]["resource"] == OFF_ROAD
+
+
+def test_the_first_registry_still_wins_and_stops_the_search(monkeypatch):
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+    asked = []
+
+    def query(resource_id, params):
+        asked.append(resource_id)
+        if params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    vehicles.lookup_detail("10732802")
+    assert asked == [vehicles.RESOURCE_ID]   # בקשה אחת, לא תשע
+
+
+def test_the_search_stops_when_the_time_budget_runs_out(monkeypatch):
+    """מאגרים כפול אסטרטגיות זה הרבה בקשות, ו-gunicorn הורג אחרי 60 שניות.
+
+    עדיף להיעצר ולומר "המאגר איטי" מאשר להיחתך באמצע בלי הודעה.
+    """
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    monkeypatch.setattr(vehicles, "LOOKUP_BUDGET", 0.05)
+    clock = iter([0.0] + [10.0] * 40)
+
+    monkeypatch.setattr(vehicles.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vehicles, "_query", lambda r, p: ([], None))
+    found = vehicles.lookup_detail("10732802")
+
+    assert found["status"] == "unreachable"
+    assert "נעצר" in found["error"]
+    assert found["attempts"][-1]["error"] == "נגמר תקציב הזמן"
