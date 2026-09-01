@@ -54,15 +54,31 @@ def index():
     context.update(plate=plate, query=query)
 
     # שלב 1 - הרכב
-    vehicle = vehicles.lookup(plate)
+    found = vehicles.lookup_detail(plate)
+    vehicle = found["vehicle"] or vehicles.lookup_offline(plate)
     if not vehicle:
         activity.note(
             action="identify.vehicle_lookup",
-            summary=f'{plate} - לא נמצא',
+            summary=f'{plate} - {found["status"]}',
             plate=plate,
             found=False,
+            status=found["status"],
+            reason=found.get("error"),
         )
-        context["error"] = f'לא נמצא רכב עבור מספר רישוי "{plate}".'
+        # "המאגר לא ענה" ו-"אין רכב כזה" הן שתי בעיות שונות: אחת אומרת
+        # לנסות שוב בעוד רגע, השנייה אומרת שהמספר שגוי. מסך שאומר את
+        # אותו משפט לשתיהן שולח את המשתמש לבדוק את המספר לחינם.
+        if found["status"] == "unreachable":
+            context["error"] = (
+                "מאגר משרד התחבורה אינו נגיש כרגע, ולכן לא ניתן לזהות את הרכב. "
+                f'נסה שוב בעוד רגע. ({found.get("error")})'
+            )
+        else:
+            context["error"] = (
+                f'לא נמצא רכב עבור מספר רישוי "{plate}". '
+                "ייתכן שהרכב ירד מהכביש, שהוא דו-גלגלי או כבד - אלה מאגרים "
+                "נפרדים - או שיש טעות במספר."
+            )
         return render_template("identify.html", **context)
     context["vehicle"] = vehicle
     context["coverage"] = services.catalog_coverage(vehicle)
@@ -154,11 +170,26 @@ def legacy_urls():
 
 @identify_bp.get("/api/vehicle/<plate>")
 def api_vehicle(plate):
-    """שליפת רכב לפי מספר רישוי."""
-    vehicle = vehicles.lookup(plate)
+    """שליפת רכב לפי מספר רישוי.
+
+    ``?debug=1`` מחזיר גם מה נוסה מול המאגר ומה חזר. זו הדרך לענות על
+    "למה זה אומר לא נמצא" בלי לנחש, גם בפרודקשן.
+    """
+    found = vehicles.lookup_detail(plate)
+    vehicle = found["vehicle"] or vehicles.lookup_offline(plate)
+    if request.args.get("debug") == "1":
+        return jsonify({**found, "vehicle": vehicle})
     if not vehicle:
-        activity.note(summary=f"{plate} - לא נמצא", plate=plate, found=False)
-        return jsonify({"error": f"לא נמצא רכב עבור {plate}"}), 404
+        activity.note(
+            summary=f'{plate} - {found["status"]}', plate=plate, found=False,
+            status=found["status"],
+        )
+        status = 503 if found["status"] == "unreachable" else 404
+        return jsonify({
+            "error": f"לא נמצא רכב עבור {plate}",
+            "status": found["status"],
+            "reason": found.get("error"),
+        }), status
     activity.note(
         summary=f"{plate} · {vehicle.get('make')} {vehicle.get('model')}",
         plate=plate,

@@ -153,7 +153,20 @@ def test_empty_filter_result_offers_a_way_back(client):
     assert "להצגת כל הקטלוג" in html
 
 
-def test_demo_rejects_unknown_plate(client):
+def _registry_answers_nothing(monkeypatch):
+    """מאגר שעונה, ואין בו את הרכב.
+
+    בלי הזיוף הזה הבדיקה תלויה במצב הרשת של המכונה: בלי רשת המערכת
+    אומרת בצדק "המאגר לא נגיש", ועם רשת "אין רכב כזה". שתי תשובות
+    נכונות, ורק אחת מהן היא מה שהבדיקה באה לבדוק.
+    """
+    from app import vehicles
+
+    monkeypatch.setattr(vehicles, "_query", lambda resource_id, params: ([], None))
+
+
+def test_demo_rejects_unknown_plate(client, monkeypatch):
+    _registry_answers_nothing(monkeypatch)
     response = client.post("/", data={"plate": "00000000", "query": "רפידות"})
     assert "לא נמצא רכב" in response.get_data(as_text=True)
 
@@ -167,7 +180,8 @@ def test_api_identify_returns_vehicle_and_matches(client):
     assert [m["part_number"] for m in payload["matches"]] == ["TEST-001"]
 
 
-def test_api_vehicle_not_found(client):
+def test_api_vehicle_not_found(client, monkeypatch):
+    _registry_answers_nothing(monkeypatch)
     assert client.get("/api/vehicle/00000000").status_code == 404
 
 
