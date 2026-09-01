@@ -54,6 +54,8 @@ WEB_URL = os.environ.get(
     "TECDOC_WEB_URL", "https://webcat.tecalliance.services/search?query={oem}"
 )
 WEB_WAIT_SELECTOR = os.environ.get("TECDOC_WEB_WAIT", "").strip() or None
+WEB_INPUT = os.environ.get("TECDOC_WEB_INPUT", "").strip() or None
+WEB_SUBMIT = os.environ.get("TECDOC_WEB_SUBMIT", "").strip() or None
 
 TIMEOUT = float(os.environ.get("TECDOC_TIMEOUT", 20))
 MAX_NUMBERS = int(os.environ.get("TECDOC_MAX_NUMBERS", 2))
@@ -185,7 +187,12 @@ class TecDocSource(CatalogSource):
 
         url = build_web_url(oem)
         try:
-            html = BrowserFetcher(wait_selector=WEB_WAIT_SELECTOR)(url, timeout=TIMEOUT)
+            html = BrowserFetcher(
+                wait_selector=WEB_WAIT_SELECTOR,
+                fill_selector=WEB_INPUT,
+                fill_value=oem if WEB_INPUT else None,
+                submit_selector=WEB_SUBMIT,
+            )(url, timeout=TIMEOUT)
         except BrowserError as exc:
             raise FetchError(str(exc)) from exc
         return condense(html, url), url

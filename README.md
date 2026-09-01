@@ -632,10 +632,27 @@ Laximo ו-TecDoc בונים את התוצאה ב-JavaScript אחרי טעינת 
    הבקשות בטור, מה שממילא רצוי מול אתר של מישהו אחר.
 3. **מצב מזוהה.** `CATALOG_STORAGE_STATE` הוא קובץ עוגיות שנשמר פעם
    אחת, וכל שליפה מכאן והלאה נכנסת איתו.
+4. **חיפוש שאינו כתובת.** לא בכל קטלוג מגיעים לתוצאה עם פרמטר בכתובת.
+   `LAXIMO_WEB_INPUT`/`TECDOC_WEB_INPUT` הם השדה שממלאים, ו-`..._SUBMIT`
+   הכפתור שלוחצים — כמו אדם. בלי `SUBMIT` נשלח Enter.
 
-Playwright יושב ב-`requirements-browser.txt` **בנפרד** מ-`requirements.txt`:
-Chromium מוסיף כ-400MB לתמונה, ומי שעובד מול ה-API של שני הספקים לא צריך
-דפדפן בכלל. להפעלת מסלול ה-web צריך להוסיף אותו להתקנה של הפריסה.
+**אורח, לא בוט.** `robots.txt` נבדק גם במסלול הדפדפן ולא רק בהבאה
+הפשוטה, הודעת ההסכמה על עוגיות נסגרת כדי שהדף ייבנה, וה-User-Agent הוא
+של דפדפן אמיתי — דף שמוגש ל-`HeadlessChrome` אינו הדף שצריך לקרוא.
+אין כאן עקיפה של הזדהות או של חסימה: מה שדורש חשבון ימשיך לדרוש חשבון.
+
+Playwright יושב ב-`requirements.txt` הרגיל, לא בקובץ נפרד: בלי חשבון
+API אצל הספקים זה **המסלול היחיד שיש**, ותלות שאפשר לשכוח להתקין היא
+פיצ'ר שכבוי בפרודקשן בלי שאיש שם לב.
+
+`pip install playwright` מתקין את הספרייה אבל **לא מוריד את Chromium**.
+לכן `browser_available()` בודק גם שקובץ הדפדפן קיים על הדיסק, ומי
+שמנסה בלעדיו מקבל את הפקודה להקליד ולא traceback של Playwright:
+
+```bash
+playwright install chromium                 # פיתוח מקומי
+playwright install --with-deps chromium     # בפריסה, בשלב הבנייה
+```
 
 ### בדיקה חיה מהשורה
 
@@ -741,6 +758,27 @@ healthcheckPath:   /healthz                      ← בודק גם חיבור ל
 > `SECRET_KEY` ותפיל את הבילד. הכנת בסיס הנתונים שייכת ל-`preDeployCommand`
 > ב-`railway.json`, שרץ בזמן פריסה עם כל המשתנים.
 
+#### הדפדפן בפריסה
+
+`requirements.txt` מתקין את ספריית Playwright, אבל **לא את Chromium**.
+בלי הורדה מפורשת השליפה החיה תעלה כבויה, והמסך יגיד את זה. הדפדפן שייך
+לשלב **הבנייה** ולא ל-`preDeployCommand`: הוא כ-400MB שצריכים להיכנס
+לתמונה פעם אחת, לא להיות מורדים מחדש בכל דיפלוי.
+
+ב-Railway מוסיפים לשירות **Build Command**:
+
+```
+pip install -r requirements.txt && playwright install --with-deps chromium
+```
+
+`--with-deps` מתקין גם את ספריות המערכת ש-Chromium דורש, וזה החלק
+שנוטה להיחסר בתמונה נקייה. אם הבנייה מוגבלת בהרשאות ו-`--with-deps`
+נכשל, אפשר להוריד רק את הדפדפן (`playwright install chromium`) ולהוסיף
+את הספריות דרך `nixpacks.toml`.
+
+מי שמעדיף להשאיר את התמונה קלה מכבה את המסלול ב-`CATALOG_BROWSER=0`,
+והשליפה החיה פשוט לא מוצעת.
+
 ### חלופה בלי Postgres
 
 מצרפים Volume, ממפים ל-`/data`, ומגדירים `DATA_DIR=/data`. פשוט יותר,
@@ -818,5 +856,5 @@ scripts/
   vehicle_stats.py פילוח הרכבים הפעילים בישראל לפי דגם
   catalog_probe.py בדיקה חיה של מקור קטלוגי מהשורה
 data/              parts_catalog.csv · vehicles_sample.json
-tests/             545 בדיקות · fixtures/ תשובות קטלוג שמורות
+tests/             548 בדיקות · fixtures/ תשובות קטלוג שמורות
 ```

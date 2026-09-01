@@ -271,6 +271,40 @@ def test_browser_can_be_turned_off(monkeypatch):
         browser.fetch_page("https://example.invalid/")
 
 
+def test_a_missing_browser_binary_says_how_to_install_it(monkeypatch):
+    """pip install playwright לא מוריד את Chromium.
+
+    בלי ההבחנה הזו הפיצ'ר היה נראה זמין ונופל רק בלחיצה - עם הודעה
+    של Playwright במקום עם מה שצריך להקליד.
+    """
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(browser, "chromium_installed", lambda: False)
+    assert browser.browser_available() is False
+    with pytest.raises(browser.BrowserError, match="playwright install"):
+        browser.fetch_page("https://example.invalid/")
+
+
+def test_robots_is_checked_on_the_browser_path_too(monkeypatch):
+    """אורח, לא בוט - וגם כשהאורח הוא Chromium."""
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(browser, "chromium_installed", lambda: True)
+    monkeypatch.setattr(base, "allowed_by_robots", lambda url, agent=None: False)
+    with pytest.raises(browser.BrowserError, match="robots.txt"):
+        browser.fetch_page("https://example.invalid/secret")
+
+
+def test_the_browser_can_search_through_a_form(monkeypatch):
+    """לא בכל קטלוג מגיעים לתוצאה בכתובת. לפעמים ממלאים שדה ולוחצים."""
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(browser, "chromium_installed", lambda: True)
+    monkeypatch.setattr(base, "allowed_by_robots", lambda url, agent=None: True)
+    fetcher = browser.BrowserFetcher(
+        fill_selector="#q", fill_value="JTDBR32E560095678", submit_selector="#go"
+    )
+    assert fetcher.fill_value == "JTDBR32E560095678"
+    assert fetcher.submit_selector == "#go"
+
+
 def test_a_source_that_needs_a_browser_is_unavailable_without_one(monkeypatch):
     monkeypatch.setattr(laximo, "MODE", "web")
     monkeypatch.setattr(base, "PARSE_MODEL", "x")
@@ -281,7 +315,7 @@ def test_a_source_that_needs_a_browser_is_unavailable_without_one(monkeypatch):
 
 @pytest.mark.skipif(
     not browser.browser_available(),
-    reason="Playwright אינו מותקן (requirements-browser.txt)",
+    reason="הדפדפן אינו מותקן (playwright install chromium)",
 )
 def test_the_browser_serves_requests_from_several_threads():
     """הדפדפן חייב לשרת threads שונים - כי כך gunicorn מגיש בקשות.

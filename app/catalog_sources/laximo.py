@@ -52,6 +52,10 @@ LOCALE = os.environ.get("LAXIMO_LOCALE", "en_US")
 
 WEB_URL = os.environ.get("LAXIMO_WEB_URL", "https://laximo.ru/search?type=vin&q={vin}")
 WEB_WAIT_SELECTOR = os.environ.get("LAXIMO_WEB_WAIT", "").strip() or None
+# כשהחיפוש אינו כתובת אלא טופס: השדה שממלאים והכפתור שלוחצים.
+# בלי SUBMIT נשלח Enter, וזה מספיק ברוב שדות החיפוש.
+WEB_INPUT = os.environ.get("LAXIMO_WEB_INPUT", "").strip() or None
+WEB_SUBMIT = os.environ.get("LAXIMO_WEB_SUBMIT", "").strip() or None
 
 TIMEOUT = float(os.environ.get("LAXIMO_TIMEOUT", 20))
 
@@ -177,7 +181,12 @@ class LaximoSource(CatalogSource):
 
         url = build_web_url(vin)
         try:
-            html = BrowserFetcher(wait_selector=WEB_WAIT_SELECTOR)(url, timeout=TIMEOUT)
+            html = BrowserFetcher(
+                wait_selector=WEB_WAIT_SELECTOR,
+                fill_selector=WEB_INPUT,
+                fill_value=vin if WEB_INPUT else None,
+                submit_selector=WEB_SUBMIT,
+            )(url, timeout=TIMEOUT)
         except BrowserError as exc:
             raise FetchError(str(exc)) from exc
         return condense(html, url), url

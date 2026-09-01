@@ -17,6 +17,15 @@ Laximo ו-TecDoc בונים את התוצאה ב-JavaScript אחרי טעינת 
 3. **מצב מזוהה.** קטלוג בתשלום נפתח אחרי כניסה. ``CATALOG_STORAGE_STATE``
    מצביע על קובץ עוגיות שנשמר פעם אחת, וכל שליפה מכאן והלאה נכנסת איתו.
 
+4. **חיפוש שאינו כתובת.** לא בכל קטלוג אפשר להגיע לתוצאה בכתובת עם
+   פרמטר. איפה שצריך למלא שדה וללחוץ - ``fill_selector`` ו-
+   ``submit_selector`` עושים בדיוק את זה, כמו אדם.
+
+**אורח, לא בוט.** ``robots.txt`` נבדק גם כאן ולא רק בהבאה הפשוטה,
+העוגיות של הודעת ההסכמה נסגרות כדי שהדף ייבנה, וה-User-Agent הוא של
+דפדפן אמיתי - כי דף שמוגש לבוט אינו הדף שאנחנו צריכים לקרוא. אין כאן
+עקיפה של הזדהות או של חסימה: מה שדורש חשבון ימשיך לדרוש חשבון.
+
 **למה thread ייעודי ולא מנעול.** ה-API הסינכרוני של Playwright קשור
 לthread שיצר אותו: אובייקט שנוצר ב-thread אחד אינו חוקי באחר. gunicorn
 כאן רץ ב-``gthread`` (ראה ``gunicorn.conf.py``), כלומר בקשות מגיעות
@@ -41,6 +50,24 @@ BROWSER_TIMEOUT = float(os.environ.get("CATALOG_BROWSER_TIMEOUT", 20))
 WAIT_UNTIL = os.environ.get("CATALOG_BROWSER_WAIT", "networkidle")
 STORAGE_STATE = os.environ.get("CATALOG_STORAGE_STATE", "").strip()
 LOCALE = os.environ.get("CATALOG_BROWSER_LOCALE", "he-IL")
+# דף שמוגש ל-HeadlessChrome אינו הדף שמוגש לאדם, ואנחנו צריכים את השני.
+BROWSER_UA = os.environ.get(
+    "CATALOG_BROWSER_UA",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/140.0.0.0 Safari/537.36",
+)
+# הודעת ההסכמה חוסמת את התוכן בכל אתר אירופי. סוגרים אותה כמו שאדם סוגר.
+CONSENT_SELECTORS = [
+    part.strip()
+    for part in os.environ.get(
+        "CATALOG_CONSENT_SELECTORS",
+        "#onetrust-accept-btn-handler,"
+        "button#didomi-notice-agree-button,"
+        ".cookie-accept,"
+        "button[aria-label='Accept all']",
+    ).split(",")
+    if part.strip()
+]
 
 _lock = threading.Lock()
 _worker = None          # ה-thread היחיד שמחזיק את הדפדפן
@@ -64,15 +91,41 @@ def chromium_path():
     return None
 
 
+INSTALL_HINT = (
+    "הדפדפן לא מותקן. בסביבה מקומית: playwright install chromium. "
+    "בפריסה: playwright install --with-deps chromium בשלב הבנייה."
+)
+
+
 def browser_available():
-    """האם יש Playwright מותקן ודפדפן להריץ."""
+    """האם יש Playwright *וגם* דפדפן להריץ.
+
+    הספרייה לבדה אינה מספיקה: ``pip install playwright`` לא מוריד את
+    Chromium. בלי הבדיקה הזו הפיצ'ר היה נראה זמין ונופל רק כשמישהו
+    לוחץ, וזה בדיוק הכשל שאין ממנו דרך חזרה על מסך של מכונאי.
+    """
     if not BROWSER_ENABLED:
         return False
     try:
-        import playwright  # noqa: F401
+        from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError:
         return False
-    return True
+    return chromium_installed()
+
+
+def chromium_installed():
+    """האם יש קובץ דפדפן על הדיסק - זה שאיתרנו, או זה של Playwright."""
+    found = chromium_path()
+    if found:
+        return os.path.exists(found)
+    # בלי PLAYWRIGHT_BROWSERS_PATH, Playwright מוריד לתיקיית המטמון שלו
+    for root in (
+        os.path.expanduser("~/.cache/ms-playwright"),
+        "/root/.cache/ms-playwright",
+    ):
+        if glob.glob(os.path.join(root, "chromium*/chrome-linux/chrome")):
+            return True
+    return False
 
 
 def _worker_thread():
@@ -95,7 +148,12 @@ def _launch():
     from playwright.sync_api import sync_playwright
 
     _playwright = sync_playwright().start()
-    args = ["--no-sandbox", "--disable-dev-shm-usage"]
+    args = [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        # בלי זה navigator.webdriver=true, ואתרים מגישים דף אחר לגמרי
+        "--disable-blink-features=AutomationControlled",
+    ]
     executable = chromium_path()
     _browser = _playwright.chromium.launch(
         headless=True, args=args, **({"executable_path": executable} if executable else {})
@@ -137,25 +195,52 @@ class BrowserError(Exception):
     """הדף לא נטען. סיבה קריאה לאדם."""
 
 
-def fetch_page(url, wait_selector=None, timeout=None, user_agent=None):
+def _dismiss_consent(page):
+    """סוגר את הודעת העוגיות אם היא שם. היעדרה אינו כשל."""
+    for selector in CONSENT_SELECTORS:
+        try:
+            button = page.query_selector(selector)
+            if button and button.is_visible():
+                button.click(timeout=2000)
+                page.wait_for_timeout(300)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def fetch_page(url, wait_selector=None, timeout=None, user_agent=None,
+               fill_selector=None, fill_value=None, submit_selector=None):
     """פותח את הכתובת בדפדפן ומחזיר את ה-HTML אחרי שהוא נבנה.
 
     ``wait_selector`` הוא מה שמבדיל בין "הדף ענה" לבין "התוצאה כאן":
     קטלוג מציג שלד ואז ממלא אותו, ובלי המתנה לאלמנט אמיתי היינו קוראים
     את השלד.
+
+    ``fill_selector``/``fill_value`` הם למקרה שהחיפוש אינו כתובת אלא
+    טופס: ממלאים את השדה, לוחצים על ``submit_selector`` (או Enter),
+    ומחכים שהתוצאה תיבנה.
     """
-    if not browser_available():
+    if not BROWSER_ENABLED:
+        raise BrowserError("מסלול הדפדפן כבוי (CATALOG_BROWSER=0).")
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except ImportError as exc:
         raise BrowserError(
-            "Playwright אינו מותקן או שהדפדפן כבוי (CATALOG_BROWSER=0). "
-            "התקנה: pip install -r requirements-browser.txt && playwright install chromium"
-        )
+            "Playwright אינו מותקן. pip install -r requirements.txt"
+        ) from exc
+    if not chromium_installed():
+        raise BrowserError(INSTALL_HINT)
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+    from .base import allowed_by_robots
+
+    if not allowed_by_robots(url, agent=user_agent or BROWSER_UA):
+        raise BrowserError(f"robots.txt של האתר אוסר את הכתובת: {url}")
+
     limit = (timeout or BROWSER_TIMEOUT) * 1000
-    context_args = {"locale": LOCALE}
-    if user_agent:
-        context_args["user_agent"] = user_agent
+    context_args = {"locale": LOCALE, "user_agent": user_agent or BROWSER_UA}
     if STORAGE_STATE and os.path.exists(STORAGE_STATE):
         context_args["storage_state"] = STORAGE_STATE
 
@@ -167,6 +252,14 @@ def fetch_page(url, wait_selector=None, timeout=None, user_agent=None):
             page.set_default_timeout(limit)
             try:
                 page.goto(url, wait_until=WAIT_UNTIL, timeout=limit)
+                _dismiss_consent(page)
+                if fill_selector and fill_value:
+                    page.fill(fill_selector, fill_value, timeout=limit / 2)
+                    if submit_selector:
+                        page.click(submit_selector, timeout=limit / 2)
+                    else:
+                        page.press(fill_selector, "Enter")
+                    page.wait_for_load_state(WAIT_UNTIL, timeout=limit)
                 if wait_selector:
                     # התוצאה עשויה שלא להופיע כלל (אין חלק כזה לרכב).
                     # זה לא כשל - נחזיר את הדף כמו שהוא ונשאיר למודל לומר.
@@ -189,9 +282,13 @@ def fetch_page(url, wait_selector=None, timeout=None, user_agent=None):
 class BrowserFetcher:
     """מתאם לחתימת ה-fetcher של המקורות: ``fetcher(url, timeout=None)``."""
 
-    def __init__(self, wait_selector=None, user_agent=None):
+    def __init__(self, wait_selector=None, user_agent=None,
+                 fill_selector=None, fill_value=None, submit_selector=None):
         self.wait_selector = wait_selector
         self.user_agent = user_agent
+        self.fill_selector = fill_selector
+        self.fill_value = fill_value
+        self.submit_selector = submit_selector
 
     def __call__(self, url, timeout=None):
         return fetch_page(
@@ -199,4 +296,7 @@ class BrowserFetcher:
             wait_selector=self.wait_selector,
             timeout=timeout,
             user_agent=self.user_agent,
+            fill_selector=self.fill_selector,
+            fill_value=self.fill_value,
+            submit_selector=self.submit_selector,
         )
