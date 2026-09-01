@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<response>
+  <FindVehicleByVIN>
+    <row vehicleid="18273645" catalog="TOYOTA00" brand="Toyota"
+         name="COROLLA ZRE151L-GEXNKW" date="2016-03" vin="JTDBR32E560095678"
+         ssd="$*KwGmhVi1eA==$" engine="1ZR-FE" grade="LUXURY" market="EU"/>
+  </FindVehicleByVIN>
+  <ListDetailByUnit unitid="1901" name="OIL FILTER &amp; OIL COOLER"
+                    imageurl="https://img.laximo.ru/toyota/1901.png">
+    <Detail oem="04152-YZZA1" name="ELEMENT SUB-ASSY, OIL FILTER" codeonimage="1"
+            note="for 1ZR-FE"/>
+    <Detail oem="90915-YZZD2" name="FILTER SUB-ASSY, OIL" codeonimage="1"
+            note="alternative fitment, 2ZR-FE only"/>
+  </ListDetailByUnit>
+</response>

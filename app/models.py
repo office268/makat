@@ -261,6 +261,10 @@ class Fitment(db.Model):
     fuel = db.Column(db.String(40))  # בנזין / דיזל / היברידי / חשמלי
     year_from = db.Column(db.Integer, index=True)
     year_to = db.Column(db.Integer, index=True)
+    # מזהה הווריאנט אצל המקור שממנו ההתאמה הגיעה (קבוצת קטלוג, KType).
+    # התאמה שנולדה מחיפוש לפי מספר שלדה מדויקת לווריאנט, לא לדגם, וזה
+    # מה שמאפשר להבדיל בין השתיים אחר כך.
+    variant_key = db.Column(db.String(80))
     notes = db.Column(db.String(255))
 
     part = db.relationship("Part", back_populates="fitments")
@@ -296,6 +300,7 @@ class Fitment(db.Model):
             "year_from": self.year_from,
             "year_to": self.year_to,
             "years": self.years,
+            "variant_key": self.variant_key,
             "notes": self.notes,
         }
 

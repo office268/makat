@@ -1,0 +1,262 @@
+{# שליפה חיה: מק"ט שאין בקטלוג, מקטלוג היצרן לפי מספר השלדה.
+
+   הכרטיס יושב מחוץ לטופס הראשי בכוונה - טופס בתוך טופס אינו HTML
+   תקין, והשליפה הזו ממילא אינה ניווט אלא בקשות רקע. לכן גם אין כאן
+   כפתור שליחה רגיל: הכפתור פותח עבודה, והדפדפן מבקש ממנה מקור אחד
+   בכל פעם, בדיוק כמו במסך הגילוי. #}
+<div class="card mb-3" id="live-lookup"
+     data-plate="{{ plate }}"
+     data-start="{{ url_for('identify.lookup_start') }}"
+     data-step="{{ url_for('identify.lookup_step') }}">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>חיפוש לפי מספר שלדה</span>
+    {% if vehicle.vin %}
+    <span class="font-monospace small text-muted">{{ vehicle.vin }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if not lookup_on %}
+    <div class="text-muted small mb-0">
+      השליפה החיה כבויה. היא דורשת מפתח <code>ANTHROPIC_API_KEY</code>
+      ומקור קטלוגי מוגדר (<code>CATALOG_SOURCES</code>).
+    </div>
+    {% else %}
+    <p class="text-muted small">
+      מה שאין בקטלוג נשלף מקטלוג היצרן לפי מספר השלדה של הרכב הזה, ומשם
+      למק"טים חלופיים. התוצאה נשמרת, כך שהחיפוש הבא לאותו דגם מיידי.
+    </p>
+
+    <label class="form-label fw-bold" for="live-query">איזה חלק?</label>
+    <input class="form-control" id="live-query" value="{{ query }}"
+           placeholder='למשל: רפידות קדמיות, פילטר שמן'>
+
+    <label class="form-label fw-bold mt-3" for="live-type">או בחירה מהרשימה</label>
+    <select class="form-select" id="live-type">
+      <option value="">— לפי מה שהוקלד —</option>
+      {% for pt in part_types %}
+      <option value="{{ pt.key }}" {% if pt.key == selected_type %}selected{% endif %}>
+        {{ pt.name_he }}
+      </option>
+      {% endfor %}
+    </select>
+
+    {% if not vehicle.vin %}
+    <div class="alert alert-warning small mt-3 mb-0">
+      למרשם אין מספר שלדה לרכב הזה. החיפוש ירוץ לפי יצרן, דגם, שנה
+      וקוד מנוע - מדויק פחות מחיפוש לפי שלדה.
+    </div>
+    {% endif %}
+
+    <div class="d-grid mt-3">
+      <button class="btn btn-primary" id="live-go">חפש אצל היצרן</button>
+    </div>
+
+    <div class="progress mt-3 d-none" id="live-progress" style="height: 6px">
+      <div class="progress-bar progress-bar-striped progress-bar-animated"
+           id="live-bar" style="width: 0%"></div>
+    </div>
+    <div class="small text-muted mt-2 d-none" id="live-status"></div>
+    <div class="alert alert-warning small mt-3 d-none" id="live-error"></div>
+    <div class="mt-3" id="live-results"></div>
+    {% endif %}
+  </div>
+</div>
+
+{% if lookup_on %}
+<script>
+(function () {
+  const box = document.getElementById("live-lookup");
+  const token = document.querySelector('meta[name="csrf-token"]');
+  const goBtn = document.getElementById("live-go");
+  const progress = document.getElementById("live-progress");
+  const bar = document.getElementById("live-bar");
+  const status = document.getElementById("live-status");
+  const errorBox = document.getElementById("live-error");
+  const resultsBox = document.getElementById("live-results");
+
+  async function post(url, body) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers, body: body});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  // שלוש רמות, ולא "נמצא / לא נמצא": התאמה לשלדה אינה כמו חלופי
+  // שנקשר למספר המקורי, וזה אינו כמו מועמד שלא עבר אימות. המכונאי
+  // מחליט, ולכן הוא רואה את ההבדל.
+  const TIERS = {
+    oem: ["מקורי · לפי שלדה", "text-bg-success"],
+    aftermarket: ["חלופי מאומת", "text-bg-primary"],
+    catalog: ["מהקטלוג", "text-bg-info"],
+  };
+
+  function row(item) {
+    const wrap = document.createElement("div");
+    wrap.className = "d-flex gap-3 align-items-start py-2 border-bottom";
+
+    if (item.image_url) {
+      const img = document.createElement("img");
+      img.src = item.image_url;
+      img.alt = item.part_number;
+      img.loading = "lazy";
+      img.width = 64;
+      img.height = 64;
+      img.className = "rounded border bg-white";
+      img.style.objectFit = "contain";
+      // תמונה מאתר חיצוני נופלת לפעמים. שורה בלי תמונה עדיפה על
+      // אייקון שבור, ולכן היא פשוט נעלמת.
+      img.addEventListener("error", () => img.remove());
+      wrap.appendChild(img);
+    }
+
+    const main = document.createElement("div");
+    main.className = "flex-grow-1";
+
+    const head = document.createElement("div");
+    const sku = document.createElement("span");
+    sku.className = "font-monospace fw-bold sku";
+    sku.textContent = item.part_number;
+    head.appendChild(sku);
+
+    const badge = document.createElement("span");
+    const tier = item.verified ? (TIERS[item.tier] || TIERS.aftermarket)
+                               : ["לא אומת", "text-bg-secondary"];
+    badge.className = "badge ms-2 " + tier[1];
+    badge.textContent = tier[0];
+    head.appendChild(badge);
+    main.appendChild(head);
+
+    const meta = document.createElement("div");
+    meta.className = "small text-muted";
+    const bits = [item.manufacturer, item.oe_number ? "OE " + item.oe_number : "",
+                  item.source_name].filter(Boolean);
+    meta.textContent = bits.join(" · ");
+    main.appendChild(meta);
+
+    if (item.reason || item.note) {
+      const note = document.createElement("div");
+      note.className = "small " + (item.reason ? "text-warning-emphasis" : "text-muted");
+      note.textContent = item.reason || item.note;
+      main.appendChild(note);
+    }
+
+    if (item.source_url) {
+      const link = document.createElement("a");
+      link.href = item.source_url;
+      link.target = "_blank";
+      link.rel = "noopener nofollow";
+      link.className = "small";
+      link.textContent = "המקור";
+      main.appendChild(link);
+    }
+    wrap.appendChild(main);
+
+    if (item.part_id) {
+      const card = document.createElement("a");
+      card.className = "btn btn-sm btn-outline-primary text-nowrap";
+      card.href = "/parts/" + item.part_id;
+      card.textContent = "כרטיס";
+      wrap.appendChild(card);
+    }
+    return wrap;
+  }
+
+  function render(payload) {
+    resultsBox.innerHTML = "";
+    const found = payload.results || [];
+    const unverified = payload.unverified || [];
+    if (!found.length && !unverified.length) return;
+
+    const title = document.createElement("div");
+    title.className = "fw-bold mb-1";
+    title.textContent = "נמצאו " + found.length + " מק\"טים" +
+      (unverified.length ? " · ועוד " + unverified.length + " שלא אומתו" : "");
+    resultsBox.appendChild(title);
+    found.forEach((item) => resultsBox.appendChild(row(item)));
+    unverified.forEach((item) => resultsBox.appendChild(row(item)));
+
+    if (payload.from_catalog) {
+      // הקטלוג ענה, ולכן לא יצאנו לרשת. מי שרוצה בכל זאת לראות מה
+      // אומר היצרן מקבל את זה בלחיצה - אבל בבחירה, לא כברירת מחדל.
+      const again = document.createElement("button");
+      again.className = "btn btn-sm btn-outline-secondary mt-2";
+      again.textContent = "חפש בכל זאת אצל היצרן";
+      again.addEventListener("click", () => run(true));
+      resultsBox.appendChild(again);
+    } else if (found.length) {
+      const hint = document.createElement("div");
+      hint.className = "small text-muted mt-2";
+      hint.textContent = "המק\"טים שאומתו נשמרו בקטלוג - החיפוש הבא לרכב כזה מיידי.";
+      resultsBox.appendChild(hint);
+    }
+  }
+
+  function busy(on, text) {
+    goBtn.disabled = on;
+    goBtn.textContent = on ? "מחפש..." : "חפש אצל היצרן";
+    progress.classList.toggle("d-none", !on);
+    status.classList.toggle("d-none", !text);
+    status.textContent = text || "";
+  }
+
+  async function run(force) {
+    errorBox.classList.add("d-none");
+    resultsBox.innerHTML = "";
+    busy(true, "פותח שליפה...");
+    bar.style.width = "5%";
+    try {
+      const form = new FormData();
+      form.append("plate", box.dataset.plate);
+      form.append("query", document.getElementById("live-query").value);
+      form.append("part_type", document.getElementById("live-type").value);
+      if (force) form.append("force", "1");
+      const started = await post(box.dataset.start, form);
+
+      if (started.from_catalog) {
+        bar.style.width = "100%";
+        busy(false, "מהקטלוג · " + started.part_type_name);
+        render(started);
+        return;
+      }
+      if (started.from_cache) {
+        bar.style.width = "100%";
+        busy(false, "מתוך תשובה שמורה · " + started.part_type_name);
+        render(started);
+        return;
+      }
+
+      let job = started.job;
+      let last = -1;
+      while (job && job.is_running) {
+        busy(true, job.stage_label ? "שולף מ" + job.stage_label + "..." : "מחפש...");
+        bar.style.width = Math.max(10, job.progress_pct) + "%";
+        const step = new FormData();
+        step.append("job", job.id);
+        const data = await post(box.dataset.step, step);
+        job = data.job;
+        if (!job) break;
+        // רשת ביטחון: שלב שלא מתקדם לא ייתקע בלולאה
+        if (job.cursor === last) throw new Error("השליפה לא מתקדמת.");
+        last = job.cursor;
+      }
+      bar.style.width = "100%";
+      busy(false, job && job.error ? job.error : "");
+      if (job) render(job);
+      if (job && !job.results.length && !job.unverified.length) {
+        errorBox.textContent = job.error ||
+          'לא נמצא מק"ט לחלק הזה אצל המקורות שנבדקו.';
+        errorBox.classList.remove("d-none");
+      }
+    } catch (err) {
+      busy(false, "");
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    }
+  }
+
+  goBtn.addEventListener("click", () => run(false));
+})();
+</script>
+{% endif %}
