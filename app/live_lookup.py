@@ -165,8 +165,11 @@ class LookupJob(db.Model):
     __tablename__ = "lookup_jobs"
 
     RUNNING, DONE, FAILED, CANCELLED = "running", "done", "failed", "cancelled"
-    STATUS_LABELS = {RUNNING: "מחפש", DONE: "הושלם",
-                     FAILED: "נכשל", CANCELLED: "בוטל"}
+    # המשתמש קיבל את מה שחיפש ובחר לא להמשיך למקור הבא. נפרד מ-
+    # CANCELLED, שהוא נטישה: כאן יש תשובה, והיא פשוט חלקית בכוונה.
+    STOPPED = "stopped"
+    STATUS_LABELS = {RUNNING: "מחפש", DONE: "הושלם", FAILED: "נכשל",
+                     CANCELLED: "בוטל", STOPPED: "נעצר לבקשתך"}
 
     id = db.Column(db.Integer, primary_key=True)
     status = db.Column(db.String(20), default=RUNNING, nullable=False, index=True)
@@ -216,13 +219,36 @@ class LookupJob(db.Model):
     def status_label(self):
         return self.STATUS_LABELS.get(self.status, self.status)
 
+    @staticmethod
+    def _source_name(key):
+        source = catalog_sources.get(key)
+        return source.name if source else key
+
     @property
     def stage_label(self):
+        """המקור שהשלב הבא ישאל. נקרא *לפני* שהשלב רץ."""
         stages = self.stage_list
         if self.is_running and self.cursor < len(stages):
-            source = catalog_sources.get(stages[self.cursor])
-            return source.name if source else stages[self.cursor]
+            return self._source_name(stages[self.cursor])
         return ""
+
+    @property
+    def done_stage_label(self):
+        """המקור שזה עתה סיים - מה שהתוצאה שעל המסך הגיעה ממנו."""
+        stages = self.stage_list
+        if 0 < self.cursor <= len(stages):
+            return self._source_name(stages[self.cursor - 1])
+        return ""
+
+    @property
+    def awaiting_approval(self):
+        """מקור סיים, ויש עוד אחריו - כאן נעצרים ושואלים את המשתמש.
+
+        כל מקור הוא בקשת רשת וקריאת מודל, והוא נספר במכסה היומית של
+        הארגון. מי שכבר קיבל את המק"ט המקורי לשלדה שלו לא בהכרח רוצה
+        שנמשיך לחפש לו חלופות, ולכן ההמשכה היא בחירה ולא ברירת מחדל.
+        """
+        return self.is_running and 0 < self.cursor < self.total
 
     def to_dict(self):
         data = self.result_data
@@ -231,6 +257,8 @@ class LookupJob(db.Model):
             "status": self.status,
             "status_label": self.status_label,
             "stage_label": self.stage_label,
+            "done_stage_label": self.done_stage_label,
+            "awaiting_approval": self.awaiting_approval,
             "cursor": self.cursor,
             "total": self.total,
             "progress_pct": self.progress_pct,
@@ -314,6 +342,26 @@ def cancel_job(job):
     if job is not None and job.is_running:
         job.status = LookupJob.CANCELLED
         job.finished_at = _now()
+        db.session.commit()
+    return job
+
+
+def stop_job(job):
+    """המשתמש קיבל את מה שחיפש ואינו ממשיך למקור הבא.
+
+    **התשובה החלקית אינה נכנסת למטמון.** היא חלקית בבחירה של מי
+    ששאל, ושמירתה הייתה מגישה אותה למכונאי הבא כאילו זה כל מה שיש -
+    בלי שהוא בחר בכך ובלי דרך לדעת. מה שכן נשמר הוא מה שנכנס לקטלוג
+    תוך כדי (``parts_discovery.save`` רץ לכל מקור בנפרד), וזה נשאר.
+
+    לכן גם אין כאן "המשך אחר כך": העבודה נסגרת, וחיפוש חדש לאותו
+    רכב יתחיל מהמקור הראשון. בקשה חוזרת תיענה ממילא מהקטלוג המקומי,
+    שכבר מחזיק את מה שהמקור הראשון הביא.
+    """
+    if job is not None and job.is_running:
+        job.status = LookupJob.STOPPED
+        job.finished_at = _now()
+        job.updated_at = _now()
         db.session.commit()
     return job
 
@@ -466,6 +514,9 @@ def _finish(job):
 
     "לא נמצא" ראוי לשמירה - הוא חוסך את החיפוש הבא. "האתר לא ענה" לא:
     שמירה שלו הופכת תקלה של רגע לתשובה שלילית לחודשיים.
+
+    נקרא רק כשכל המקורות רצו. עבודה שנעצרה באמצע (``stop_job``) אינה
+    מגיעה לכאן, ולכן תשובה חלקית לא נכנסת למטמון - ראה שם.
     """
     job.status = LookupJob.DONE
     job.finished_at = _now()

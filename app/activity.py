@@ -64,6 +64,7 @@ ACTION_LABELS = {
     "lookup.cache_hit": "שליפה חיה - מתוך תשובה שמורה",
     "identify.lookup_step": "שליפה חיה - שלב",
     "identify.lookup_cancel": "ביטול שליפה חיה",
+    "lookup.stopped": "שליפה חיה - נעצרה אחרי מקור",
     "identify.api_vehicle": "שליפת רכב (API)",
     "identify.api_identify": "זיהוי חלק (API)",
     "web.dashboard": "לוח מחוונים",

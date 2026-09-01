@@ -372,3 +372,24 @@ def lookup_cancel():
     if failure:
         return failure
     return jsonify({"job": live_lookup.cancel_job(job).to_dict()})
+
+
+@identify_bp.post("/lookup/stop")
+def lookup_stop():
+    """המשתמש ראה את תוצאת המקור הזה ואינו רוצה את הבא.
+
+    נפרד מ-``/lookup/cancel``: ביטול הוא נטישה, וזו בחירה. ההפרדה
+    היא כדי שהלוג יבדיל בין השתיים - אחת אומרת שהתשובה הספיקה,
+    השנייה שמשהו השתבש.
+    """
+    job, failure = _own_job(request.form)
+    if failure:
+        return failure
+    job = live_lookup.stop_job(job)
+    activity.note(
+        action="lookup.stopped",
+        summary=f"{job.plate} · נעצר אחרי {job.done_stage_label}",
+        plate=job.plate, part_type=job.part_type, job=job.id,
+        after=job.done_stage_label, skipped=job.stage_list[job.cursor:],
+    )
+    return jsonify({"job": job.to_dict()})
