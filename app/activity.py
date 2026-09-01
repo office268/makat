@@ -36,6 +36,8 @@ SKIP_ENDPOINTS = frozenset(
         "pwa.offline",
         "admin.vehicle_import_status",
         "admin.vehicle_import_step",
+        "admin.fleet_stats_status",
+        "admin.fleet_stats_step",
         "admin.discovery_status",
         "admin.discovery_step",
         "admin.discovery_plan",

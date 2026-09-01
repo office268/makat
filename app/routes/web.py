@@ -61,15 +61,56 @@ def _filters_from_request():
     }
 
 
+class _Lazy:
+    """רשימה שנשלפת בפעם הראשונה שמסתכלים עליה, ולא לפני.
+
+    הרשימות שלמטה נכנסות לכל תבנית באפליקציה, אבל כל אחת מהן משמשת
+    שניים-שלושה מסכים בלבד. כשהן נשלפו מראש, כל בקשה - גם ‎/healthz,
+    גם דף 404 וגם מסך הזיהוי שאינו נוגע באף אחת מהן - שילמה חמש
+    שאילתות, ושתיים מהן טוענות את *כל* היצרנים ו*כל* הקטגוריות
+    לזיכרון. כאן הן נשלפות רק מהמסך שבאמת מציג אותן.
+
+    התבניות לא יודעות מזה: מבחינת Jinja זו רשימה לכל דבר.
+    """
+
+    __slots__ = ("_load", "_value")
+
+    def __init__(self, load):
+        self._load = load
+        self._value = None
+
+    def _resolve(self):
+        if self._value is None:
+            self._value = self._load()
+        return self._value
+
+    def __iter__(self):
+        return iter(self._resolve())
+
+    def __len__(self):
+        return len(self._resolve())
+
+    def __bool__(self):
+        return bool(self._resolve())
+
+    def __getitem__(self, index):
+        return self._resolve()[index]
+
+    def __repr__(self):
+        return repr(self._resolve())
+
+
 @web_bp.app_context_processor
 def inject_globals():
     return {
-        "all_categories": Category.query.order_by(Category.name).all(),
-        "all_manufacturers": Manufacturer.query.order_by(Manufacturer.name).all(),
-        "all_makes": services.vehicle_makes(),
-        "all_part_types": all_types(),
+        "all_categories": _Lazy(lambda: Category.query.order_by(Category.name).all()),
+        "all_manufacturers": _Lazy(
+            lambda: Manufacturer.query.order_by(Manufacturer.name).all()
+        ),
+        "all_makes": _Lazy(services.vehicle_makes),
+        "all_part_types": _Lazy(all_types),
         "org_id": services.current_org_id(),
-        "known_makes": _known_makes(),
+        "known_makes": _Lazy(_known_makes),
     }
 
 
@@ -418,20 +459,52 @@ def stats_csv():
 
 @web_bp.route("/manufacturers")
 def manufacturers():
+    """היצרנים, עם מספר המק"טים של כל אחד. ספירה מקובצת, לא ‎| length."""
     return render_template(
         "manufacturers.html",
         manufacturers=Manufacturer.query.order_by(Manufacturer.name).all(),
+        counts=_parts_per_manufacturer(),
     )
+
+
+def _parts_per_manufacturer():
+    """{מזהה יצרן: כמה מק"טים}, בשאילתה אחת. חסר = אפס."""
+    rows = (
+        db.session.query(Part.manufacturer_id, db.func.count(Part.id))
+        .filter(Part.manufacturer_id.isnot(None))
+        .group_by(Part.manufacturer_id)
+        .all()
+    )
+    return dict(rows)
 
 
 @web_bp.route("/categories")
 def categories():
+    """עץ הקטגוריות, עם מספר המק"טים בכל אחת.
+
+    הספירה מגיעה בשאילתה אחת מקובצת ולא מ-``category.parts | length``
+    בתבנית: שם כל קטגוריה הייתה שולפת את *כל* המק"טים שלה מבסיס
+    הנתונים רק כדי למנות אותם, וקטלוג עם מאתיים קטגוריות עלה מאתיים
+    שאילתות ומאות אלפי שורות בזיכרון - כדי להציג מאתיים מספרים.
+    """
     roots = (
-        Category.query.filter(Category.parent_id.is_(None))
+        Category.query.options(selectinload(Category.children))
+        .filter(Category.parent_id.is_(None))
         .order_by(Category.name)
         .all()
     )
-    return render_template("categories.html", roots=roots)
+    return render_template("categories.html", roots=roots, counts=_parts_per_category())
+
+
+def _parts_per_category():
+    """{מזהה קטגוריה: כמה מק"טים}, בשאילתה אחת. חסרה = אפס."""
+    rows = (
+        db.session.query(Part.category_id, db.func.count(Part.id))
+        .filter(Part.category_id.isnot(None))
+        .group_by(Part.category_id)
+        .all()
+    )
+    return dict(rows)
 
 
 @web_bp.route("/suppliers")
@@ -447,9 +520,25 @@ def suppliers():
 
 @web_bp.route("/export.csv")
 def export_csv():
-    """ייצוא תוצאות החיפוש הנוכחיות ל-CSV."""
+    """ייצוא תוצאות החיפוש הנוכחיות ל-CSV.
+
+    כל השדות שהקובץ מכיל נטענים מראש. בלי זה כל שורה בקובץ עלתה חמש
+    שאילתות נפרדות - יצרן, קטגוריה, מקבילים, התאמות ושכבת הארגון -
+    כלומר ייצוא של קטלוג בן 2,400 מק"טים היה שתים-עשרה אלף שאילתות
+    בבקשה אחת, שגם ככה חייבת להיגמר לפני שגאניקורן הורג אותה.
+    """
     org_id = services.current_org_id()
-    parts = services.search_parts(**_filters_from_request()).all()
+    parts = (
+        services.search_parts(**_filters_from_request())
+        .options(
+            selectinload(Part.manufacturer),
+            selectinload(Part.category).selectinload(Category.parent),
+            selectinload(Part.cross_refs),
+            selectinload(Part.fitments),
+            selectinload(Part.org_links),
+        )
+        .all()
+    )
     activity.note(summary=f'ייצוא {len(parts)} מק"טים', rows=len(parts))
     return Response(
         services.export_csv(parts, organization_id=org_id),

@@ -9,7 +9,7 @@
 <tr>
   <td><a href="{{ url_for('web.parts_list', manufacturer_id=m.id) }}">{{ m.name }}</a></td>
   <td class="text-muted">{{ m.country or '-' }}</td>
-  <td class="text-center">{{ m.parts | length }}</td>
+  <td class="text-center">{{ counts.get(m.id, 0) }}</td>
 </tr>
 {% else %}<tr><td colspan="3" class="text-muted text-center py-4">אין יצרנים.</td></tr>{% endfor %}
 </tbody></table></div></div>

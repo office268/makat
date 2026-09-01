@@ -340,20 +340,35 @@ def lookup_start():
     return jsonify({"from_cache": False, "job": job.to_dict()})
 
 
+def _own_job(source):
+    """השליפה שהמשתמש הזה רשאי לגעת בה, או (None, תשובת שגיאה).
+
+    מזהה העבודה הוא מספר רץ, ובלי הבדיקה הזו די היה בניחוש שלו כדי
+    לגעת בשליפה של מוסך אחר. ``lookup_step`` בדק; ``lookup_cancel``
+    לא, וכך כל משתמש מזוהה יכול היה לבטל כל שליפה במערכת.
+    """
+    job = db.session.get(live_lookup.LookupJob, source.get("job", type=int) or 0)
+    if job is None:
+        return None, (jsonify({"error": "אין שליפה פעילה."}), 409)
+    if job.started_by_id and job.started_by_id != current_user.id:
+        return None, (jsonify({"error": "השליפה הזו נפתחה על ידי משתמש אחר."}), 403)
+    return job, None
+
+
 @identify_bp.post("/lookup/step")
 def lookup_step():
     """מריץ מקור אחד. הדפדפן קורא שוב עד שהעבודה נגמרת."""
-    job = db.session.get(live_lookup.LookupJob, request.form.get("job", type=int) or 0)
-    if job is None or not job.is_running:
+    job, failure = _own_job(request.form)
+    if failure:
+        return failure
+    if not job.is_running:
         return jsonify({"error": "אין שליפה פעילה."}), 409
-    if job.started_by_id and job.started_by_id != current_user.id:
-        return jsonify({"error": "השליפה הזו נפתחה על ידי משתמש אחר."}), 403
     return jsonify({"job": live_lookup.run_step(job).to_dict()})
 
 
 @identify_bp.post("/lookup/cancel")
 def lookup_cancel():
-    job = db.session.get(live_lookup.LookupJob, request.form.get("job", type=int) or 0)
-    if job is None:
-        return jsonify({"error": "אין שליפה פעילה."}), 409
+    job, failure = _own_job(request.form)
+    if failure:
+        return failure
     return jsonify({"job": live_lookup.cancel_job(job).to_dict()})

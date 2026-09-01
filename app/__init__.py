@@ -1,6 +1,5 @@
 """אפליקציית ניהול קטלוג מק"טים לחלקי רכב."""
 import logging
-import os
 import sys
 from pathlib import Path
 

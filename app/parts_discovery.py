@@ -439,6 +439,51 @@ def cancel_job(job):
     return job
 
 
+def _merge_fitment(part, row):
+    """מוסיף לחלק את ההתאמה שהשורה מתארת, או מרחיב התאמה קיימת.
+
+    השליפה החיה יודעת שנה מדויקת, ולכן התאמה שנולדת ממנה נשמרת
+    כ-``year_from == year_to``. זה נכון לרכב שנשאל, ושגוי לדגם: קורולה
+    2015 שנשלפה יצרה התאמה 2015-2015, ומכונאי עם קורולה 2016 לא מצא
+    את המק"ט בקטלוג. השליפה שלו כן רצה - ואז נבלמה כאן, כי הבדיקה
+    ל"קיימת" השוותה יצרן ודגם בלבד וראתה את ההתאמה של 2015. התוצאה:
+    כל שנת דגם נוספת שילמה על שליפה חיה שממנה לא נשמר דבר, לנצח.
+
+    לכן שורה שמדברת על אותם יצרן, דגם ומנוע מרחיבה את טווח השנים של
+    ההתאמה הקיימת במקום ליפול. המנוע הוא גבול ההרחבה: מנוע אחר הוא
+    התאמה נפרדת, ולא מתיחה של הקיימת.
+
+    שני מקרים שבהם אין מה להרחיב, וההתאמה נשארת כמות שהיא: לשורה
+    החדשה אין שנה (אין לפי מה להרחיב), ולהתאמה הקיימת אין שנים כלל
+    (היא כבר מכסה את כולן).
+    """
+    make = fitment_make(row["make"])
+    model = row["model"]
+    engine = row.get("engine_code") or None
+    year = row.get("year")
+
+    for fit in part.fitments:
+        if (fit.make or "") != make or (fit.model or "") != model:
+            continue
+        if (fit.engine_code or None) != engine:
+            continue
+        if year and (fit.year_from or fit.year_to):
+            fit.year_from = min(fit.year_from or year, year)
+            fit.year_to = max(fit.year_to or year, year)
+        return fit
+
+    fit = Fitment(
+        make=make,
+        model=model,
+        engine_code=engine,
+        year_from=year,
+        year_to=year,
+        variant_key=row.get("variant_key") or None,
+    )
+    part.fitments.append(fit)
+    return fit
+
+
 def save(accepted, source_note=None, source_mark=None):
     """כותב מועמדים מאושרים לקטלוג. מחזיר (נוספו, עודכנו).
 
@@ -473,25 +518,8 @@ def save(accepted, source_note=None, source_mark=None):
         elif mark not in (part.notes or ""):
             part.notes = f'{part.notes or ""} | {source}'.strip(" |")
 
-        # התאמה חדשה מתווספת; קיימת לא משוכפלת
-        wanted_make = fitment_make(row["make"])
-        exists = any(
-            (f.make or "") == wanted_make and (f.model or "") == row["model"]
-            for f in part.fitments
-        )
-        if not exists:
-            # השליפה החיה יודעת גם מנוע, שנה ווריאנט - וזה ההבדל בין
-            # התאמה שתימצא לרכב הנכון לבין התאמה לכל הדגם.
-            part.fitments.append(
-                Fitment(
-                    make=fitment_make(row["make"]),
-                    model=row["model"],
-                    engine_code=row.get("engine_code") or None,
-                    year_from=row.get("year"),
-                    year_to=row.get("year"),
-                    variant_key=row.get("variant_key") or None,
-                )
-            )
+        # התאמה חדשה מתווספת; קיימת מתרחבת ולא משוכפלת
+        _merge_fitment(part, row)
         if row.get("oe_number") and not any(
             r.ref_number == row["oe_number"] for r in part.cross_refs
         ):
