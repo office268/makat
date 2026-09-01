@@ -1,0 +1,7 @@
+# שליפה מקטלוג שבונה את התוצאה ב-JavaScript (Laximo, TecDoc במסלול web).
+# נפרד מ-requirements.txt בכוונה: Chromium מוסיף כ-400MB לתמונה, ומי
+# שעובד מול ה-API המורשה של שני הספקים לא צריך דפדפן בכלל.
+#
+#   pip install -r requirements-browser.txt
+#   playwright install chromium
+playwright==1.62.0

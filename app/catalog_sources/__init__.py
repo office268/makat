@@ -21,15 +21,25 @@ import os
 from .aftermarket import AftermarketSource
 from .base import Candidate, CatalogSource  # noqa: F401 - חלק מהממשק הציבורי
 from .epc_vin import EpcVinSource
+from .laximo import LaximoSource
 from .mock import MockSource
+from .tecdoc import TecDocSource
 
 # המקורות שקיימים בקוד. ``CATALOG_SOURCES`` בוחר מי מהם רץ בפועל.
 REGISTRY = {
     source.key: source
-    for source in (EpcVinSource(), AftermarketSource(), MockSource())
+    for source in (
+        LaximoSource(),        # שלדה -> מק"ט מקורי, מקטלוג היצרן
+        TecDocSource(),        # מק"ט מקורי -> חלופים, עם תמונת מוצר
+        EpcVinSource(),        # אותו שלב כמו Laximo, מול אתר קטלוגי כללי
+        AftermarketSource(),   # אותו שלב כמו TecDoc, מול אתר קטלוגי כללי
+        MockSource(),          # בלי רשת ובלי מפתח
+    )
 }
 
-DEFAULT_ORDER = "epc,aftermarket"
+# Laximo ואחריו TecDoc: הראשון מוציא מהשלדה את המספר המקורי, והשני
+# מחפש לפיו. epc/aftermarket נשארים כחלופה גנרית לאתר אחר.
+DEFAULT_ORDER = "laximo,tecdoc"
 
 
 def enabled_keys():

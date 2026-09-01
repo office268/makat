@@ -218,6 +218,39 @@ def condense(html, base_url="", limit=None):
     return text[: (limit or MAX_CONDENSED)]
 
 
+def flatten_xml(text, limit=None):
+    """XML של API -> שורות קריאות, לשליחה למודל.
+
+    מדוע לא לפרסר את הסכימה ישירות: לכל חבילת רישיון אצל ספק הקטלוג יש
+    שדות אחרים, והם משתנים. השטחה לשורות "תג: מפתח=ערך" שומרת את כל
+    המידע ומשאירה למודל להחליט מה בו הוא המק"ט - אותה חלוקת עבודה
+    שנבחרה עבור HTML, ומאותה סיבה.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring((text or "").strip())
+    except ET.ParseError:
+        return (text or "")[: (limit or MAX_CONDENSED)]
+
+    lines = []
+
+    def walk(node, depth=0):
+        pad = "  " * depth
+        attrs = " ".join(f"{k}={v}" for k, v in node.attrib.items() if v)
+        body = (node.text or "").strip()
+        tag = node.tag.split("}")[-1]
+        if attrs or body:
+            lines.append(f"{pad}{tag}: {attrs} {body}".rstrip())
+        elif len(node):
+            lines.append(f"{pad}{tag}:")
+        for child in node:
+            walk(child, depth + 1)
+
+    walk(root)
+    return "\n".join(lines)[: (limit or MAX_CONDENSED)]
+
+
 # --------------------------------------------------------------------------
 # פענוח במודל
 # --------------------------------------------------------------------------

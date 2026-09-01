@@ -1,0 +1,21 @@
+{
+  "totalMatchingArticles": 2,
+  "articles": [
+    {
+      "articleNumber": "W 610/3",
+      "mfrName": "MANN-FILTER",
+      "mfrId": 72,
+      "genericArticles": [{"genericArticleDescription": "Oil Filter"}],
+      "oemNumbers": [{"articleNumber": "04152-YZZA1", "mfrName": "TOYOTA"}],
+      "images": [{"imageURL800": "https://cdn.tecalliance.test/mann-w610-800.jpg"}]
+    },
+    {
+      "articleNumber": "F 026 407 006",
+      "mfrName": "BOSCH",
+      "mfrId": 30,
+      "genericArticles": [{"genericArticleDescription": "Oil Filter"}],
+      "oemNumbers": [{"articleNumber": "04152-YZZA1", "mfrName": "TOYOTA"}],
+      "images": [{"imageURL800": "https://cdn.tecalliance.test/bosch-f026407006.jpg"}]
+    }
+  ]
+}
