@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--resource", action="append", default=[],
                         help="מזהה מאגר לבדיקה (ניתן לחזור). ברירת מחדל: המוגדרים")
     parser.add_argument("--json", action="store_true", help="פלט גולמי")
+    parser.add_argument("--discover", action="store_true",
+                        help="לסרוק את כל מאגרי הרכב ב-CKAN ולמצוא איפה הרכב יושב")
     args = parser.parse_args()
 
     digits = vehicles.normalize_plate(args.plate)
@@ -60,9 +62,29 @@ def main():
     if not reached:
         print("אף שאילתה לא הגיעה למאגר - זו בעיית רשת או חסימה, לא מספר רישוי שגוי.")
         return 2
+
     print("המאגר ענה, ואין בו רכב עם המספר הזה.")
-    print("ייתכן שהרכב ירד מהכביש, שהוא דו-גלגלי או כבד - אלה מאגרים נפרדים.")
-    print("להוספת מאגר:  GOV_VEHICLE_RESOURCES=<id>:<תווית>,<id>:<תווית>")
+    if not args.discover:
+        print("להרחבת החיפוש לכל מאגרי הרכב:  --discover")
+        return 1
+
+    print("\nסורק את כל מאגרי הרכב ב-CKAN...")
+    found = vehicles.lookup_everywhere(args.plate)
+    for entry in found.get("discovered") or []:
+        mark = "·" if entry["known"] else " "
+        print(f"   {mark} {entry['label']}  ({entry['resource']})")
+    if found["status"] == "found":
+        where = found.get("found_in") or {}
+        print(f"\n✓ נמצא ב: {where.get('label')}  ({where.get('resource')})")
+        for key in ("make", "model", "year", "engine_code", "vin"):
+            print(f"     {key:<12} {found['vehicle'].get(key) or '—'}")
+        print("\nלהוספה קבועה, כמשתנה סביבה:")
+        print(f"GOV_VEHICLE_RESOURCES={vehicles.RESOURCE_ID}:רכב פרטי ומסחרי,"
+              f"{where.get('resource')}:{where.get('label')}")
+        return 0
+
+    print("\nהרכב אינו באף מאגר שיש בו מספרי רישוי.")
+    print("ייתכן שהמספר שגוי, או שהרכב אינו במרשם הפתוח.")
     return 1
 
 

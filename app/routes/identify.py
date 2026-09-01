@@ -175,6 +175,11 @@ def api_vehicle(plate):
     ``?debug=1`` מחזיר גם מה נוסה מול המאגר ומה חזר. זו הדרך לענות על
     "למה זה אומר לא נמצא" בלי לנחש, גם בפרודקשן.
     """
+    # ?debug=1 מראה מה נוסה. ?discover=1 מוסיף סריקה של כל מאגרי הרכב
+    # ב-CKAN - יקר, ולכן בבקשה מפורשת בלבד - ואומר באיזה מהם הרכב יושב.
+    if request.args.get("discover") == "1":
+        found = vehicles.lookup_everywhere(plate)
+        return jsonify({**found, "vehicle": found["vehicle"]})
     found = vehicles.lookup_detail(plate)
     vehicle = found["vehicle"] or vehicles.lookup_offline(plate)
     if request.args.get("debug") == "1":

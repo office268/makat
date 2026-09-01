@@ -113,8 +113,9 @@ def test_the_registry_answering_nothing_is_not_found(monkeypatch):
     monkeypatch.setattr(vehicles, "_query", FakeCkan())
     found = vehicles.lookup_detail("10732802")
     assert found["status"] == "not_found"
-    assert len(found["attempts"]) == 3
     assert all(a["error"] is None for a in found["attempts"])
+    # כל אסטרטגיה נוסתה בכל מאגר לפני שוויתרנו
+    assert len(found["attempts"]) == len(vehicles.resources()) * 3
 
 
 def test_the_registry_being_down_is_not_the_same_as_not_found(monkeypatch):
@@ -187,5 +188,240 @@ def test_the_api_can_show_what_it_tried(client, monkeypatch):
     monkeypatch.setattr(vehicles, "_query", FakeCkan())
     payload = client.get("/api/vehicle/10732802?debug=1").get_json()
     assert payload["status"] == "not_found"
-    assert len(payload["attempts"]) == 3
     assert payload["attempts"][0]["strategy"] == "סינון מספרי"
+    assert {a["resource"] for a in payload["attempts"]} == {
+        label for _, label in vehicles.resources()
+    }
+
+
+# --------------------------------------------------------------------------
+# איתור המאגרים עצמם, במקום לנחש מזהים
+# --------------------------------------------------------------------------
+
+PACKAGES = {
+    "results": [
+        {
+            "title": "כלי רכב פרטיים ומסחריים",
+            "resources": [
+                {"id": "active-1", "name": "רכב פעיל", "datastore_active": True},
+                {"id": "readme", "name": "הסבר", "datastore_active": False},
+            ],
+        },
+        {
+            "title": "כלי רכב שהורדו מהכביש",
+            "resources": [
+                {"id": "offroad-1", "name": "ירדו מהכביש", "datastore_active": True},
+            ],
+        },
+        {
+            "title": "תחנות דלק",
+            "resources": [
+                {"id": "fuel-1", "name": "תחנות", "datastore_active": True},
+            ],
+        },
+    ]
+}
+
+FIELDS = {
+    "active-1": ["_id", "mispar_rechev", "tozeret_nm"],
+    "offroad-1": ["_id", "mispar_rechev", "bitul_dt"],
+    "fuel-1": ["_id", "shem_tachana"],   # אין מספרי רישוי - לא רלוונטי
+}
+
+
+def _fake_ckan(monkeypatch, packages=PACKAGES, error=None):
+    def ckan(action, params, timeout=None):
+        if error:
+            return None, error
+        if action == "package_search":
+            return packages, None
+        if action == "datastore_search":
+            fields = FIELDS.get(params["resource_id"], [])
+            return {"fields": [{"id": name} for name in fields]}, None
+        return None, "פעולה לא מוכרת"
+
+    monkeypatch.setattr(vehicles, "_ckan", ckan)
+
+
+def test_discovery_keeps_only_registries_that_hold_plate_numbers(monkeypatch):
+    """הסינון הוא לפי קיום העמודה, לא לפי שם - שמות משתנים."""
+    _fake_ckan(monkeypatch)
+    found, error = vehicles.discover_resources()
+    assert error is None
+    assert [resource for resource, _ in found] == ["active-1", "offroad-1"]
+    assert "fuel-1" not in [resource for resource, _ in found]
+
+
+def test_discovery_skips_resources_without_a_datastore(monkeypatch):
+    _fake_ckan(monkeypatch)
+    found, _ = vehicles.discover_resources()
+    assert "readme" not in [resource for resource, _ in found]
+
+
+def test_discovery_reports_an_unreachable_registry(monkeypatch):
+    _fake_ckan(monkeypatch, error="אין גישה למאגר: 403")
+    found, error = vehicles.discover_resources()
+    assert found == []
+    assert "403" in error
+
+
+def test_lookup_everywhere_finds_the_vehicle_in_another_registry(monkeypatch):
+    """הרכב ירד מהכביש. המאגר הרגיל עונה ואין בו כלום - ובאחר יש."""
+    _fake_ckan(monkeypatch)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == "offroad-1" and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    found = vehicles.lookup_everywhere("107-32-802")
+
+    assert found["status"] == "found"
+    assert found["found_in"]["resource"] == "offroad-1"
+    assert found["vehicle"]["model"] == "COROLLA"
+    # והרשימה שמוחזרת היא בדיוק מה שצריך להיכנס להגדרה
+    labels = {entry["resource"]: entry["label"] for entry in found["discovered"]}
+    assert labels["offroad-1"] == "ירדו מהכביש"
+
+
+def test_lookup_everywhere_does_not_re_ask_a_registry_already_configured(monkeypatch):
+    _fake_ckan(monkeypatch)
+    monkeypatch.setenv("GOV_VEHICLE_RESOURCES", "active-1:רכב פעיל")
+    asked = []
+
+    def query(resource_id, params):
+        asked.append(resource_id)
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    found = vehicles.lookup_everywhere("10732802")
+
+    assert found["status"] == "not_found"
+    # active-1 נשאל שלוש פעמים במסלול הרגיל, ולא שוב בסריקה
+    assert asked.count("active-1") == 3
+    assert asked.count("offroad-1") == 3
+
+
+def test_lookup_everywhere_returns_early_when_the_normal_path_found_it(monkeypatch):
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+    monkeypatch.setattr(vehicles, "_query", FakeCkan({numeric: [REAL_ROW]}))
+    called = []
+    monkeypatch.setattr(
+        vehicles, "discover_resources", lambda *a, **k: (called.append(1), ([], None))[1]
+    )
+    assert vehicles.lookup_everywhere("10732802")["status"] == "found"
+    assert called == []   # סריקה יקרה לא רצה בכלל כשלא צריך אותה
+
+
+def test_the_api_can_scan_every_registry_on_request(client, monkeypatch):
+    _fake_ckan(monkeypatch)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == "offroad-1" and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    payload = client.get("/api/vehicle/10732802?discover=1").get_json()
+    assert payload["status"] == "found"
+    assert payload["found_in"]["resource"] == "offroad-1"
+    assert payload["vehicle"]["model"] == "COROLLA"
+
+
+def test_the_scan_is_not_run_on_the_normal_request(client, monkeypatch):
+    """סריקה של עשרות מאגרים אינה משהו שקורה בכל לחיצה על "זהה רכב"."""
+    monkeypatch.setattr(vehicles, "_query", FakeCkan())
+    monkeypatch.setattr(
+        vehicles, "discover_resources",
+        lambda *a, **k: pytest.fail("סריקה רצה בבקשה רגילה"),
+    )
+    client.post("/", data={"plate": "10732802", "action": "vehicle"})
+    client.get("/api/vehicle/10732802?debug=1")
+
+
+# --------------------------------------------------------------------------
+# המרשם מפוצל לשניים
+# --------------------------------------------------------------------------
+
+CONTINUATION = "0866573c-40cd-4ca8-91d2-9dd2d7a492e5"
+OFF_ROAD = "851ecab1-0622-4dbe-a6c7-f950cf82abf9"
+
+
+def test_all_three_registries_are_asked_by_default(monkeypatch):
+    """המרשם מפוצל, וזה מה שהחזיר "לא נמצא" לרכב שקיים.
+
+    "מספרי רישוי של כלי רכב פרטיים ומסחריים" ו-"...המשך" הם שני משאבים
+    נפרדים. שאילת הראשון בלבד היא שאילת חצי מהמרשם.
+    """
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    ids = [resource for resource, _ in vehicles.resources()]
+    assert ids[0] == vehicles.RESOURCE_ID
+    assert CONTINUATION in ids
+    assert OFF_ROAD in ids
+
+
+def test_a_vehicle_in_the_continuation_registry_is_found(monkeypatch):
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == CONTINUATION and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    found = vehicles.lookup_detail("107-32-802")
+    assert found["status"] == "found"
+    assert found["found_in"]["resource"] == CONTINUATION
+    assert found["vehicle"]["model"] == "COROLLA"
+
+
+def test_a_cancelled_vehicle_is_still_found(monkeypatch):
+    """רכב שירד מהכביש עדיין עומד בחצר של מישהו וצריך לו חלפים."""
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+
+    def query(resource_id, params):
+        if resource_id == OFF_ROAD and params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    assert vehicles.lookup_detail("10732802")["found_in"]["resource"] == OFF_ROAD
+
+
+def test_the_first_registry_still_wins_and_stops_the_search(monkeypatch):
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+    asked = []
+
+    def query(resource_id, params):
+        asked.append(resource_id)
+        if params.get("filters") == numeric:
+            return [REAL_ROW], None
+        return [], None
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    vehicles.lookup_detail("10732802")
+    assert asked == [vehicles.RESOURCE_ID]   # בקשה אחת, לא תשע
+
+
+def test_the_search_stops_when_the_time_budget_runs_out(monkeypatch):
+    """מאגרים כפול אסטרטגיות זה הרבה בקשות, ו-gunicorn הורג אחרי 60 שניות.
+
+    עדיף להיעצר ולומר "המאגר איטי" מאשר להיחתך באמצע בלי הודעה.
+    """
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    monkeypatch.setattr(vehicles, "LOOKUP_BUDGET", 0.05)
+    clock = iter([0.0] + [10.0] * 40)
+
+    monkeypatch.setattr(vehicles.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(vehicles, "_query", lambda r, p: ([], None))
+    found = vehicles.lookup_detail("10732802")
+
+    assert found["status"] == "unreachable"
+    assert "נעצר" in found["error"]
+    assert found["attempts"][-1]["error"] == "נגמר תקציב הזמן"
