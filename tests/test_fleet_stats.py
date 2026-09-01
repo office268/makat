@@ -374,7 +374,16 @@ def test_registry_name_longer_than_the_catalog_still_matches(app):
 
         # ושם קצר לא נדבק לכל דגם שמכיל את אותן אותיות
         assert services.model_matches_name("I35", "I3") is False
-        assert services.model_matches_name("MAZDA 3", "3") is False
+        assert services.model_matches_name("CX-3", "CX-30") is False
+        assert services.model_matches_name("CX-30", "CX-3") is False
+        assert services.model_matches_name("MAZDA 3", "CX-3") is False
+
+        # שינוי מכוון: שם קטלוג קצר שהוא **מילה שלמה** בשם המרשם כן
+        # מתאים. התאמה שנרשמה "3" אצל מאזדה היא המאזדה 3, והיצרן כבר
+        # סונן בנפרד. קודם זה החזיר False - לא מתוך כוונה אלא מפני
+        # ששמירת האורך פסלה כל שם קצר מכל כיוון, וכך גם הנכונים.
+        assert services.model_matches_name("MAZDA 3", "3") is True
+        assert services.model_matches_name("MAZDA 6", "3") is False
 
 
 def test_maker_spelling_is_bridged(app):
