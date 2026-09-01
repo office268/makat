@@ -261,3 +261,111 @@ def test_category_and_manufacturer_screens_count_in_one_query(client, app):
 
     assert _count_queries(app, lambda: client.get("/categories")) < 15
     assert _count_queries(app, lambda: client.get("/manufacturers")) < 15
+
+
+# --------------------------------------------------------------------------
+# שדה שלא נמסר אינו נמחק - גם בשדות הקטלוג, לא רק במסחריים
+# --------------------------------------------------------------------------
+
+CATALOG_ROW = (
+    "part_number,name_he,name_en,description,barcode,part_type,weight_kg,"
+    "side,warranty_months,image_url,notes\n"
+    "KEEP-1,רפידות,Brake Pads,תיאור,7290001,brake_pads_front,1.4,"
+    "קדמי,24,https://x.example/a.jpg,הערה\n"
+)
+
+
+def test_a_price_list_does_not_wipe_the_catalog_fields(app, org_id):
+    """מחירון ספק נושא שלוש עמודות. קודם הוא מחק תשעה שדות מכל מק"ט
+    בקובץ - ובראשם part_type, המפתח שמקשר מק"ט לזרימת הזיהוי."""
+    with app.app_context():
+        services.import_csv(io.StringIO(CATALOG_ROW), organization_id=org_id)
+        services.import_csv(
+            io.StringIO("part_number,name_he,price\nKEEP-1,רפידות,120\n"),
+            organization_id=org_id,
+        )
+        db.session.expire_all()
+        part = Part.query.filter_by(part_number="KEEP-1").one()
+        assert part.part_type == "brake_pads_front"
+        assert part.name_en == "Brake Pads"
+        assert part.description == "תיאור"
+        assert part.barcode == "7290001"
+        assert part.weight_kg == 1.4
+        assert part.side == "קדמי"
+        assert part.warranty_months == 24
+        assert part.image_url == "https://x.example/a.jpg"
+        assert part.notes == "הערה"
+
+
+def test_a_part_the_pipeline_added_stays_in_the_review_queue(client, app):
+    """הטופס אינו שולח image_url ו-notes, ולכן כל שמירה מחקה אותם.
+
+    ‏notes נושא את סימון המקור, וכך מק"ט שהגילוי האוטומטי הכניס יצא
+    מ-/admin/discovery/review - התור שקיים בדיוק כדי לסקור אותו -
+    ברגע שמנהל תיקן בו טעות כתיב.
+    """
+    from app import parts_discovery
+
+    with app.app_context():
+        parts_discovery.save([{
+            "part_number": "REVIEW-1", "manufacturer": "MAHLE",
+            "part_type": "oil_filter", "make": "טויוטה", "model": "COROLLA",
+            "year": 2015, "image_url": "https://cdn.example/oc90.jpg",
+        }])
+        part = Part.query.filter_by(part_number="REVIEW-1").one()
+        assert parts_discovery.SOURCE_MARK in part.notes
+        part_id = part.id
+
+    client.post(f"/parts/{part_id}/edit", data={
+        "part_number": "REVIEW-1", "name_he": "מסנן שמן קורולה",
+        "name_en": "", "description": "", "barcode": "",
+        "part_type": "oil_filter", "manufacturer": "MAHLE",
+    })
+
+    with app.app_context():
+        part = db.session.get(Part, part_id)
+        assert part.name_he == "מסנן שמן קורולה", "העריכה עצמה כן נשמרה"
+        assert part.image_url == "https://cdn.example/oc90.jpg"
+        assert parts_discovery.SOURCE_MARK in (part.notes or "")
+        assert part in parts_discovery.discovered_parts()
+
+
+def test_clearing_a_field_from_the_form_still_clears_it(client, app, org_id):
+    """שדה ריק בטופס *נשלח* כמחרוזת ריקה - כלומר נמסר, ונכתב כ-None.
+
+    זו הבקרה על התיקון: "לא נמסר" ו"נמסר ריק" הם שני דברים שונים.
+    """
+    with app.app_context():
+        services.import_csv(io.StringIO(CATALOG_ROW), organization_id=org_id)
+        part_id = Part.query.filter_by(part_number="KEEP-1").one().id
+
+    client.post(f"/parts/{part_id}/edit", data={
+        "part_number": "KEEP-1", "name_he": "רפידות",
+        "name_en": "", "description": "", "barcode": "", "side": "",
+        "part_type": "brake_pads_front",
+    })
+    with app.app_context():
+        part = db.session.get(Part, part_id)
+        assert part.name_en is None
+        assert part.description is None
+        assert part.barcode is None
+        assert part.side is None
+        assert part.part_type == "brake_pads_front", "מה שנשלח עם ערך נשמר"
+
+
+def test_api_patch_still_replaces_every_field_it_was_given(client, app, org_id):
+    """‏PATCH בונה מיזוג מהמצב הנוכחי, ולכן כל השדות נמסרים בו כרגיל."""
+    with app.app_context():
+        services.import_csv(io.StringIO(CATALOG_ROW), organization_id=org_id)
+        part_id = Part.query.filter_by(part_number="KEEP-1").one().id
+
+    response = client.patch(
+        f"/api/parts/{part_id}", json={"name_en": "Front Pads", "barcode": ""}
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        part = db.session.get(Part, part_id)
+        assert part.name_en == "Front Pads"
+        assert part.barcode is None
+        assert part.part_type == "brake_pads_front", "שדה שלא נגעו בו נשמר"
+        assert part.image_url == "https://x.example/a.jpg"
