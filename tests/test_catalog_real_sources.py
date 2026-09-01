@@ -305,11 +305,22 @@ def test_the_browser_can_search_through_a_form(monkeypatch):
     assert fetcher.submit_selector == "#go"
 
 
-def test_a_source_that_needs_a_browser_is_unavailable_without_one(monkeypatch):
+def test_a_source_that_needs_javascript_is_unavailable_without_a_way_to_run_it(
+    monkeypatch
+):
+    """הבאה פשוטה מול אתר שבונה את התוצאה ב-JS מחזירה שלד ריק.
+
+    המודל יאמר בצדק "לא נמצא", ואיש לא יידע שהתשובה שגויה. עדיף
+    שהמסך יאמר שהשליפה כבויה.
+    """
+    from app.catalog_sources import scraperapi
+
     monkeypatch.setattr(laximo, "MODE", "web")
-    monkeypatch.setattr(base, "PARSE_MODEL", "x")
+    monkeypatch.setattr(base, "FETCHER", "auto")
+    monkeypatch.setattr(scraperapi, "API_KEY", "")
     monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert base.fetcher_kind() == "direct"
     assert laximo.LaximoSource().available() is False
 
 
@@ -347,3 +358,161 @@ def test_the_browser_serves_requests_from_several_threads():
         assert results == {0: True, 1: True, 2: True}
     finally:
         browser.shutdown()
+
+
+# --------------------------------------------------------------------------
+# ScraperAPI: מי מביא את הדף
+# --------------------------------------------------------------------------
+
+def test_scraperapi_wraps_the_real_url_with_render_and_country(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(scraperapi, "RENDER", True)
+    monkeypatch.setattr(scraperapi, "COUNTRY", "il")
+    built = scraperapi.build_url("https://laximo.ru/s?vin=ABC&x=1")
+    assert built.startswith("https://api.scraperapi.com/?")
+    # הכתובת האמיתית חייבת להיות מקודדת, אחרת הפרמטרים שלה נבלעים
+    assert "url=https%3A%2F%2Flaximo.ru%2Fs%3Fvin%3DABC%26x%3D1" in built
+    assert "api_key=k123" in built
+    assert "render=true" in built and "country_code=il" in built
+
+
+def test_scraperapi_errors_say_what_to_do(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    assert "SCRAPERAPI_KEY" in scraperapi._explain(401, "")
+    assert "קרדיטים" in scraperapi._explain(429, "")
+    assert "premium" in scraperapi._explain(403, "")
+
+
+def test_scraperapi_still_respects_robots(monkeypatch):
+    """השירות מביא בשמנו, ולכן ה-robots של האתר עדיין מחייב אותנו."""
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(base, "allowed_by_robots", lambda url, agent=None: False)
+    with pytest.raises(base.FetchError, match="robots.txt"):
+        scraperapi.ScraperApiFetcher()("https://example.invalid/x")
+
+
+def test_scraperapi_without_a_key_is_a_readable_failure(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(scraperapi, "API_KEY", "")
+    with pytest.raises(base.FetchError, match="SCRAPERAPI_KEY"):
+        scraperapi.ScraperApiFetcher()("https://example.invalid/x")
+
+
+def test_the_fetcher_is_chosen_by_what_is_configured(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "auto")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    assert base.fetcher_kind() == "scraperapi"
+
+    # בלי מפתח נופלים לדפדפן, ובלי דפדפן להבאה פשוטה
+    monkeypatch.setattr(scraperapi, "API_KEY", "")
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(browser, "chromium_installed", lambda: True)
+    assert base.fetcher_kind() == "browser"
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
+    assert base.fetcher_kind() == "direct"
+
+
+def test_an_explicit_choice_wins_over_what_is_available(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "browser")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    assert base.fetcher_kind() == "browser"
+
+
+def test_scraperapi_serves_a_plain_page_fetch(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "scraperapi")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    assert isinstance(base.default_fetcher(), scraperapi.ScraperApiFetcher)
+
+
+def test_a_form_search_falls_back_to_the_browser_even_under_scraperapi(monkeypatch):
+    """ScraperAPI מביא כתובת ומחזיר HTML - הוא לא ממלא טפסים.
+
+    בלי המעבר הזה בקשה שדורשת אינטראקציה הייתה מביאה בשקט את דף
+    החיפוש הריק, וזה כשל שקשה לראות: יש תשובה, היא פשוט לא נכונה.
+    """
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "scraperapi")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", True)
+    monkeypatch.setattr(browser, "chromium_installed", lambda: True)
+    chosen = base.default_fetcher(fill_selector="#q", fill_value="VIN123")
+    assert isinstance(chosen, browser.BrowserFetcher)
+    assert chosen.fill_value == "VIN123"
+
+
+def test_a_form_search_without_a_browser_says_so(monkeypatch):
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "scraperapi")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
+    with pytest.raises(base.FetchError, match="טופס"):
+        base.default_fetcher(fill_selector="#q", fill_value="VIN123")
+
+
+def test_a_source_is_available_on_scraperapi_alone(monkeypatch):
+    """בלי חשבון ספק ובלי דפדפן מותקן - ScraperAPI לבדו מספיק."""
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(base, "FETCHER", "auto")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
+    monkeypatch.setattr(laximo, "MODE", "web")
+    monkeypatch.setattr(tecdoc, "MODE", "web")
+    assert laximo.LaximoSource().available() is True
+    assert tecdoc.TecDocSource().available() is True
+
+
+def test_laximo_fetches_through_scraperapi(monkeypatch):
+    """המסלול המלא: הכתובת של Laximo נעטפת, והתשובה מגיעה למודל."""
+    from app.catalog_sources import scraperapi
+
+    monkeypatch.setattr(base, "FETCHER", "scraperapi")
+    monkeypatch.setattr(scraperapi, "API_KEY", "k123")
+    monkeypatch.setattr(scraperapi, "RENDER", True)
+    monkeypatch.setattr(laximo, "MODE", "web")
+    monkeypatch.setattr(laximo, "WEB_INPUT", None)
+    monkeypatch.setattr(base, "allowed_by_robots", lambda url, agent=None: True)
+
+    asked = {}
+
+    def fake_urlopen(request, timeout=None):
+        asked["url"] = request.full_url
+
+        class Response:
+            headers = type("H", (), {"get_content_charset": lambda self: "utf-8"})()
+
+            def read(self):
+                return b"<html><body>04152-YZZA1 OIL FILTER</body></html>"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return Response()
+
+    monkeypatch.setattr(scraperapi.urllib.request, "urlopen", fake_urlopen)
+    client = FakeClient({"parts": [{"oe_number": "04152-YZZA1", "confidence": "high"}]})
+    found = laximo.LaximoSource().lookup(VEHICLE, "oil_filter", client=client)
+
+    assert "api.scraperapi.com" in asked["url"]
+    assert "render=true" in asked["url"]
+    assert found[0].part_number == "04152-YZZA1"
+    # מה שנרשם כמקור הוא הכתובת האמיתית, לא זו של השירות
+    assert found[0].source_url.startswith("https://laximo.ru/")

@@ -34,6 +34,8 @@ from .base import (
     USER_AGENT,
     ask_model,
     condense,
+    default_fetcher,
+    fetcher_available,
     flatten_xml,
     parser_available,
 )
@@ -152,6 +154,7 @@ class LaximoSource(CatalogSource):
     name = "Laximo · קטלוג יצרן לפי שלדה"
     tier = "oem"
     needs_vin = True
+    needs_js = True   # התוצאה נבנית ב-JavaScript אחרי טעינת הדף
 
     def use_api(self):
         if MODE == "api":
@@ -165,9 +168,7 @@ class LaximoSource(CatalogSource):
             return False
         if self.use_api():
             return api_configured()
-        from .browser import browser_available
-
-        return bool(WEB_URL) and browser_available()
+        return bool(WEB_URL) and fetcher_available(needs_js=self.needs_js)
 
     def _payload(self, vin, fetcher=None):
         """מביא את התשובה הגולמית, ומחזיר (טקסט לשליחה למודל, מקור)."""
@@ -177,11 +178,11 @@ class LaximoSource(CatalogSource):
         if self.use_api():
             command = build_command(vin)
             return flatten_xml(call_api(command)), f"{API_URL} · {command}"
-        from .browser import BrowserError, BrowserFetcher
+        from .browser import BrowserError
 
         url = build_web_url(vin)
         try:
-            html = BrowserFetcher(
+            html = default_fetcher(
                 wait_selector=WEB_WAIT_SELECTOR,
                 fill_selector=WEB_INPUT,
                 fill_value=vin if WEB_INPUT else None,

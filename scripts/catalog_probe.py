@@ -110,8 +110,24 @@ def main():
                         help="מספר מקורי לשלב החלופים (ניתן לחזור)")
     parser.add_argument("--save", help="שמירת התשובה הגולמית לקובץ fixture")
     parser.add_argument("--browser", action="store_true",
-                        help="לכפות מסלול דפדפן גם כשמוגדר API")
+                        help="לכפות מסלול web (דפדפן/ScraperAPI) גם כשמוגדר API")
+    parser.add_argument("--fetcher", choices=["auto", "scraperapi", "browser", "direct"],
+                        help="במי להשתמש להבאת הדף")
+    parser.add_argument("--account", action="store_true",
+                        help="מציג את מצב חשבון ScraperAPI ויוצא")
     args = parser.parse_args()
+
+    if args.account:
+        from app.catalog_sources import scraperapi
+
+        if not scraperapi.configured():
+            print("אין SCRAPERAPI_KEY בסביבה.")
+            return 1
+        print(scraperapi.account())
+        return 0
+
+    if args.fetcher:
+        base.FETCHER = args.fetcher
 
     if not (args.plate or args.vin or args.make):
         parser.error("צריך --plate, או --vin, או --make/--model")
@@ -125,6 +141,7 @@ def main():
     describe(vehicle)
     print(f"חלק:   {type_name(args.part)}")
     print(f"מקור:  {source.name} (tier={source.tier})")
+    print(f"הבאה:  {base.fetcher_kind()}")
 
     if not base.parser_available():
         print("\n⚠ אין ANTHROPIC_API_KEY - אפשר להביא את הדף, אבל לא לפענח אותו.")
@@ -137,9 +154,7 @@ def main():
 
     fetcher = None
     if args.browser or (args.save and not _uses_api(source)):
-        from app.catalog_sources.browser import BrowserFetcher
-
-        fetcher = Recorder(BrowserFetcher(), save_to=args.save)
+        fetcher = Recorder(base.default_fetcher(), save_to=args.save)
     elif args.save:
         _record_api(module, args.save)
 

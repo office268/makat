@@ -32,6 +32,8 @@ from .base import (
     USER_AGENT,
     ask_model,
     condense,
+    default_fetcher,
+    fetcher_available,
     parser_available,
 )
 
@@ -160,6 +162,7 @@ class TecDocSource(CatalogSource):
     name = "TecDoc · קטלוג חלופים"
     tier = "aftermarket"
     needs_vin = False
+    needs_js = True   # התוצאה נבנית ב-JavaScript אחרי טעינת הדף
 
     def use_api(self):
         if MODE == "api":
@@ -173,9 +176,7 @@ class TecDocSource(CatalogSource):
             return False
         if self.use_api():
             return api_configured()
-        from .browser import browser_available
-
-        return bool(WEB_URL) and browser_available()
+        return bool(WEB_URL) and fetcher_available(needs_js=self.needs_js)
 
     def _payload(self, oem, fetcher=None):
         if fetcher is not None:
@@ -183,11 +184,11 @@ class TecDocSource(CatalogSource):
             return condense(fetcher(url), url), url
         if self.use_api():
             return readable(call_api(oem)), f"{API_URL} · OE {oem}"
-        from .browser import BrowserError, BrowserFetcher
+        from .browser import BrowserError
 
         url = build_web_url(oem)
         try:
-            html = BrowserFetcher(
+            html = default_fetcher(
                 wait_selector=WEB_WAIT_SELECTOR,
                 fill_selector=WEB_INPUT,
                 fill_value=oem if WEB_INPUT else None,

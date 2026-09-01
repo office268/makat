@@ -75,6 +75,9 @@ class CatalogSource:
     tier = "aftermarket"
     # האם המקור זקוק למספר שלדה (ולא רק ליצרן/דגם)
     needs_vin = False
+    # האם האתר בונה את התוצאה ב-JavaScript. אם כן, הבאה פשוטה תחזיר
+    # שלד ריק, והמקור לא ייחשב זמין בלי דפדפן או ScraperAPI.
+    needs_js = False
 
     def available(self):
         """האם אפשר להריץ אותו עכשיו - הגדרות, מפתח, כתובת."""
@@ -216,6 +219,81 @@ def condense(html, base_url="", limit=None):
     text = "\n".join(parser.chunks)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text[: (limit or MAX_CONDENSED)]
+
+
+# מי מביא את הדף. auto בוחר את הטוב ביותר שזמין, לפי הסדר:
+# ScraperAPI (עוקף חסימת IP ומריץ JS אצלם) -> דפדפן מקומי -> urllib.
+FETCHER = os.environ.get("CATALOG_FETCHER", "auto").strip().lower()
+
+
+def fetcher_kind():
+    """איזה מסלול הבאה יפעל בפועל. מוצג במסכים ובכלי הבדיקה."""
+    from . import scraperapi
+
+    if FETCHER in {"scraperapi", "browser", "direct"}:
+        return FETCHER
+    if scraperapi.configured():
+        return "scraperapi"
+    from .browser import browser_available
+
+    return "browser" if browser_available() else "direct"
+
+
+def fetcher_available(needs_js=False):
+    """האם יש במה להביא דפים - ובאיכות שהמקור צריך.
+
+    ``needs_js`` הוא ההבדל בין "אפשר להביא" לבין "אפשר להביא את מה
+    שצריך": מול אתר שבונה את התוצאה ב-JavaScript, ``urllib`` יחזיר שלד
+    ריק, המודל יאמר בצדק "לא נמצא", ואיש לא יידע שהתשובה שגויה. עדיף
+    שהמסך יאמר שהשליפה כבויה.
+    """
+    kind = fetcher_kind()
+    if kind == "scraperapi":
+        from . import scraperapi
+
+        return scraperapi.configured()
+    if kind == "browser":
+        from .browser import browser_available
+
+        return browser_available()
+    return not needs_js
+
+
+def default_fetcher(wait_selector=None, fill_selector=None, fill_value=None,
+                    submit_selector=None):
+    """פונקציית ההבאה למקור שצריך דף.
+
+    ``fill_selector`` הוא חיפוש דרך טופס, ורק דפדפן יודע לעשות אותו -
+    ScraperAPI מביא כתובת ומחזיר HTML. לכן בקשה שדורשת אינטראקציה
+    מקבלת דפדפן גם כשההגדרה היא ScraperAPI, ואם אין דפדפן היא נכשלת
+    בהודעה שאומרת את זה במקום להביא בשקט את הדף הלא נכון.
+    """
+    kind = fetcher_kind()
+    needs_interaction = bool(fill_selector and fill_value)
+
+    if kind == "scraperapi" and not needs_interaction:
+        from .scraperapi import ScraperApiFetcher
+
+        return ScraperApiFetcher()
+    if kind == "direct" and not needs_interaction:
+        return fetch
+
+    from .browser import BrowserFetcher, browser_available
+
+    if not browser_available():
+        if needs_interaction:
+            raise FetchError(
+                "החיפוש הזה דורש מילוי טופס, וזה אפשרי רק בדפדפן. "
+                "התקן אותו (playwright install chromium) או הגדר כתובת "
+                "חיפוש ישירה במקום סלקטור."
+            )
+        return fetch
+    return BrowserFetcher(
+        wait_selector=wait_selector,
+        fill_selector=fill_selector,
+        fill_value=fill_value,
+        submit_selector=submit_selector,
+    )
 
 
 def flatten_xml(text, limit=None):

@@ -616,6 +616,45 @@ Laximo הופך את ה-`misgeret` שהמרשם נתן לרכב מדויק ול�
 רישיון**, ולכן הם משתני סביבה (`LAXIMO_VIN_COMMAND`, `TECDOC_QUERY`)
 ולא קבועים בקוד — התאמה לחשבון שלך היא שינוי הגדרה, לא פריסה.
 
+### מי מביא את הדף
+
+שלוש דרכים מאחורי בורר אחד (`CATALOG_FETCHER`), ו-`auto` בוחר את הטוב
+ביותר שזמין:
+
+| מסלול | מתי | מה הוא נותן |
+|---|---|---|
+| `scraperapi` | יש `SCRAPERAPI_KEY` | עוקף חסימת IP של ענן, מריץ JS בצד שלהם |
+| `browser` | יש Chromium מותקן | דף מלא, ומילוי טפסים |
+| `direct` | תמיד | `urllib` — מספיק רק לאתר שאינו בונה את התוצאה ב-JS |
+
+**למה ScraperAPI רלוונטי כאן.** אתרי קטלוג מסחריים חוסמים טווחי כתובות
+של ספקי אירוח, ו-Railway הוא בדיוק כזה — כלומר Chromium שרץ אצלנו עלול
+פשוט לקבל 403. השירות מסובב כתובות ביתיות, ו-`render=true` מריץ את
+ה-JavaScript אצלם: זה מייתר את Chromium בתמונה, ואיתו את כל סיפור
+מספרי ה-build וה-thread הייעודי.
+
+מה שהוא **לא** נותן: מילוי טופס ולחיצה. הוא מביא כתובת ומחזיר HTML.
+לכן בקשה שהוגדר לה `*_WEB_INPUT` עוברת לדפדפן גם כשהבורר הוא ScraperAPI
+— אחרת היינו מביאים בשקט את דף החיפוש הריק, וזה כשל שקשה לראות: יש
+תשובה, היא פשוט לא נכונה.
+
+**המחיר: זמן.** עיבוד עם `render=true` לוקח עשרות שניות, ובקשת שלב אחת
+היא הבאה ועוד קריאה למודל. לכן עם המסלול הזה צריך `WEB_TIMEOUT=90`.
+
+**מה שלא משתנה:** `robots.txt` נבדק גם כאן — השירות מביא בשמנו, ולכן
+מה שאסור לנו אסור גם דרכו.
+
+`Laximo` ו-`TecDoc` מסומנים `needs_js = True`, ולכן אם המסלול היחיד
+שנשאר הוא `direct` הם מדווחים שאינם זמינים במקום להביא שלד ריק
+ולהחזיר "לא נמצא" שנשמע אמין.
+
+בדיקת חשבון מהירה:
+
+```bash
+python scripts/catalog_probe.py --account
+python scripts/catalog_probe.py --plate 12345678 --fetcher scraperapi --save out.html
+```
+
 ### למה דפדפן אמיתי
 
 Laximo ו-TecDoc בונים את התוצאה ב-JavaScript אחרי טעינת הדף. `urllib`
@@ -839,8 +878,9 @@ app/
   fleet_import.py  אותה ספירה מהדפדפן, במנות (מסך /admin/fleet-stats)
   identify.py      זיהוי סוג חלק (טקסט / תמונה)
   live_lookup.py   שליפה חיה לפי מספר שלדה: מטמון, עבודה, כתיבה לקטלוג
-  catalog_sources/ המקורות מאחורי ממשק אחד: laximo · tecdoc · browser
-                   (Playwright) · epc_vin · aftermarket · mock
+  catalog_sources/ המקורות מאחורי ממשק אחד: laximo · tecdoc · epc_vin ·
+                   aftermarket · mock, ומי מביא להם את הדף: browser
+                   (Playwright) · scraperapi
   models.py        מודלי בסיס הנתונים
   activity.py      לוג השימוש: המודל, הכתיבה האוטומטית והשאילתות
   services.py      חיפוש, הצלבה, ייבוא/ייצוא CSV
@@ -856,5 +896,5 @@ scripts/
   vehicle_stats.py פילוח הרכבים הפעילים בישראל לפי דגם
   catalog_probe.py בדיקה חיה של מקור קטלוגי מהשורה
 data/              parts_catalog.csv · vehicles_sample.json
-tests/             548 בדיקות · fixtures/ תשובות קטלוג שמורות
+tests/             559 בדיקות · fixtures/ תשובות קטלוג שמורות
 ```
