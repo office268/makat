@@ -337,14 +337,21 @@ def known_oem_numbers(vehicle, part_type, found):
 
 
 def _result_row(row, source, part_id=None, verified=True, reason=""):
+    """שורה אחת כפי שהמסך יקבל אותה.
+
+    הכתובות מסוננות כאן ולא רק ב-``validate``, כי לא כל מה שמגיע לכאן
+    עבר שם: הרשימה ה*לא מאומתת* נבנית מהשורה הגולמית כפי שהמודל
+    החזיר אותה, וזו בדיוק הרשימה שאין לסמוך עליה. זו נקודת המעבר
+    היחידה אל הדפדפן, ולכן הסינון יושב בה.
+    """
     return {
         "part_number": row.get("part_number"),
         "manufacturer": row.get("manufacturer") or "",
         "tier": row.get("tier") or source.tier,
         "oe_number": row.get("oe_number") or "",
-        "image_url": row.get("image_url") or "",
+        "image_url": parts_discovery.safe_url(row.get("image_url")),
         "price_eur": row.get("price_eur"),
-        "source_url": row.get("source_url") or "",
+        "source_url": parts_discovery.safe_url(row.get("source_url")),
         "source_name": source.name,
         "confidence": row.get("confidence") or "",
         "note": row.get("note") or "",

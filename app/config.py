@@ -141,7 +141,6 @@ class Config:
     DISPLAY_TIMEZONE = os.environ.get("DISPLAY_TIMEZONE", "Asia/Jerusalem")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
-    JSON_AS_ASCII = False
     PER_PAGE = int(os.environ.get("PER_PAGE", 25))
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB להעלאת קבצים
 

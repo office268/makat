@@ -144,6 +144,25 @@ def _mentions_other_marque(text, wanted):
     return None
 
 
+# הסכימות היחידות שכתובת מהמודל רשאית לשאת. כל השאר נזרק.
+_SAFE_SCHEMES = ("http://", "https://")
+
+
+def safe_url(raw, limit=500):
+    """כתובת שמותר להציג כקישור או כתמונה, או מחרוזת ריקה.
+
+    הכתובות כאן עברו דרך דף של מישהו אחר: המקור הוא אתר קטלוג חיצוני,
+    המודל קרא אותו והחזיר מה שמצא בו. כלומר זו מחרוזת שגורם שלישי
+    שולט בה, והיא נכתבת ל-``href`` ול-``src`` במסך של המכונאי.
+
+    ``javascript:`` ב-``href`` הוא הרצת קוד במקור של האפליקציה בלחיצה
+    אחת, עם הסשן של מי שלחץ - ומי שלוחץ הוא לפחות מנהל. לכן רק http
+    ו-https עוברים, וכל דבר אחר נמחק כאילו לא נמסרה כתובת כלל.
+    """
+    url = str(raw or "").strip()[:limit]
+    return url if url.lower().startswith(_SAFE_SCHEMES) else ""
+
+
 def validate(candidates, make, model, part_type):
     """מחזיר (מאושרים, [(מק"ט, סיבת פסילה)]).
 
@@ -191,12 +210,12 @@ def validate(candidates, make, model, part_type):
                 "oe_number": str(raw.get("oe_number") or "").strip(),
                 "oe_brand": oe_brand.strip(),
                 "price_eur": raw.get("price_eur"),
-                "source_url": str(raw.get("source_url") or "").strip()[:500],
+                "source_url": safe_url(raw.get("source_url")),
                 "make": make,
                 "model": model,
                 # שדות שהשליפה החיה מוסיפה (app/catalog_sources). הגילוי
                 # מ-/admin/discovery לא ממלא אותם, והם נשארים ריקים.
-                "image_url": str(raw.get("image_url") or "").strip()[:500],
+                "image_url": safe_url(raw.get("image_url")),
                 "variant_key": str(raw.get("variant_key") or "").strip()[:80],
                 "tier": str(raw.get("tier") or "").strip(),
                 "source_key": str(raw.get("source_key") or "").strip(),

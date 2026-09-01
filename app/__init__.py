@@ -48,6 +48,12 @@ def create_app(config_object=Config):
     app = Flask(__name__)
     app.config.from_object(config_object)
 
+    # עברית ב-JSON כעברית, לא כרצף \uXXXX. עד Flask 2.2 זה היה
+    # JSON_AS_ASCII בקונפיג; המפתח הוסר ב-2.3 ונשאר כאן שנים כהגדרה
+    # שאיש לא קורא - כל תשובת API יצאה מוברחת, כשישים אחוז יותר בתים,
+    # ובלוגים היא גם לא קריאה לאדם.
+    app.json.ensure_ascii = False
+
     _configure_logging(app)
 
     # מאחורי ה-proxy של Railway - בלי זה Flask רואה http ואת ה-IP של ה-proxy
