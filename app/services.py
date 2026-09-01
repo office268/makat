@@ -602,12 +602,48 @@ def fitments_from_rows(rows):
     return fitments
 
 
+def _text(raw):
+    """טקסט מהקלט, או None כשהוא ריק."""
+    return (raw or "").strip() or None
+
+
+# שדות הקטלוג ואיך קוראים כל אחד מהם מהקלט. כמו COMMERCIAL_FIELDS,
+# הרשימה הזאת היא גם מה שמחליט אילו שדות נכתבים - ראה part_from_row.
+CATALOG_FIELDS = {
+    "name_en": _text,
+    "description": _text,
+    "barcode": _text,
+    "weight_kg": _to_float,
+    "dimensions": _text,
+    "warranty_months": _to_int,
+    "side": _text,
+    "part_type": _text,
+    "image_url": _text,
+    "notes": _text,
+}
+
+
 def part_from_row(row, part=None, organization_id=None, rows=None):
     """יוצר או מעדכן מק"ט משורת CSV / טופס.
 
     שדות הקטלוג נכתבים על Part המשותף. שדות מסחריים - מחיר, עלות,
     מלאי ומיקום - נכתבים על השכבה הפרטית של הארגון, ורק אם נמסר
     organization_id. בלעדיו הם מתעלמים, כדי שלא ייכתב מחיר לקטלוג הגלובלי.
+
+    **רק שדה שנמסר נכתב.** קודם נכתבו כל שדות הקטלוג בכל קריאה, וכל
+    שדה חסר נקרא כריק, ולזה היו שתי תוצאות:
+
+    מחירון ספק עם ``part_number,name_he,price`` מחק תשעה שדות מכל מק"ט
+    בקובץ. הגרוע שבהם ``part_type`` - זה המפתח שמקשר מק"ט לזרימת
+    הזיהוי, ומק"ט שאיבד אותו נעלם מהצטלבות "סוג חלק × רכב".
+
+    והטופס אינו שולח ``image_url``, ``notes`` ו-``dimensions`` כלל, ולכן
+    כל שמירה ממסך העריכה מחקה אותם. ``notes`` נושא את סימון המקור, וכך
+    מק"ט שהצנרת האוטומטית הכניסה יצא מ-``/admin/discovery/review`` -
+    התור שקיים בדיוק כדי לסקור אותו - ברגע שמישהו תיקן בו טעות כתיב.
+
+    ניקוי שדה מהטופס ממשיך לעבוד: שדה ריק *נשלח* כמחרוזת ריקה, כלומר
+    הוא נמסר, ונכתב כ-None.
     """
     if part is None:
         part = Part()
@@ -615,16 +651,9 @@ def part_from_row(row, part=None, organization_id=None, rows=None):
         db.session.add(part)
     part.part_number = (row.get("part_number") or "").strip()
     part.name_he = (row.get("name_he") or "").strip()
-    part.name_en = (row.get("name_en") or "").strip() or None
-    part.description = (row.get("description") or "").strip() or None
-    part.barcode = (row.get("barcode") or "").strip() or None
-    part.weight_kg = _to_float(row.get("weight_kg"))
-    part.dimensions = (row.get("dimensions") or "").strip() or None
-    part.warranty_months = _to_int(row.get("warranty_months"))
-    part.side = (row.get("side") or "").strip() or None
-    part.part_type = (row.get("part_type") or "").strip() or None
-    part.image_url = (row.get("image_url") or "").strip() or None
-    part.notes = (row.get("notes") or "").strip() or None
+    for field, read in CATALOG_FIELDS.items():
+        if field in row:
+            setattr(part, field, read(row.get(field)))
     if "is_active" in row and str(row.get("is_active")).strip() != "":
         part.is_active = _to_bool(row.get("is_active"))
     elif part.is_active is None:
