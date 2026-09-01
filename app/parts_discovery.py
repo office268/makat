@@ -216,6 +216,7 @@ def validate(candidates, make, model, part_type):
                 # שדות שהשליפה החיה מוסיפה (app/catalog_sources). הגילוי
                 # מ-/admin/discovery לא ממלא אותם, והם נשארים ריקים.
                 "image_url": safe_url(raw.get("image_url")),
+                "diagram_url": safe_url(raw.get("diagram_url")),
                 "variant_key": str(raw.get("variant_key") or "").strip()[:80],
                 "tier": str(raw.get("tier") or "").strip(),
                 "source_key": str(raw.get("source_key") or "").strip(),
@@ -525,10 +526,12 @@ def save(accepted, source_note=None, source_mark=None):
                 CATEGORY_OF.get(row["part_type"], "כללי")
             )
         part.manufacturer = get_or_create_manufacturer(row["manufacturer"])
-        # תמונה נכתבת רק כשאין - מק"ט שכבר קיבל תמונה מייבוא או מעריכה
-        # ידנית לא נדרס על ידי מה שנמצא בעמוד חיפוש.
+        # תמונה ותרשים נכתבים רק כשאין - מק"ט שכבר קיבל אותם מייבוא או
+        # מעריכה ידנית לא נדרס על ידי מה שנמצא בעמוד חיפוש.
         if row.get("image_url") and not part.image_url:
             part.image_url = row["image_url"]
+        if row.get("diagram_url") and not part.diagram_url:
+            part.diagram_url = row["diagram_url"]
         # מק"ט קיים שומר את ההערה שלו. דריסה הייתה מוחקת את סימון
         # המקור הקודם ומציגה חלף שנאסף קודם כאילו הגיע מהחיפוש.
         source = f'{note_text} {row.get("source_url") or ""}'.strip()

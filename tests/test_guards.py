@@ -96,3 +96,39 @@ def test_admin_discovery_writes_are_blocked(ro_client):
     for path in ["/admin/discovery/start", "/admin/discovery/step",
                  "/admin/discovery/verify", "/admin/discovery/delete"]:
         assert client.post(path).status_code == 302, path
+
+
+def test_a_managed_platform_is_not_born_locked(monkeypatch):
+    """‏READ_ONLY כבוי כברירת מחדל, גם על Railway.
+
+    הוא נולד דלוק שם כשלא הייתה מערכת הרשאות. מאז יש אחת, ודלוק
+    כברירת מחדל פירושו שכל סביבה חדשה נולדת נעולה - מי שמקים staging
+    מגלה שאי אפשר להזין מק"ט, ומקבל הודעה שמפנה אותו למערכת שכבר עובדת.
+    """
+    import importlib
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+    monkeypatch.delenv("READ_ONLY", raising=False)
+
+    from app import config as config_module
+
+    fresh = importlib.reload(config_module)
+    try:
+        assert fresh.Config.IS_MANAGED_PLATFORM is True, "אנחנו אכן על פלטפורמה מנוהלת"
+        assert fresh.Config.READ_ONLY is False
+
+        # ועדיין ניתן להדלקה במפורש - זה כל תפקידו
+        monkeypatch.setenv("READ_ONLY", "1")
+        assert importlib.reload(config_module).Config.READ_ONLY is True
+    finally:
+        monkeypatch.delenv("READ_ONLY", raising=False)
+        monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME", raising=False)
+        importlib.reload(config_module)
+
+
+def test_the_read_only_message_no_longer_promises_a_shipped_feature():
+    """ההודעה אמרה "ייפתח עם הפעלת מערכת המשתמשים וההרשאות". היא פעילה."""
+    from app.guards import MESSAGE
+
+    assert "מערכת המשתמשים" not in MESSAGE
+    assert "חירום" in MESSAGE

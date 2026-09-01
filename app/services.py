@@ -682,6 +682,7 @@ CATALOG_FIELDS = {
     "side": _text,
     "part_type": _text,
     "image_url": _text,
+    "diagram_url": _text,
     "notes": _text,
 }
 

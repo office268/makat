@@ -269,6 +269,7 @@ def _catalog_row(part):
         "tier": "catalog",
         "oe_number": oem[0] if oem else "",
         "image_url": part.image_url or "",
+        "diagram_url": part.diagram_url or "",
         "price_eur": None,
         "source_url": "",
         "source_name": "הקטלוג",
