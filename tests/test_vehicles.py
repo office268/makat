@@ -425,3 +425,68 @@ def test_the_search_stops_when_the_time_budget_runs_out(monkeypatch):
     assert found["status"] == "unreachable"
     assert "נעצר" in found["error"]
     assert found["attempts"][-1]["error"] == "נגמר תקציב הזמן"
+
+
+# --------------------------------------------------------------------------
+# מספר השלדה - השדה שכל התהליך תלוי בו
+# --------------------------------------------------------------------------
+
+def test_the_vin_is_read_under_any_of_its_column_names():
+    """שם עמודה במאגר פתוח אינו חוזה - הוא משתנה בין גרסאות.
+
+    מספר השלדה הוא מה שמפעיל את החיפוש בקטלוג היצרן. לאבד אותו בגלל
+    שינוי שם עמודה זה לאבד את כל התהליך, בשקט.
+    """
+    for column in ("misgeret", "mispar_shilda", "shilda", "vin"):
+        row = {"mispar_rechev": 10732802, column: "VF3MCYHZRLS012345"}
+        assert vehicles._normalize_record(row, "x")["vin"] == "VF3MCYHZRLS012345"
+
+
+def test_an_absent_vin_is_empty_and_not_a_crash():
+    assert vehicles._normalize_record({"mispar_rechev": 1}, "x")["vin"] == ""
+    assert vehicles._normalize_record({"misgeret": "   "}, "x")["vin"] == ""
+
+
+def test_free_text_search_never_returns_the_wrong_vehicle(monkeypatch):
+    """חיפוש חופשי מחזיר כל שורה שהמספר מופיע בה, ולא רק בעמודת הרישוי.
+
+    רכב שגוי כאן אינו אי-דיוק - הוא חלפים שלא נכנסים לרכב.
+    """
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    other = dict(REAL_ROW, mispar_rechev=99999999, kinuy_mishari="אחר")
+
+    def query(resource_id, params):
+        return ([other], None) if "q" in params else ([], None)
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    found = vehicles.lookup_detail("10732802")
+    assert found["status"] == "not_found"
+    assert found["vehicle"] is None
+
+
+def test_free_text_search_is_accepted_when_the_plate_really_matches(monkeypatch):
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+
+    def query(resource_id, params):
+        return ([REAL_ROW], None) if "q" in params else ([], None)
+
+    monkeypatch.setattr(vehicles, "_query", query)
+    assert vehicles.lookup_detail("10732802")["status"] == "found"
+
+
+def test_debug_shows_the_row_exactly_as_the_registry_returned_it(client, monkeypatch):
+    """ההבדל בין "העמודה לא קיימת" ל"קיימת וריקה" - שתי בעיות שונות."""
+    monkeypatch.delenv("GOV_VEHICLE_RESOURCES", raising=False)
+    numeric = _json.dumps({"mispar_rechev": 10732802})
+    thin = {"mispar_rechev": 10732802, "tozeret_nm": "פיג'ו צרפת"}   # בלי שלדה
+
+    monkeypatch.setattr(
+        vehicles, "_query",
+        lambda resource_id, params: ([thin], None)
+        if params.get("filters") == numeric else ([], None),
+    )
+    payload = client.get("/api/vehicle/10732802?debug=1").get_json()
+    assert payload["status"] == "found"
+    assert payload["vehicle"]["vin"] == ""
+    assert payload["raw"] == thin          # אין עמודת שלדה בכלל בשורה
+    assert payload["found_in"]["label"] == "רכב פרטי ומסחרי"
