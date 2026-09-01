@@ -2,7 +2,7 @@
 import csv
 import io
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, literal_column, or_
 
 from . import part_columns
 from .models import (
@@ -14,6 +14,7 @@ from .models import (
     Part,
     db,
     squash,
+    squash_words,
 )
 
 CSV_COLUMNS = [
@@ -125,42 +126,104 @@ def catalog_make(make):
     return make
 
 
-# שם דגם קצר מדי מזהה כל דבר: "3" נמצא בתוך "I30" ובתוך "MAZDA 3" גם
-# יחד. משלוש אותיות ומעלה ההתאמה כבר אומרת משהו.
+# שם קטלוג קצר מדי אינו קידומת אלא צירוף אותיות. משלוש ומעלה הוא
+# כבר אומר משהו. חל על סעיף הקידומת בלבד - ראה model_matches_name.
 MIN_MODEL_PREFIX = 3
 
 
-def _model_matches(model):
-    """התאמת שם דגם בין המרשם לקטלוג, בשני הכיוונים.
+def model_words(name):
+    """מילות השם, מכווצות. המקף *אינו* מפריד.
 
-    לפעמים שם הקטלוג ארוך יותר ("COROLLA VERSO" מול "COROLLA"), ולפעמים
-    דווקא שם המרשם ("COROLLA HSD SDN" מול "COROLLA"). בדיקה בכיוון אחד
-    בלבד הפילה את המקרה השני: 265 מק"טים לקורולה לא נמצאו לרכב שבמרשם
-    נקרא COROLLA HSD SDN - לא בדוח, וגרוע מזה, גם בזיהוי לפי מספר רישוי.
+    "MAZDA 3" -> ["mazda", "3"]   שתי מילים, ו-"3" היא אחת מהן
+    "CX-3"    -> ["cx3"]          מילה אחת, ו-"3" אינה מילה בתוכה
 
-    לכן: או ששם המרשם מוכל בשם הקטלוג, או ששם המרשם *מתחיל* בשם הקטלוג.
-    ההכלה ההפוכה מוגבלת לתחילת המחרוזת ולשמות באורך סביר, אחרת שם קצר
-    היה נדבק לכל דגם שמכיל את אותן אותיות.
+    ההבחנה הזאת היא כל ההבדל בין דגם לדגם אחר של אותו יצרן.
     """
-    squashed = _squash_text(model)
+    return [_squash_text(word) for word in (name or "").split() if word.strip()]
+
+
+def _prefix_forms(wanted):
+    """הקידומות של שם המרשם שמותר לשם קטלוג להיות שוות להן.
+
+    "COROLLA HSD SDN" מכווץ ל-"corollahsdsdn", והקטלוג רשום "COROLLA" -
+    זה מה שהסעיף הזה נועד לתפוס. אבל "CX-30" מכווץ ל-"cx30", ו-"CX-3"
+    הוא קידומת שלו בדיוק באותה מידה - ושני אלה אינם אותו רכב.
+
+    מה שמבדיל: **ספרה שנמשכת**. בשמות רכב ספרה בהמשך היא דגם אחר
+    (CX-3 מול CX-30, i10 מול i100), ומילה בהמשך היא רמת גימור
+    (COROLLA HSD SDN). לכן קידומת שאחריה ספרה נפסלת.
+    """
+    return {
+        wanted[:length]
+        for length in range(MIN_MODEL_PREFIX, len(wanted))
+        if not wanted[length].isdigit()
+    }
+
+
+# הרווח שמקיף את שם הדגם בבדיקת "מילה שלמה". נכתב לתוך ה-SQL ולא
+# נשלח כפרמטר, מאותה סיבה שמתועדת ב-models.squash: Postgres משווה
+# ביטויי GROUP BY לפי טקסט, ופרמטר מקבל מספר אחר בכל מופע.
+_PADDING = literal_column("' '")
+
+
+def _model_matches(model):
+    """התאמת שם דגם בין המרשם לקטלוג. הניסוח ב-SQL.
+
+    ראה ``model_matches_name`` לכלל עצמו ולנימוקיו. שני המימושים
+    חייבים להסכים תמיד, ויש בדיקה שמריצה את שניהם על אותם נתונים.
+
+    שלושת הסעיפים הראשונים הם השוואת שוויון, ולכן אפשר לחשב אותם
+    בפייתון מראש ולשאול ``IN``: שם המרשם ידוע, רק שם הקטלוג הוא עמודה.
+    רק "שם המרשם הוא מילה בשם הקטלוג" דורש חיפוש בתוך העמודה.
+    """
+    wanted = _squash_text(model)
+    if not wanted:
+        return db.false()
     catalog = _squash(Fitment.model)
+    # שם זהה, שם הקטלוג כמילה בשם המרשם, וקידומת עד גבול מילה
+    equals = {wanted} | set(model_words(model)) | _prefix_forms(wanted)
+    # שם המרשם כמילה שלמה בשם הקטלוג. הריפוד הופך "מכיל" ל-"מילה".
+    spaced = _PADDING.concat(squash_words(Fitment.model)).concat(_PADDING)
     return or_(
-        catalog.like(f"%{squashed}%"),
-        and_(
-            func.length(catalog) >= MIN_MODEL_PREFIX,
-            db.literal(squashed).like(catalog.concat("%")),
-        ),
+        catalog.in_(sorted(equals)),
+        spaced.like(f"% {wanted} %"),
     )
 
 
 def model_matches_name(registry_model, catalog_model):
-    """אותו כלל בדיוק, בצד פייתון. מימוש אחד לוגי, שני ניסוחים."""
+    """האם שם הדגם במרשם ושם הדגם בקטלוג מדברים על אותו רכב.
+
+    שני הצדדים כותבים אחרת, ולשני הכיוונים: לפעמים שם הקטלוג ארוך יותר
+    ("COROLLA" במרשם מול "COROLLA VERSO" בקטלוג), ולפעמים דווקא שם
+    המרשם ("COROLLA HSD SDN" מול "COROLLA"). בדיקה בכיוון אחד בלבד
+    הפילה בזמנו 265 מק"טים לקורולה - לא רק בדוח, גם בזיהוי לפי מספר
+    רישוי, ובשקט.
+
+    הכלל, בארבעה סעיפים:
+
+    1. אותו שם אחרי כיווץ - "RAV 4" ו-"RAV4"
+    2. שם המרשם הוא **מילה שלמה** בשם הקטלוג - "3" ב-"MAZDA 3"
+    3. שם הקטלוג הוא מילה שלמה בשם המרשם - "COROLLA" ב-"COROLLA HSD SDN"
+    4. שם הקטלוג הוא קידומת של שם המרשם, ואחריה אין ספרה
+
+    סעיף 2 הוא מילה ולא הכלה, וסעיף 4 פוסל ספרה שנמשכת - ושניהם מאותה
+    סיבה. קודם ההשוואה הייתה "מוכל בתוך", וכך רכב CX-3 משך את החלפים
+    של CX-30 ולהפך: 111 התאמות לדגם הלא נכון בקטלוג הזה, ועוד שקטות
+    שמחכות לגדול (CEED מול PROCEED, i10 מול i100). בשמות רכב ספרה
+    בהמשך היא דגם אחר, ומילה בהמשך היא רמת גימור.
+
+    המימוש התאום ב-SQL הוא ``_model_matches``, ובדיקה מריצה את שניהם
+    על אותם נתונים ומוודאת שהם מסכימים.
+    """
     wanted = _squash_text(registry_model)
     catalog = _squash_text(catalog_model)
     if not wanted or not catalog:
         return False
-    return wanted in catalog or (
-        len(catalog) >= MIN_MODEL_PREFIX and wanted.startswith(catalog)
+    return (
+        catalog == wanted
+        or wanted in model_words(catalog_model)
+        or catalog in model_words(registry_model)
+        or catalog in _prefix_forms(wanted)
     )
 
 
