@@ -182,3 +182,65 @@ def test_the_gate_follows_the_configured_source_list(app, stages):
             if job.awaiting_approval:
                 asked += 1
         assert asked == len(stages) - 1
+
+
+# --------------------------------------------------------------------------
+# מקור שלא מצא כלום אינו "נמצא"
+# --------------------------------------------------------------------------
+
+def _nothing(source, vehicle, part_type, data):
+    """המקור ענה כראוי, ופשוט אין לו את החלק לרכב הזה."""
+    return []
+
+
+def _broken(source, vehicle, part_type, data):
+    from app.catalog_sources.base import FetchError
+
+    raise FetchError("פסק זמן בטעינת laximo.ru")
+
+
+def test_an_empty_stage_reports_nothing_found_not_a_success(app):
+    """המסך הודיע "נמצא ב-Laximo" והציג מתחתיו כלום.
+
+    שלב שהסתיים אינו שלב שמצא, והכיתוב נכתב בלי לבדוק. התשובה
+    שהמשתמש קיבל הייתה הצלחה ריקה - גרוע מ"לא נמצא", כי אין ממנה
+    מה ללמוד ואין מה לעשות אחריה.
+    """
+    with app.app_context():
+        job = _job()
+        live_lookup.run_step(job, runner=_nothing)
+        payload = job.to_dict()
+
+        assert payload["awaiting_approval"] is True, "עדיין נעצרים ושואלים"
+        assert payload["results"] == []
+        assert payload["unverified"] == []
+        # מה שהמסך צריך כדי לומר את האמת: שם המקור שסיים, ואין תוצאות
+        assert payload["done_stage_label"]
+        assert payload["stage_label"], "ויש עוד מקור לנסות בו"
+
+
+def test_a_failed_stage_carries_its_reason_to_the_screen(app):
+    """תקלת רשת ו"אין לרכב הזה" הן שתי תשובות שונות לגמרי.
+
+    רק אחת מהן אומרת "נסה שוב", ולכן הסיבה חייבת להגיע למסך.
+    """
+    with app.app_context():
+        job = _job()
+        live_lookup.run_step(job, runner=_broken)
+        payload = job.to_dict()
+
+        assert payload["error"]
+        assert "פסק זמן" in payload["error"]
+        # ‏job.error כבר נושא את שם המקור, ולכן המסך מציג אותו כמו שהוא
+        assert payload["error"].startswith(payload["done_stage_label"])
+        assert payload["results"] == []
+
+
+def test_a_stage_that_found_something_still_says_so(app):
+    """בקרה: השינוי לא הפך הצלחה אמיתית לדיווח על כישלון."""
+    with app.app_context():
+        job = _job()
+        live_lookup.run_step(job, runner=_sources())
+        payload = job.to_dict()
+        assert [row["part_number"] for row in payload["results"]] == [OE]
+        assert payload["error"] is None
