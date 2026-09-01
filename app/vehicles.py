@@ -160,6 +160,83 @@ def _strategies(digits):
     ]
 
 
+# --------------------------------------------------------------------------
+# איתור המאגרים עצמם
+# --------------------------------------------------------------------------
+
+PACKAGE_SEARCH = CKAN_URL.replace("datastore_search", "package_search")
+# מה מחפשים כשמאתרים מאגרי רכב. ברירת המחדל תופסת את המאגרים
+# הרלוונטיים בלי לתלות את עצמנו בשם מדויק של חבילה.
+DISCOVER_QUERY = os.environ.get("GOV_DISCOVER_QUERY", "כלי רכב")
+DISCOVER_ROWS = int(os.environ.get("GOV_DISCOVER_ROWS", 30))
+# השדה שמסמן "כאן יש מספרי רישוי". מאגר שאין בו אותו אינו רלוונטי.
+PLATE_FIELD = "mispar_rechev"
+
+
+def _ckan(action, params, timeout=None):
+    """קריאה ל-CKAN שאינה datastore_search. מחזיר (result, שגיאה)."""
+    url = f"{CKAN_URL.rsplit('/', 1)[0]}/{action}?{urllib.parse.urlencode(params)}"
+    request = urllib.request.Request(url, headers={"User-Agent": "makat/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout or TIMEOUT) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return None, f"אין גישה למאגר: {exc}"
+    except ValueError as exc:
+        return None, f"תשובה שאינה JSON: {exc}"
+    if not payload.get("success", True):
+        return None, str(payload.get("error") or "המאגר החזיר שגיאה")
+    return payload.get("result"), None
+
+
+def resource_fields(resource_id):
+    """שמות העמודות של מאגר, בלי למשוך ממנו שורות."""
+    result, error = _ckan("datastore_search", {"resource_id": resource_id, "limit": 0})
+    if error or not result:
+        return [], error
+    return [field.get("id") for field in result.get("fields") or []], None
+
+
+def discover_resources(query=None, rows=None):
+    """מאתר ב-CKAN את כל המאגרים שיש בהם מספרי רישוי.
+
+    למה זה קיים: רכב שירד מהכביש, דו-גלגלי ורכב כבד יושבים במאגרים
+    נפרדים, והמזהים שלהם משתנים מעת לעת. לנחש UUID ולקבע אותו בקוד זה
+    לכתוב באג עתידי; לשאול את CKAN מי המאגרים ולסנן לפי קיום העמודה
+    ``mispar_rechev`` זה לקבל את התשובה הנכונה גם בעוד שנה.
+
+    מחזיר (רשימת (מזהה, תווית), שגיאה).
+    """
+    result, error = _ckan(
+        "package_search",
+        {"q": query or DISCOVER_QUERY, "rows": rows or DISCOVER_ROWS},
+    )
+    if error:
+        return [], error
+
+    found, seen = [], set()
+    for package in (result or {}).get("results") or []:
+        for resource in package.get("resources") or []:
+            resource_id = resource.get("id")
+            if not resource_id or resource_id in seen:
+                continue
+            if not resource.get("datastore_active"):
+                continue
+            seen.add(resource_id)
+            fields, _ = resource_fields(resource_id)
+            if PLATE_FIELD in fields:
+                label = (
+                    resource.get("name")
+                    or package.get("title")
+                    or package.get("name")
+                    or resource_id
+                )
+                found.append((resource_id, str(label).strip()))
+    return found, None
+
+
 def lookup_detail(plate):
     """מאתר רכב, ומחזיר גם *מה קרה*.
 
@@ -198,6 +275,52 @@ def lookup_detail(plate):
         result["error"] = next(
             (a["error"] for a in result["attempts"] if a["error"]), "המאגר לא נגיש"
         )
+    return result
+
+
+def lookup_everywhere(plate):
+    """כמו ``lookup_detail``, אבל אחרי כישלון גם מחפש בכל מאגר שיש בו רישוי.
+
+    יקר - זו סריקה של עשרות מאגרים - ולכן אינו מסלול הבקשה הרגיל אלא
+    כלי אבחון. הפלט שלו הוא בדיוק מה שצריך להיכנס ל-
+    ``GOV_VEHICLE_RESOURCES`` כדי שהמסלול הרגיל ימצא את הרכב מיד.
+    """
+    result = lookup_detail(plate)
+    if result["status"] == "found":
+        return result
+
+    digits = normalize_plate(plate)
+    if not digits:
+        return result
+
+    known = {resource_id for resource_id, _ in resources()}
+    discovered, error = discover_resources()
+    result["discovered"] = [
+        {"resource": resource_id, "label": label, "known": resource_id in known}
+        for resource_id, label in discovered
+    ]
+    if error:
+        result["error"] = result["error"] or error
+        return result
+
+    for resource_id, label in discovered:
+        if resource_id in known:
+            continue
+        for name, params in _strategies(digits):
+            records, query_error = _query(resource_id, params)
+            result["attempts"].append(
+                {
+                    "resource": label,
+                    "strategy": name,
+                    "error": query_error,
+                    "records": None if records is None else len(records),
+                }
+            )
+            if query_error is None and records:
+                result["vehicle"] = _normalize_record(records[0], "data.gov.il")
+                result["status"] = "found"
+                result["found_in"] = {"resource": resource_id, "label": label}
+                return result
     return result
 
 
