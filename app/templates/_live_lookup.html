@@ -203,11 +203,36 @@
     return wrap;
   }
 
+  // מה שמקור החזיר, במילים. "נמצא" רק כשבאמת נמצא משהו - אחרת המסך
+  // מודיע על הצלחה ומציג מתחתיה כלום, וזה גרוע מלומר "לא נמצא".
+  function outcome(payload) {
+    const name = payload.done_stage_label || "המקור";
+    if ((payload.results || []).length) return "נמצא ב" + name;
+    if ((payload.unverified || []).length) return name + ": תוצאות שלא אומתו";
+    if (payload.error) return name + " נכשל";
+    return name + ' לא החזיר מק"ט';
+  }
+
   function render(payload) {
     resultsBox.innerHTML = "";
     const found = payload.results || [];
     const unverified = payload.unverified || [];
-    if (!found.length && !unverified.length) return;
+
+    if (!found.length && !unverified.length) {
+      // הסיבה, כשיש אחת: תקלת רשת ו"אין לרכב הזה" הן שתי תשובות
+      // שונות לגמרי, ורק אחת מהן אומרת "נסה שוב".
+      if (payload.done_stage_label) {
+        const none = document.createElement("div");
+        none.className = payload.error
+          ? "small text-warning-emphasis" : "small text-muted";
+        // ‏job.error נבנה כבר כ-"<שם המקור>: <הסיבה>" (live_lookup.run_step),
+        // ולכן מוצג כמו שהוא - הוספת השם שוב הכפילה אותו על המסך.
+        none.textContent = payload.error
+          || payload.done_stage_label + ' לא מצא מק"ט לחלק הזה ברכב הזה.';
+        resultsBox.appendChild(none);
+      }
+      return;
+    }
 
     const title = document.createElement("div");
     title.className = "fw-bold mb-1";
@@ -260,22 +285,28 @@
       wrap.className = "border-top mt-3 pt-3";
       wrap.id = "live-gate";
 
+      const empty = !(job.results || []).length && !(job.unverified || []).length;
       const ask = document.createElement("div");
       ask.className = "small text-muted mb-2";
-      ask.textContent = job.stage_label
-        ? "להמשיך ל" + job.stage_label + "? זו בקשה נוספת, והיא נספרת במכסה היומית."
-        : "להמשיך למקור הבא?";
+      // מקור שלא מצא כלום הופך את השאלה לאחרת: לא "להמשיך?" אלא
+      // "לנסות במקום אחר?", וזו כבר סיבה טובה יותר ללחוץ.
+      ask.textContent = !job.stage_label
+        ? "להמשיך למקור הבא?"
+        : (empty ? "לנסות ב" : "להמשיך ל") + job.stage_label +
+          "? זו בקשה נוספת, והיא נספרת במכסה היומית.";
       wrap.appendChild(ask);
 
       const go = document.createElement("button");
       go.className = "btn btn-sm btn-primary me-2";
-      go.textContent = job.stage_label ? "המשך ל" + job.stage_label : "המשך";
+      go.textContent = !job.stage_label
+        ? "המשך"
+        : (empty ? "נסה ב" : "המשך ל") + job.stage_label;
       go.addEventListener("click", () => { wrap.remove(); resolve(true); });
       wrap.appendChild(go);
 
       const enough = document.createElement("button");
       enough.className = "btn btn-sm btn-outline-secondary";
-      enough.textContent = "מספיק, זה מה שחיפשתי";
+      enough.textContent = empty ? "עזוב, מספיק" : "מספיק, זה מה שחיפשתי";
       enough.addEventListener("click", () => { wrap.remove(); resolve(false); });
       wrap.appendChild(enough);
 
@@ -335,7 +366,7 @@
         // מקור סיים ויש עוד אחריו: מציגים את מה שכבר יש, ושואלים.
         if (job.awaiting_approval) {
           bar.style.width = Math.max(10, job.progress_pct) + "%";
-          busy(false, job.done_stage_label ? "נמצא ב" + job.done_stage_label : "");
+          busy(false, outcome(job));
           render(job);
           if (!(await gate(job))) {
             const form = new FormData();
