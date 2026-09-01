@@ -82,6 +82,21 @@ def _load_samples():
     return _sample_cache
 
 
+# שמות אפשריים לעמודת מספר השלדה. המרשם פורסם בעבר עם ``misgeret``,
+# ושם של עמודה במאגר פתוח אינו חוזה - הוא משתנה בין גרסאות ובין
+# משאבים. קריאה לפי רשימה עולה כלום ומצילה את השדה שכל התהליך תלוי בו.
+VIN_FIELDS = ("misgeret", "mispar_shilda", "shilda", "vin", "mispar_misgeret")
+
+
+def _first(row, *names):
+    """הערך הראשון שקיים ואינו ריק, מבין כמה שמות עמודה אפשריים."""
+    for name in names:
+        value = row.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
 def _normalize_record(row, source):
     """ממיר רשומה גולמית של משרד התחבורה למבנה אחיד."""
     year = row.get("shnat_yitzur")
@@ -100,7 +115,7 @@ def _normalize_record(row, source):
         "engine_code": (row.get("degem_manoa") or "").strip(),
         "fuel": (row.get("sug_delek_nm") or "").strip(),
         "color": (row.get("tzeva_rechev") or "").strip(),
-        "vin": (row.get("misgeret") or "").strip(),
+        "vin": _first(row, *VIN_FIELDS),
         "test_valid_until": (row.get("tokef_dt") or "").strip(),
         # שדות נוספים שהמאגר מחזיק. מוצגים רק כשהם מלאים, ולכן שדה
         # שלא קיים ברשומה פשוט לא מופיע במקום להציג שורה ריקה.
@@ -297,10 +312,21 @@ def lookup_detail(plate):
             if error is not None:
                 continue
             reached = True
+            # חיפוש חופשי מחזיר כל שורה שהמספר מופיע בה, ולא בהכרח
+            # בעמודת הרישוי. רכב שגוי כאן אינו אי-דיוק - הוא חלפים
+            # שלא נכנסים לרכב, ולכן ההתאמה נבדקת לפני שהיא מתקבלת.
+            records = [
+                row for row in records
+                if normalize_plate(row.get("mispar_rechev")) == digits
+            ]
             if records:
                 result["vehicle"] = _normalize_record(records[0], "data.gov.il")
                 result["status"] = "found"
                 result["found_in"] = {"resource": resource_id, "label": label}
+                # השורה כפי שהמאגר החזיר אותה. זה מה שמבדיל בין "העמודה
+                # לא קיימת" לבין "העמודה קיימת וריקה לרכב הזה" - שתי
+                # בעיות שונות שנראות זהות במסך.
+                result["raw"] = records[0]
                 return result
 
     if not reached:
