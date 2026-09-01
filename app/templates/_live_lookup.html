@@ -173,6 +173,36 @@
     return wrap;
   }
 
+  // תרשים הפיצוץ מקטלוג היצרן: הסכמה שבה החלק מסומן במקומו ברכב.
+  // ברוחב מלא ולא כממוזערת - סכמה עם מספרי חלקים ב-64 פיקסלים היא
+  // כתם. לחיצה פותחת אותה בגודל מקורי, כי בשביל זה מסתכלים עליה.
+  function diagram(item) {
+    const wrap = document.createElement("div");
+    wrap.className = "mt-2";
+
+    const caption = document.createElement("div");
+    caption.className = "small text-muted mb-1";
+    caption.textContent = "תרשים פיצוץ · " + (item.part_number || "");
+    wrap.appendChild(caption);
+
+    const link = document.createElement("a");
+    link.href = safeUrl(item.diagram_url);
+    link.target = "_blank";
+    link.rel = "noopener nofollow";
+
+    const img = document.createElement("img");
+    img.src = safeUrl(item.diagram_url);
+    img.alt = "תרשים פיצוץ " + (item.part_number || "");
+    img.loading = "lazy";
+    img.className = "img-fluid rounded border bg-white";
+    img.style.maxHeight = "420px";
+    // תרשים מאתר חיצוני נופל לפעמים. עדיף בלי, מאשר אייקון שבור.
+    img.addEventListener("error", () => wrap.remove());
+    link.appendChild(img);
+    wrap.appendChild(link);
+    return wrap;
+  }
+
   function render(payload) {
     resultsBox.innerHTML = "";
     const found = payload.results || [];
@@ -181,10 +211,25 @@
 
     const title = document.createElement("div");
     title.className = "fw-bold mb-1";
-    title.textContent = "נמצאו " + found.length + " מק\"טים" +
-      (unverified.length ? " · ועוד " + unverified.length + " שלא אומתו" : "");
+    // כשהמקור הוא קטלוג היצרן, מה שנמצא הוא המק"ט המקורי לשלדה הזאת -
+    // וזאת התשובה, לא "נמצאו 2 תוצאות". המספר הוא פרט, לא הכותרת.
+    const oem = found.filter((item) => item.tier === "oem");
+    title.textContent = oem.length
+      ? 'המק"ט המקורי לרכב הזה: ' + oem.map((item) => item.part_number).join(", ")
+      : "נמצאו " + found.length + " מק\"טים" +
+        (unverified.length ? " · ועוד " + unverified.length + " שלא אומתו" : "");
     resultsBox.appendChild(title);
-    found.forEach((item) => resultsBox.appendChild(row(item)));
+
+    if (oem.length && unverified.length) {
+      const extra = document.createElement("div");
+      extra.className = "small text-muted mb-1";
+      extra.textContent = "ועוד " + unverified.length + " שלא אומתו";
+      resultsBox.appendChild(extra);
+    }
+    found.forEach((item) => {
+      resultsBox.appendChild(row(item));
+      if (safeUrl(item.diagram_url)) resultsBox.appendChild(diagram(item));
+    });
     unverified.forEach((item) => resultsBox.appendChild(row(item)));
 
     if (payload.from_catalog) {

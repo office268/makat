@@ -161,6 +161,11 @@ class Part(db.Model):
     warranty_months = db.Column(db.Integer)
     side = db.Column(db.String(40))  # ימין / שמאל / קדמי / אחורי
     image_url = db.Column(db.String(500))
+    # תרשים הפיצוץ מקטלוג היצרן - הסכמה שבה החלק מסומן במקומו ברכב.
+    # נפרד מ-image_url ולא אותו שדה: תצלום מוצר הוא ממוזערת ליד השורה,
+    # ותרשים פיצוץ הוא מה שמסתכלים עליו. יושב על Part ולא רק בתשובת
+    # השליפה, כדי שגם חיפוש שנענה מהקטלוג המקומי יציג אותו.
+    diagram_url = db.Column(db.String(500))
     notes = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True, index=True)
 
@@ -227,6 +232,7 @@ class Part(db.Model):
                     "warranty_months": self.warranty_months,
                     "side": self.side,
                     "image_url": self.image_url,
+                    "diagram_url": self.diagram_url,
                     "notes": self.notes,
                     "cross_refs": [ref.to_dict() for ref in self.cross_refs],
                     "fitments": [fit.to_dict() for fit in self.fitments],

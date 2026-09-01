@@ -398,6 +398,7 @@ def _result_row(row, source, part_id=None, verified=True, reason=""):
         "tier": row.get("tier") or source.tier,
         "oe_number": row.get("oe_number") or "",
         "image_url": parts_discovery.safe_url(row.get("image_url")),
+        "diagram_url": parts_discovery.safe_url(row.get("diagram_url")),
         "price_eur": row.get("price_eur"),
         "source_url": parts_discovery.safe_url(row.get("source_url")),
         "source_name": source.name,

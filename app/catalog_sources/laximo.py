@@ -72,7 +72,8 @@ def build_prompt(vehicle, part_type, payload, origin):
 {{"parts": [
   {{"oe_number": "המק\\"ט המקורי בדיוק כפי שמופיע",
     "name": "שם החלק כפי שמופיע",
-    "image_url": "כתובת תמונה או תרשים פיצוץ מהתשובה, או ריק",
+    "image_url": "כתובת תצלום של החלק עצמו, או ריק",
+    "diagram_url": "כתובת תרשים הפיצוץ (הסכמה שבה החלק מסומן), או ריק",
     "variant": "מזהה הרכב/הווריאנט אצל הקטלוג (vehicleid, ssd, קבוצה), או ריק",
     "confidence": "high" או "low",
     "note": "משפט קצר בעברית - על מה התבססת"}}
@@ -84,6 +85,8 @@ def build_prompt(vehicle, part_type, payload, origin):
 - רק מק"טים שהתשובה קושרת לרכב הזה. אל תיקח מק"ט מרשימת "רכבים דומים".
 - "high" רק אם התשובה קושרת את המק"ט לשלדה או לווריאנט של הרכב הזה.
 - אל תמציא מק"ט, אל תשלים ספרות ואל תמציא כתובת תמונה.
+- תרשים פיצוץ הוא הסכמה של קבוצת החלקים, לא תצלום המוצר. אם בתשובה
+  יש רק אחד מהם, מלא אותו והשאר את השני ריק.
 - אם התשובה היא שגיאה או "לא נמצא", החזר רשימה ריקה ואת השגיאה ב-note.
 - עד 5 מק"טים.
 """
@@ -145,6 +148,7 @@ class LaximoSource(CatalogSource):
                     oe_number=number,
                     oe_brand=brand,
                     image_url=str(raw.get("image_url") or "").strip()[:500],
+                    diagram_url=str(raw.get("diagram_url") or "").strip()[:500],
                     source_url=origin[:500],
                     source_key=self.key,
                     variant_key=str(raw.get("variant") or "").strip()[:80],
