@@ -1,11 +1,10 @@
 """Laximo ו-TecDoc: המסלול האמיתי, מול תשובות שמורות.
 
 הבדיקות כאן לא נוגעות ברשת. הן בודקות את מה שכן בשליטתנו: איך נבנית
-הבקשה, איך נחתמת, מה נשלח למודל, ומה יוצא ממנו. את מה שלא בשליטתנו -
+הכתובת, מה נשלח למודל, ומה יוצא ממנו. את מה שלא בשליטתנו -
 שהאתר עונה, ושהוא עונה כמו אתמול - תופס ``scripts/catalog_probe.py``
 מול השירות החי, ותשובה משם נשמרת לכאן כ-fixture.
 """
-import hashlib
 import json
 from pathlib import Path
 
@@ -55,30 +54,30 @@ class FakeClient:
 # Laximo
 # --------------------------------------------------------------------------
 
-def test_laximo_signs_the_command_with_the_password():
-    """החתימה היא md5 של הפקודה ואחריה הסיסמה - לא להפך, ולא הסיסמה לבדה."""
-    signed = laximo.sign("FindVehicleByVIN:vin=ABC", password="s3cret")
-    assert signed == hashlib.md5(b"FindVehicleByVIN:vin=ABCs3cret").hexdigest()
-    assert signed != hashlib.md5(b"s3cret").hexdigest()
-
-
-def test_laximo_command_and_url_carry_the_vin():
-    assert VEHICLE["vin"] in laximo.build_command(VEHICLE["vin"])
+def test_laximo_url_carries_the_vin():
     assert VEHICLE["vin"] in laximo.build_web_url(VEHICLE["vin"])
 
 
-def test_laximo_api_answer_becomes_a_candidate(monkeypatch):
-    xml = (FIXTURES / "laximo_vin.xml").read_text(encoding="utf-8")
-    sent = {}
+def test_laximo_web_answer_becomes_a_candidate():
+    """המסלול היחיד, מקצה לקצה: הכתובת נבנית מהשלדה, הדף מצומצם ונשלח
+    למודל, ומה שחוזר הופך ל-``Candidate`` מלא.
 
-    def fake_call(command, **kwargs):
-        sent["command"] = command
-        return xml
+    ירש את הטענות של בדיקת ה-API שהוסרה יחד עם המסלול: שדות המועמד הם
+    מה שהמסך מציג, וההנחיה חייבת לשאת את השלדה ואת *שני* המק"טים שבדף -
+    כולל זה שאינו מתאים, כי הפסילה שלו היא עבודה של המודל ולא שלנו.
+    """
+    visited = []
 
-    monkeypatch.setattr(laximo, "call_api", fake_call)
-    monkeypatch.setattr(laximo, "MODE", "api")
-    monkeypatch.setattr(laximo, "LOGIN", "demo")
-    monkeypatch.setattr(laximo, "PASSWORD", "demo")
+    def fetcher(url, timeout=None):
+        visited.append(url)
+        return (
+            "<html><body>"
+            "<p>1ZR-FE vehicleid 18273645</p>"
+            "<p>04152-YZZA1 ELEMENT SUB-ASSY, OIL FILTER</p>"
+            "<p>90915-YZZD2 OIL FILTER (רכב אחר)</p>"
+            "<img src='https://img.laximo.ru/toyota/1901.png' alt='exploded view'>"
+            "</body></html>"
+        )
 
     client = FakeClient({
         "parts": [{
@@ -91,9 +90,11 @@ def test_laximo_api_answer_becomes_a_candidate(monkeypatch):
         }],
         "vehicle_confirmed": True,
     })
-    found = laximo.LaximoSource().lookup(VEHICLE, "oil_filter", client=client)
+    found = laximo.LaximoSource().lookup(
+        VEHICLE, "oil_filter", fetcher=fetcher, client=client
+    )
 
-    assert sent["command"].count(VEHICLE["vin"]) == 1
+    assert visited == [laximo.build_web_url(VEHICLE["vin"])]
     assert len(found) == 1
     assert found[0].part_number == "04152-YZZA1"
     assert found[0].tier == "oem"
@@ -102,50 +103,32 @@ def test_laximo_api_answer_becomes_a_candidate(monkeypatch):
     assert found[0].manufacturer == "טויוטה"
     assert found[0].variant_key == "18273645"
     assert found[0].image_url.endswith("1901.png")
+    assert found[0].source_url == laximo.build_web_url(VEHICLE["vin"])
 
-    # מה שנשלח למודל חייב לשאת את השלדה ואת שני המק"טים שבתשובה,
-    # כולל זה שאינו מתאים - הפסילה שלו היא עבודה של המודל, לא שלנו
     prompt = client.messages.prompts[0]
     assert VEHICLE["vin"] in prompt
     assert "04152-YZZA1" in prompt and "90915-YZZD2" in prompt
     assert "1ZR-FE" in prompt
-
-
-def test_laximo_flattens_the_xml_without_losing_fields():
-    xml = (FIXTURES / "laximo_vin.xml").read_text(encoding="utf-8")
-    text = base.flatten_xml(xml)
-    for token in ("vehicleid=18273645", "ssd=", "04152-YZZA1", "1ZR-FE",
-                  "imageurl=https://img.laximo.ru/toyota/1901.png"):
-        assert token in text
-
-
-def test_laximo_web_path_uses_the_browser_url(monkeypatch):
-    monkeypatch.setattr(laximo, "MODE", "web")
-    visited = []
-
-    def fetcher(url, timeout=None):
-        visited.append(url)
-        return "<html><body>04152-YZZA1 OIL FILTER</body></html>"
-
-    client = FakeClient({"parts": [{"oe_number": "04152-YZZA1", "confidence": "high"}]})
-    found = laximo.LaximoSource().lookup(
-        VEHICLE, "oil_filter", fetcher=fetcher, client=client
-    )
-    assert visited == [laximo.build_web_url(VEHICLE["vin"])]
-    assert found[0].part_number == "04152-YZZA1"
+    # התמונה נשמרת בשורה משלה בצמצום, כי מבט הפיצוץ הוא חצי מהתשובה
+    assert "[IMG https://img.laximo.ru/toyota/1901.png" in prompt
 
 
 def test_laximo_without_a_vin_does_nothing():
     assert laximo.LaximoSource().lookup(dict(VEHICLE, vin=""), "oil_filter") == []
 
 
-def test_laximo_api_error_is_a_readable_failure(monkeypatch):
-    monkeypatch.setattr(laximo, "MODE", "api")
-    monkeypatch.setattr(laximo, "API_URL", "http://127.0.0.1:1/nope")
-    monkeypatch.setattr(laximo, "LOGIN", "demo")
-    monkeypatch.setattr(laximo, "PASSWORD", "demo")
-    monkeypatch.setattr(laximo, "TIMEOUT", 0.2)
-    with pytest.raises(base.FetchError, match="Laximo API"):
+def test_laximo_browser_failure_is_a_readable_failure(monkeypatch):
+    """כשל דפדפן יוצא כ-``FetchError`` עם סיבה קריאה, לא כ-``BrowserError``
+    שדולף מהמסלול פנימה: ``run_step`` תופס את הראשון ורושם אותו ללוג
+    העבודה, וזה הטקסט שמכונאי רואה."""
+    def explode(**kwargs):
+        def fetch(url, timeout=None):
+            raise browser.BrowserError("פסק זמן בטעינת הדף")
+
+        return fetch
+
+    monkeypatch.setattr(laximo, "default_fetcher", explode)
+    with pytest.raises(base.FetchError, match="פסק זמן"):
         laximo.LaximoSource().lookup(VEHICLE, "oil_filter")
 
 
@@ -315,7 +298,6 @@ def test_a_source_that_needs_javascript_is_unavailable_without_a_way_to_run_it(
     """
     from app.catalog_sources import scraperapi
 
-    monkeypatch.setattr(laximo, "MODE", "web")
     monkeypatch.setattr(base, "FETCHER", "auto")
     monkeypatch.setattr(scraperapi, "API_KEY", "")
     monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
@@ -471,7 +453,6 @@ def test_a_source_is_available_on_scraperapi_alone(monkeypatch):
     monkeypatch.setattr(base, "FETCHER", "auto")
     monkeypatch.setattr(scraperapi, "API_KEY", "k123")
     monkeypatch.setattr(browser, "BROWSER_ENABLED", False)
-    monkeypatch.setattr(laximo, "MODE", "web")
     monkeypatch.setattr(tecdoc, "MODE", "web")
     assert laximo.LaximoSource().available() is True
     assert tecdoc.TecDocSource().available() is True
@@ -484,7 +465,6 @@ def test_laximo_fetches_through_scraperapi(monkeypatch):
     monkeypatch.setattr(base, "FETCHER", "scraperapi")
     monkeypatch.setattr(scraperapi, "API_KEY", "k123")
     monkeypatch.setattr(scraperapi, "RENDER", True)
-    monkeypatch.setattr(laximo, "MODE", "web")
     monkeypatch.setattr(laximo, "WEB_INPUT", None)
     monkeypatch.setattr(base, "allowed_by_robots", lambda url, agent=None: True)
 

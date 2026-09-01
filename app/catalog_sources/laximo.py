@@ -5,52 +5,34 @@ Laximo הוא ספק קטלוגי היצרן (OEM) - אותם קטלוגים ש�
 המרשם הממשלתי נותן ``misgeret``, ו-Laximo הופך אותו לרכב מדויק ולמק"ט
 המקורי של החלק המבוקש.
 
-**שני מסלולים, אותו פלט.**
+**מסלול אחד: הקטלוג בדפדפן.** היה כאן גם מסלול API רשמי (בקשה חתומה
+ב-``md5(command + password)``), והוא הוסר. הסיבה אינה טכנית אלא שהוא
+דרש חשבון ``LAXIMO_LOGIN``/``LAXIMO_PASSWORD`` שאין, וקוד שאי אפשר
+להריץ אינו מסלול גיבוי - הוא ענף מת שכל קורא צריך לפסוח עליו ושכל
+בדיקה מזייפת. TecDoc עדיין מחזיק את שני המסלולים שלו; ההסרה כאן היא
+על Laximo בלבד.
 
-``api`` - השירות הרשמי (Laximo Cat). דורש ``LAXIMO_LOGIN`` ו-
-``LAXIMO_PASSWORD``. הבקשה חתומה: ``md5(command + password)`` משמש
-כסיסמת ה-Basic Auth, וה-login נשאר שם המשתמש. זה המסלול המועדף - הוא
-מהיר, יציב, ומורשה. מחרוזת הפקודה עצמה שונה בין חבילות רישיון, ולכן
-היא ``LAXIMO_VIN_COMMAND`` ולא קבוע בקוד.
+מה שנשאר הוא ``web``: הקטלוג נפתח ב-Chromium דרך Playwright, כי Laximo
+בונה את התוצאה ב-JavaScript ו-``urllib`` מחזיר ממנו שלד ריק. מכאן ש-
+``needs_js = True`` אינו גחמה אלא תנאי זמינות - בלי דפדפן או ScraperAPI
+המקור מכבה את עצמו, במקום להביא בשקט דף ריק ולהחזיר "לא נמצא" שגוי.
 
-``web`` - הקטלוג בדפדפן, דרך Playwright. משמש כשאין עדיין חשבון API,
-או כשלחשבון יש גישת web בלבד. Laximo בונה את התוצאה ב-JavaScript,
-ולכן ``urllib`` מחזיר ממנו שלד ריק ו-Chromium הוא לא גחמה.
-
-בשני המסלולים הטקסט שחוזר - XML או HTML - נקרא על ידי המודל ולא על
-ידי סלקטורים. סכימת ה-API משתנה בין חבילות, מבנה הדף משתנה בין גרסאות,
-והמק"ט הנכון הוא מה שצריך לצאת בשני המקרים.
+ה-HTML שחוזר נקרא על ידי המודל ולא על ידי סלקטורים: מבנה הדף משתנה בין
+גרסאות, סלקטור נשבר בשקט, והמק"ט הנכון הוא מה שצריך לצאת בכל מקרה.
 """
-import hashlib
 import os
-import urllib.parse
-import urllib.request
 
 from ..taxonomy import type_name
 from .base import (
     Candidate,
     CatalogSource,
     FetchError,
-    USER_AGENT,
     ask_model,
     condense,
     default_fetcher,
     fetcher_available,
-    flatten_xml,
     parser_available,
 )
-
-MODE = os.environ.get("LAXIMO_MODE", "auto").strip().lower()  # auto | api | web
-
-LOGIN = os.environ.get("LAXIMO_LOGIN", "").strip()
-PASSWORD = os.environ.get("LAXIMO_PASSWORD", "").strip()
-API_URL = os.environ.get("LAXIMO_API_URL", "https://ws.laximo.ru/ec.api.php")
-# הפקודה מקבלת את השלדה. הפורמט לפי תיעוד Laximo לחבילה שברשותך -
-# לכן משתנה סביבה, ולא קבוע: חבילה אחרת = פקודה אחרת, בלי פריסה.
-VIN_COMMAND = os.environ.get(
-    "LAXIMO_VIN_COMMAND", "FindVehicleByVIN:Locale=en_US|vin={vin}|localized=true"
-)
-LOCALE = os.environ.get("LAXIMO_LOCALE", "en_US")
 
 WEB_URL = os.environ.get("LAXIMO_WEB_URL", "https://laximo.ru/search?type=vin&q={vin}")
 WEB_WAIT_SELECTOR = os.environ.get("LAXIMO_WEB_WAIT", "").strip() or None
@@ -62,50 +44,8 @@ WEB_SUBMIT = os.environ.get("LAXIMO_WEB_SUBMIT", "").strip() or None
 TIMEOUT = float(os.environ.get("LAXIMO_TIMEOUT", 20))
 
 
-def api_configured():
-    return bool(LOGIN and PASSWORD)
-
-
-def sign(command, password=None):
-    """סיסמת ה-Basic Auth של Laximo: md5 של הפקודה ואחריה הסיסמה."""
-    secret = password if password is not None else PASSWORD
-    return hashlib.md5(f"{command}{secret}".encode("utf-8")).hexdigest()
-
-
-def build_command(vin):
-    return VIN_COMMAND.format(vin=vin, VIN=vin, locale=LOCALE)
-
-
 def build_web_url(vin):
     return WEB_URL.format(vin=vin, VIN=vin)
-
-
-def call_api(command, url=None, login=None, password=None, timeout=None):
-    """קריאה חתומה אחת ל-Laximo. מחזיר את גוף התשובה כטקסט."""
-    endpoint = url or API_URL
-    user = login if login is not None else LOGIN
-    token = sign(command, password)
-    request = urllib.request.Request(
-        endpoint,
-        data=urllib.parse.urlencode({"request": command}).encode("utf-8"),
-        headers={
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": "Basic " + _basic(user, token),
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout or TIMEOUT) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            return response.read().decode(charset, errors="replace")
-    except Exception as exc:  # רשת, הרשאה, שירות
-        raise FetchError(f"Laximo API: {exc}") from exc
-
-
-def _basic(user, token):
-    import base64
-
-    return base64.b64encode(f"{user}:{token}".encode("utf-8")).decode("ascii")
 
 
 def build_prompt(vehicle, part_type, payload, origin):
@@ -156,31 +96,20 @@ class LaximoSource(CatalogSource):
     needs_vin = True
     needs_js = True   # התוצאה נבנית ב-JavaScript אחרי טעינת הדף
 
-    def use_api(self):
-        if MODE == "api":
-            return True
-        if MODE == "web":
-            return False
-        return api_configured()
-
     def available(self):
-        if not parser_available():
-            return False
-        if self.use_api():
-            return api_configured()
-        return bool(WEB_URL) and fetcher_available(needs_js=self.needs_js)
+        return (
+            parser_available()
+            and bool(WEB_URL)
+            and fetcher_available(needs_js=self.needs_js)
+        )
 
     def _payload(self, vin, fetcher=None):
         """מביא את התשובה הגולמית, ומחזיר (טקסט לשליחה למודל, מקור)."""
+        url = build_web_url(vin)
         if fetcher is not None:
-            raw = fetcher(build_web_url(vin))
-            return condense(raw, build_web_url(vin)), build_web_url(vin)
-        if self.use_api():
-            command = build_command(vin)
-            return flatten_xml(call_api(command)), f"{API_URL} · {command}"
+            return condense(fetcher(url), url), url
         from .browser import BrowserError
 
-        url = build_web_url(vin)
         try:
             html = default_fetcher(
                 wait_selector=WEB_WAIT_SELECTOR,
