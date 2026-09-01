@@ -4,6 +4,7 @@ from flask import Blueprint, current_app, jsonify, request
 from .. import activity, services
 from ..auth import role_required
 from ..models import Category, Manufacturer, Part, Supplier, db
+from . import web as web_routes
 
 api_bp = Blueprint("api", __name__)
 
@@ -144,16 +145,21 @@ def delete_part(part_id):
 
 @api_bp.get("/categories")
 def list_categories():
-    return jsonify(
-        [c.to_dict() for c in Category.query.order_by(Category.name).all()]
-    )
+    """הספירות מגיעות בשאילתה מקובצת אחת, לא אחת לכל קטגוריה."""
+    counts = web_routes._parts_per_category()
+    return jsonify([
+        c.to_dict(parts_count=counts.get(c.id, 0))
+        for c in Category.query.order_by(Category.name).all()
+    ])
 
 
 @api_bp.get("/manufacturers")
 def list_manufacturers():
-    return jsonify(
-        [m.to_dict() for m in Manufacturer.query.order_by(Manufacturer.name).all()]
-    )
+    counts = web_routes._parts_per_manufacturer()
+    return jsonify([
+        m.to_dict(parts_count=counts.get(m.id, 0))
+        for m in Manufacturer.query.order_by(Manufacturer.name).all()
+    ])
 
 
 @api_bp.get("/suppliers")

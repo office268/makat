@@ -11,6 +11,13 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+# שיעור המע"מ. יושב כאן ולא בשני מקומות, כי המחיר כולל מע"מ מחושב
+# פעמיים - כאן בפייתון לתצוגה, וב-part_columns כביטוי SQL למיון.
+# שני ערכים שהיו יוצאים מסונכרנים היו מייצרים טבלה שממוינת לפי
+# מספר אחד ומציגה מספר אחר.
+VAT_RATE = 0.18
+
+
 # הרווח והמקף נכתבים לתוך ה-SQL ולא נשלחים כפרמטרים, וזה לא קוסמטיקה:
 # Postgres מזהה ש-GROUP BY מכסה ביטוי ב-SELECT לפי *טקסט* הביטוי. שני
 # מופעים של אותו ביטוי עם פרמטרים מקבלים מספרים שונים ($1 מול $9), ואז
@@ -46,14 +53,27 @@ class Manufacturer(db.Model):
 
     parts = db.relationship("Part", back_populates="manufacturer")
 
-    def to_dict(self):
+    def to_dict(self, parts_count=None):
+        """``parts_count`` נמסר מבחוץ כשהקורא כבר ספר את כולם בשאילתה
+        אחת. בלעדיו סופרים כאן - ספירה בבסיס הנתונים, לא ``len`` על
+        אוסף שהיה נטען כולו לזיכרון רק כדי למנות אותו."""
         return {
             "id": self.id,
             "name": self.name,
             "country": self.country,
             "website": self.website,
-            "parts_count": len(self.parts),
+            "parts_count": (
+                parts_count if parts_count is not None else self.parts_count()
+            ),
         }
+
+    def parts_count(self):
+        return (
+            db.session.query(func.count(Part.id))
+            .filter(Part.manufacturer_id == self.id)
+            .scalar()
+            or 0
+        )
 
     def __repr__(self):
         return f"<Manufacturer {self.name}>"
@@ -81,14 +101,25 @@ class Category(db.Model):
             return f"{self.parent.name} / {self.name}"
         return self.name
 
-    def to_dict(self):
+    def to_dict(self, parts_count=None):
+        """ראה ``Manufacturer.to_dict`` - אותו שיקול בדיוק."""
         return {
             "id": self.id,
             "name": self.name,
             "full_name": self.full_name,
             "parent_id": self.parent_id,
-            "parts_count": len(self.parts),
+            "parts_count": (
+                parts_count if parts_count is not None else self.parts_count()
+            ),
         }
+
+    def parts_count(self):
+        return (
+            db.session.query(func.count(Part.id))
+            .filter(Part.category_id == self.id)
+            .scalar()
+            or 0
+        )
 
     def __repr__(self):
         return f"<Category {self.full_name}>"
@@ -342,7 +373,12 @@ class Supplier(db.Model):
             "email": self.email,
             "address": self.address,
             "organization_id": self.organization_id,
-            "parts_count": len(self.part_links),
+            "parts_count": (
+                db.session.query(func.count(PartSupplier.id))
+                .filter(PartSupplier.supplier_id == self.id)
+                .scalar()
+                or 0
+            ),
         }
 
     def __repr__(self):
@@ -427,12 +463,12 @@ class OrgPart(db.Model):
 
     @property
     def price_with_vat(self):
-        """מחיר כולל מע"מ (18%)."""
+        """מחיר כולל מע"מ (ראה VAT_RATE)."""
         if self.price is None:
             return None
         if self.vat_included:
             return round(self.price, 2)
-        return round(self.price * 1.18, 2)
+        return round(self.price * (1 + VAT_RATE), 2)
 
     @property
     def margin_percent(self):

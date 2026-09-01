@@ -95,8 +95,15 @@ def safe_target(target):
 
     כתובת שאינה מתחילה ב-"/" (או מתחילה ב-"//") היא אתר חיצוני, ואסור
     לתת לפרמטר בשורת הכתובת לזרוק משתמש מחוץ למערכת אחרי התחברות.
+
+    הלוכסן ההפוך נפסל גם הוא, ולא מתוך זהירות יתר: לפי תקן ה-URL
+    דפדפן מתרגם "\\" ל-"/" לפני שהוא קורא את הכתובת, ולכן
+    ‎/login?next=/\\evil.com עבר את הבדיקה שלמעלה כנתיב פנימי
+    והדפדפן פתח ממנו //evil.com - הפניה החוצה בדיוק כמו זו שנחסמה.
     """
-    if not target or not target.startswith("/") or target.startswith("//"):
+    if not target or not target.startswith("/"):
+        return url_for("identify.index")
+    if target.startswith(("//", "/\\")):
         return url_for("identify.index")
     return target
 

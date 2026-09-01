@@ -10,9 +10,9 @@
     {% for child in root.children %}
     <li class="list-group-item d-flex justify-content-between">
       <a href="{{ url_for('web.parts_list', category_id=child.id) }}">{{ child.name }}</a>
-      <span class="badge bg-light text-dark">{{ child.parts | length }}</span>
+      <span class="badge bg-light text-dark">{{ counts.get(child.id, 0) }}</span>
     </li>
-    {% else %}<li class="list-group-item text-muted small">{{ root.parts | length }} מק"טים</li>{% endfor %}
+    {% else %}<li class="list-group-item text-muted small">{{ counts.get(root.id, 0) }} מק"טים</li>{% endfor %}
   </ul>
 </div></div>
 {% else %}<div class="col-12 text-muted">אין קטגוריות.</div>{% endfor %}

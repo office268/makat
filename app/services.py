@@ -2,7 +2,7 @@
 import csv
 import io
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, func, or_
 
 from . import part_columns
 from .models import (
@@ -679,21 +679,38 @@ def get_org_part(part, organization_id, create=False):
     return link
 
 
+# השדות המסחריים ואיך קוראים כל אחד מהם מהקלט. הרשימה הזאת היא גם
+# מה שמחליט אילו שדות בכלל נכתבים - ראה set_org_part.
+COMMERCIAL_FIELDS = {
+    "price": lambda raw: _to_float(raw) or 0.0,
+    "cost": lambda raw: _to_float(raw) or 0.0,
+    "currency": lambda raw: (raw or "ILS").strip() or "ILS",
+    "vat_included": _to_bool,
+    "stock_qty": lambda raw: _to_int(raw) or 0,
+    "min_stock": lambda raw: _to_int(raw) or 0,
+    "location": lambda raw: (raw or "").strip() or None,
+}
+
+
 def set_org_part(part, organization_id, row):
-    """כותב את השדות המסחריים לשכבה הפרטית של הארגון."""
-    commercial = {"price", "cost", "currency", "vat_included",
-                  "stock_qty", "min_stock", "location"}
-    if not commercial & set(row):
+    """כותב לשכבה הפרטית של הארגון את השדות המסחריים *שנמסרו*.
+
+    רק עמודה שקיימת בקלט נכתבת. קודם נכתבו כל השבעה בכל פעם, וכל אחד
+    מהם קרא שדה חסר כאפס: מחירון ספק עם עמודת ``price`` בלבד עדכן את
+    המחיר ובאותה נשימה איפס את העלות, את המלאי ואת המיקום במדף של כל
+    מק"ט בקובץ. אין מסך שמראה מה נמחק, ואין ממה לשחזר.
+
+    לטופס אין השפעה מהשינוי: דפדפן שולח את כל שדות הטופס, ולכן מה
+    שהטופס מציג ממשיך להישמר בדיוק כמו קודם. מה שהטופס *אינו* מציג
+    (מטבע, כולל מע"מ) פשוט מפסיק להתאפס בכל שמירה.
+    """
+    present = [field for field in COMMERCIAL_FIELDS if field in row]
+    if not present:
         return None
 
     link = get_org_part(part, organization_id, create=True)
-    link.price = _to_float(row.get("price")) or 0.0
-    link.cost = _to_float(row.get("cost")) or 0.0
-    link.currency = (row.get("currency") or "ILS").strip() or "ILS"
-    link.vat_included = _to_bool(row.get("vat_included"))
-    link.stock_qty = _to_int(row.get("stock_qty")) or 0
-    link.min_stock = _to_int(row.get("min_stock")) or 0
-    link.location = (row.get("location") or "").strip() or None
+    for field in present:
+        setattr(link, field, COMMERCIAL_FIELDS[field](row.get(field)))
     return link
 
 
@@ -718,17 +735,20 @@ def import_csv(stream, organization_id=None):
             errors.append(f"שורה {line_no}: חסר שם לחלק {number}")
             continue
         existing = Part.query.filter_by(part_number=number).first()
+        # נקודת שמירה לכל שורה. בלעדיה שורה פגומה בסוף הקובץ גררה
+        # rollback על *כל* מה שהצטבר מתחילת הייבוא: המונים המשיכו לספור,
+        # המסך בישר "יובאו 400 מק"טים", ובבסיס הנתונים נשארו ארבעה.
+        # כאן נופלת רק השורה שנפלה, ומה שלפניה מגיע לשמירה הסופית.
         try:
-            part = part_from_row(row, existing, organization_id=organization_id)
-            if existing:
-                updated += 1
-            else:
-                db.session.add(part)
-                created += 1
-            db.session.flush()
-        except Exception as exc:  # pragma: no cover - הגנה על ייבוא פגום
-            db.session.rollback()
+            with db.session.begin_nested():
+                part_from_row(row, existing, organization_id=organization_id)
+        except Exception as exc:  # שורה פגומה - היא בלבד יורדת
             errors.append(f"שורה {line_no}: {exc}")
+            continue
+        if existing:
+            updated += 1
+        else:
+            created += 1
     db.session.commit()
     return created, updated, errors
 

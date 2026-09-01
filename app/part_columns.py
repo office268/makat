@@ -12,6 +12,7 @@ import re
 from sqlalchemy import case, cast, func, union
 
 from .models import (
+    VAT_RATE,
     Category,
     CrossReference,
     Fitment,
@@ -24,7 +25,10 @@ from .models import (
 
 # הביטוי שמחשב מחיר כולל מע"מ בצד בסיס הנתונים. חייב להתאים ל-
 # OrgPart.price_with_vat, אחרת המיון יסתור את מה שכתוב בעמודה.
-PRICE_WITH_VAT = case((OrgPart.vat_included.is_(True), OrgPart.price), else_=OrgPart.price * 1.18)
+PRICE_WITH_VAT = case(
+    (OrgPart.vat_included.is_(True), OrgPart.price),
+    else_=OrgPart.price * (1 + VAT_RATE),
+)
 
 # ---------- ספירות שמחושבות בבסיס הנתונים ----------
 #
@@ -637,7 +641,7 @@ COLUMNS = (
         needs_org=False, align="text-end", hint=">0",
     ),
     Column(
-        "group_price", "מחיר", 
+        "group_price", "מחיר",
         # ממוין לפי הזול ביותר בקבוצה - זה המספר שמעניין מי שנשאל
         # "כמה זה יוצא לי", והוא גם אחד מהמספרים שהתא מציג
         sort_by=group_cheapest, param="f_group_price", kind="number",

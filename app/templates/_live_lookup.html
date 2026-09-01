@@ -92,13 +92,21 @@
     catalog: ["מהקטלוג", "text-bg-info"],
   };
 
+  // הכתובות כבר מסוננות בשרת (parts_discovery.safe_url). כאן שוב, כי
+  // זו השורה שמייצרת את ה-href בפועל, והיא לא צריכה להיות תלויה בכך
+  // שכל מי שיבנה מקור חדש יזכור לסנן.
+  function safeUrl(raw) {
+    const url = String(raw || "").trim();
+    return /^https?:\/\//i.test(url) ? url : "";
+  }
+
   function row(item) {
     const wrap = document.createElement("div");
     wrap.className = "d-flex gap-3 align-items-start py-2 border-bottom";
 
-    if (item.image_url) {
+    if (safeUrl(item.image_url)) {
       const img = document.createElement("img");
-      img.src = item.image_url;
+      img.src = safeUrl(item.image_url);
       img.alt = item.part_number;
       img.loading = "lazy";
       img.width = 64;
@@ -142,9 +150,9 @@
       main.appendChild(note);
     }
 
-    if (item.source_url) {
+    if (safeUrl(item.source_url)) {
       const link = document.createElement("a");
-      link.href = item.source_url;
+      link.href = safeUrl(item.source_url);
       link.target = "_blank";
       link.rel = "noopener nofollow";
       link.className = "small";
