@@ -7,7 +7,8 @@
 <div class="card mb-3" id="live-lookup"
      data-plate="{{ plate }}"
      data-start="{{ url_for('identify.lookup_start') }}"
-     data-step="{{ url_for('identify.lookup_step') }}">
+     data-step="{{ url_for('identify.lookup_step') }}"
+     data-stop="{{ url_for('identify.lookup_stop') }}">
   <div class="card-header d-flex justify-content-between align-items-center">
     <span>חיפוש לפי מספר שלדה</span>
     {% if vehicle.vin %}
@@ -23,7 +24,8 @@
     {% else %}
     <p class="text-muted small">
       מה שאין בקטלוג נשלף מקטלוג היצרן לפי מספר השלדה של הרכב הזה, ומשם
-      למק"טים חלופיים. התוצאה נשמרת, כך שהחיפוש הבא לאותו דגם מיידי.
+      למק"טים חלופיים. כל מקור נעצר ומראה את מה שמצא, ואתה מחליט אם
+      להמשיך לבא אחריו. התוצאה נשמרת, כך שהחיפוש הבא לאותו דגם מיידי.
     </p>
 
     <label class="form-label fw-bold" for="live-query">איזה חלק?</label>
@@ -196,9 +198,44 @@
     } else if (found.length) {
       const hint = document.createElement("div");
       hint.className = "small text-muted mt-2";
-      hint.textContent = "המק\"טים שאומתו נשמרו בקטלוג - החיפוש הבא לרכב כזה מיידי.";
+      hint.textContent = payload.status === "stopped"
+        ? "המק\"טים שאומתו נשמרו בקטלוג. חיפוש חוזר לרכב הזה ייענה מהם, " +
+          "ואפשר יהיה להמשיך משם למקורות שדילגת עליהם."
+        : "המק\"טים שאומתו נשמרו בקטלוג - החיפוש הבא לרכב כזה מיידי.";
       resultsBox.appendChild(hint);
     }
+  }
+
+  // השער בין מקור למקור. כל מקור הוא בקשת רשת וקריאת מודל, ונספר
+  // במכסה היומית - מי שכבר קיבל את המק"ט המקורי לשלדה שלו לא בהכרח
+  // צריך שנמשיך לחפש לו חלופות. מחזיר Promise: true = להמשיך.
+  function gate(job) {
+    return new Promise((resolve) => {
+      const wrap = document.createElement("div");
+      wrap.className = "border-top mt-3 pt-3";
+      wrap.id = "live-gate";
+
+      const ask = document.createElement("div");
+      ask.className = "small text-muted mb-2";
+      ask.textContent = job.stage_label
+        ? "להמשיך ל" + job.stage_label + "? זו בקשה נוספת, והיא נספרת במכסה היומית."
+        : "להמשיך למקור הבא?";
+      wrap.appendChild(ask);
+
+      const go = document.createElement("button");
+      go.className = "btn btn-sm btn-primary me-2";
+      go.textContent = job.stage_label ? "המשך ל" + job.stage_label : "המשך";
+      go.addEventListener("click", () => { wrap.remove(); resolve(true); });
+      wrap.appendChild(go);
+
+      const enough = document.createElement("button");
+      enough.className = "btn btn-sm btn-outline-secondary";
+      enough.textContent = "מספיק, זה מה שחיפשתי";
+      enough.addEventListener("click", () => { wrap.remove(); resolve(false); });
+      wrap.appendChild(enough);
+
+      resultsBox.appendChild(wrap);
+    });
   }
 
   function busy(on, text) {
@@ -237,6 +274,7 @@
 
       let job = started.job;
       let last = -1;
+      let stopped = false;
       while (job && job.is_running) {
         busy(true, job.stage_label ? "שולף מ" + job.stage_label + "..." : "מחפש...");
         bar.style.width = Math.max(10, job.progress_pct) + "%";
@@ -248,10 +286,27 @@
         // רשת ביטחון: שלב שלא מתקדם לא ייתקע בלולאה
         if (job.cursor === last) throw new Error("השליפה לא מתקדמת.");
         last = job.cursor;
+
+        // מקור סיים ויש עוד אחריו: מציגים את מה שכבר יש, ושואלים.
+        if (job.awaiting_approval) {
+          bar.style.width = Math.max(10, job.progress_pct) + "%";
+          busy(false, job.done_stage_label ? "נמצא ב" + job.done_stage_label : "");
+          render(job);
+          if (!(await gate(job))) {
+            const form = new FormData();
+            form.append("job", job.id);
+            job = (await post(box.dataset.stop, form)).job;
+            stopped = true;
+            break;
+          }
+        }
       }
       bar.style.width = "100%";
-      busy(false, job && job.error ? job.error : "");
+      busy(false, stopped
+        ? "נעצר אחרי " + (job && job.done_stage_label ? job.done_stage_label : "המקור הראשון")
+        : (job && job.error ? job.error : ""));
       if (job) render(job);
+      if (stopped) return;
       if (job && !job.results.length && !job.unverified.length) {
         errorBox.textContent = job.error ||
           'לא נמצא מק"ט לחלק הזה אצל המקורות שנבדקו.';
