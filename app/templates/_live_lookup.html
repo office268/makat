@@ -210,7 +210,66 @@
     if ((payload.results || []).length) return "נמצא ב" + name;
     if ((payload.unverified || []).length) return name + ": תוצאות שלא אומתו";
     if (payload.error) return name + " נכשל";
+    // הסיבה במקום "לא החזיר" סתם. השלב שנכשל הוא התשובה הקצרה
+    // ביותר לשאלה "למה", ואין סיבה להסתיר אותה מאחורי פאנל.
+    const failed = payload.failed_stage;
+    if (failed) return name + " — נעצר ב" + failed.name;
     return name + ' לא החזיר מק"ט';
+  }
+
+  // פירוט השלבים: איפה זה נעצר, ומה לעשות. זה מה שהיומן לא נותן -
+  // הוא זרם של ארבעים שורות, ומי שמסתכל צריך להסיק מהן איזה שלב הרג
+  // את השליפה. כאן זה כתוב.
+  function stagePanel(payload) {
+    const rows = payload.diagnosis || [];
+    if (!rows.length) return null;
+
+    const box = document.createElement("div");
+    box.className = "border rounded mt-3";
+    box.id = "live-stages";
+
+    const head = document.createElement("div");
+    head.className = "px-2 py-1 border-bottom small fw-bold bg-light";
+    const bad = rows.filter((row) => !row.ok).length;
+    head.textContent = bad
+      ? "איפה זה נעצר"
+      : "מה עבר (" + rows.length + " שלבים)";
+    box.appendChild(head);
+
+    rows.forEach((row) => {
+      const line = document.createElement("div");
+      line.className = "d-flex gap-2 align-items-start px-2 py-1 small";
+
+      const mark = document.createElement("span");
+      mark.className = row.ok ? "text-success" : "text-danger";
+      mark.style.width = "1.2em";
+      mark.textContent = row.ok ? "✓" : "✗";
+      line.appendChild(mark);
+
+      const body = document.createElement("div");
+      body.className = "flex-grow-1";
+      const name = document.createElement("span");
+      name.className = row.ok ? "" : "fw-bold";
+      name.textContent = row.name;
+      body.appendChild(name);
+
+      if (row.detail) {
+        const detail = document.createElement("div");
+        detail.className = "text-muted";
+        detail.textContent = row.detail;
+        body.appendChild(detail);
+      }
+      // הרמז הוא מה שהופך פירוט לפעולה. מוצג רק כשיש מה לעשות.
+      if (row.hint) {
+        const hint = document.createElement("div");
+        hint.className = "text-primary-emphasis";
+        hint.textContent = "← " + row.hint;
+        body.appendChild(hint);
+      }
+      line.appendChild(body);
+      box.appendChild(line);
+    });
+    return box;
   }
 
   // יומן החקירה. סגור כברירת מחדל - מכונאי מחפש מק"ט, לא כתובות -
@@ -279,6 +338,7 @@
     resultsBox.innerHTML = "";
     const found = payload.results || [];
     const unverified = payload.unverified || [];
+    const stages = stagePanel(payload);
     const log = logPanel(payload);
 
     if (!found.length && !unverified.length) {
@@ -294,6 +354,7 @@
           || payload.done_stage_label + ' לא מצא מק"ט לחלק הזה ברכב הזה.';
         resultsBox.appendChild(none);
       }
+      if (stages) resultsBox.appendChild(stages);
       if (log) resultsBox.appendChild(log);
       return;
     }
@@ -338,6 +399,7 @@
         : "המק\"טים שאומתו נשמרו בקטלוג - החיפוש הבא לרכב כזה מיידי.";
       resultsBox.appendChild(hint);
     }
+    if (stages) resultsBox.appendChild(stages);
     if (log) resultsBox.appendChild(log);
   }
 

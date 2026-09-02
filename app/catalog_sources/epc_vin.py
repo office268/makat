@@ -205,9 +205,10 @@ class EpcVinSource(CatalogSource):
             # שלוש התשובות האלה הן ההבדל בין "האתר לא מכיר את הרכב",
             # "הגענו לדף הנכון והחלק לא שם" ו"זה דף ביניים": בלעדיהן
             # כל שלושתן נראות על המסך כ'לא החזיר מק"ט'.
+            confirmed = bool(payload.get("vehicle_confirmed"))
             trace.note(
                 f'    תוצאת הפענוח: {len(found)} מק"טים · '
-                f"הרכב אושר בדף: {'כן' if payload.get('vehicle_confirmed') else 'לא'} · "
+                f"הרכב אושר בדף: {'כן' if confirmed else 'לא'} · "
                 f"המשך מוצע: {next_url or '—'}"
             )
             for raw in found:
@@ -215,12 +216,48 @@ class EpcVinSource(CatalogSource):
                     f"      · {raw.get('oe_number') or '?'} "
                     f"[{raw.get('confidence') or 'low'}] {raw.get('name') or ''}"
                 )
+                # ההסבר של המודל הוא הראיה הישירה ביותר למה הוא בחר
+                # מה שבחר, והוא נזרק עד היום. כשמק"ט נפסל אחר כך
+                # באימות, השורה הזו היא ההסבר.
+                if raw.get("note"):
+                    trace.note(f"        “{raw['note']}”")
+            # אין מק"טים? מה שהמודל *כן* אמר הוא הראיה היחידה. הוא
+            # לרוב מסביר בעצמו - "העמוד מציג רשימת קבוצות ולא חלקים",
+            # "החלק לא מופיע ברכב הזה" - וזה בדיוק ההבדל שמחפשים.
+            if not found:
+                explain = str(payload.get("note") or payload.get("reason") or "").strip()
+                if explain:
+                    trace.note(f"    הסבר המודל: “{explain}”")
+                trace.stage(
+                    "איתור מק\"ט בדף", False,
+                    explain or "המודל לא מצא מק\"ט בעמוד הזה",
+                    "" if next_url else
+                    "אין קישור להמשיך אליו - ייתכן שזה לא עמוד החלקים.",
+                )
+            else:
+                trace.stage("איתור מק\"ט בדף", True,
+                            f'{len(found)} מק"טים מהעמוד')
+            trace.stage("זיהוי הרכב בדף", confirmed,
+                        "העמוד מאשר שזה הרכב" if confirmed
+                        else "אף עמוד לא אישר שזה הרכב",
+                        "" if confirmed else
+                        "ייתכן שהקטלוג אינו מכסה את היצרן הזה.")
             if found:
                 break
             if not next_url or next_url == url:
                 trace.note("    אין המשך לעקוב אחריו - עוצרים כאן.")
                 break
             url = next_url
+        else:
+            # הלולאה מוצתה בלי break, כלומר נגמרו הצעדים והיה עוד לאן
+            # ללכת. זה כשל שקט: המסע היה בדרך הנכונה ופשוט נקטע.
+            if not found:
+                trace.note(f"  ⚠ נגמרו {MAX_HOPS} הצעדים, והיה עוד להמשיך אל: {url}")
+                trace.stage(
+                    "עומק המסע", False,
+                    f"נגמרו {MAX_HOPS} הצעדים לפני שהגענו למק\"טים",
+                    f"העלה את EPC_MAX_HOPS (כרגע {MAX_HOPS}).",
+                )
         if resume is not None:
             resume.clear()
         return found, url, identified

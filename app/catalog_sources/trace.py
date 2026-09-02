@@ -39,6 +39,45 @@ _local = threading.local()
 def start():
     """פותח יומן חדש ל-thread הזה. כל מה שנרשם עד כה נזרק."""
     _local.lines = [] if ENABLED else None
+    _local.stages = []
+
+
+# --------------------------------------------------------------------------
+# שלבים: התשובה לשאלה "איפה זה נפל", בלי לקרוא ארבעים שורות
+# --------------------------------------------------------------------------
+
+def stage(name, ok, detail="", hint=""):
+    """שלב אחד בדרך, והאם הוא עבר.
+
+    היומן הוא זרם - הוא אומר *מה קרה*. השלבים הם שלד - הם אומרים
+    *איפה נעצר*. שליפה שנכשלת מייצרת שלושים שורות יומן, ומי שמסתכל
+    צריך להסיק מהן איזה שלב הרג אותה; רשימת השלבים אומרת את זה
+    ישירות, והיא מה שעולה למסך.
+
+    ``hint`` הוא מה לעשות, כשיש מה. בלעדיו נשאר תיאור.
+    """
+    stages = getattr(_local, "stages", None)
+    if stages is None:
+        return
+    stages.append({
+        "name": str(name),
+        "ok": bool(ok),
+        "detail": str(detail or "").strip(),
+        "hint": str(hint or "").strip(),
+    })
+
+
+def stages():
+    """השלבים שנרשמו, לפי הסדר."""
+    return [dict(row) for row in getattr(_local, "stages", None) or ()]
+
+
+def verdict():
+    """השלב הראשון שנכשל, או None. זו "הסיבה" בשורה אחת."""
+    for row in getattr(_local, "stages", None) or ():
+        if not row["ok"]:
+            return dict(row)
+    return None
 
 
 def active():
@@ -67,6 +106,7 @@ def lines():
 def clear():
     """סוגר את היומן. אחריו ``note`` הוא no-op."""
     _local.lines = None
+    _local.stages = None
 
 
 # --------------------------------------------------------------------------

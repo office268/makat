@@ -206,12 +206,32 @@ class LookupJob(db.Model):
     # יש כאן כתובת, ``cursor`` *אינו* מתקדם: אנחנו עדיין באותו מקור.
     resume_url = db.Column(db.String(500), default="")
     resume_hop = db.Column(db.Integer, default=0, nullable=False)
+    # השלבים של המקור האחרון שרץ, כ-JSON. היומן אומר *מה קרה*; זה
+    # אומר *איפה נעצר*, וזה מה שעולה למסך כפירוט הכישלון.
+    diagnosis = db.Column(db.Text, default="")
     error = db.Column(db.Text)
     organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), index=True)
     started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     started_at = db.Column(db.DateTime, default=_now)
     updated_at = db.Column(db.DateTime, default=_now)
     finished_at = db.Column(db.DateTime)
+
+    @property
+    def stage_report(self):
+        """השלבים של המקור האחרון, ומי מהם נכשל."""
+        try:
+            rows = json.loads(self.diagnosis) if self.diagnosis else []
+        except ValueError:
+            rows = []
+        return rows if isinstance(rows, list) else []
+
+    @property
+    def failed_stage(self):
+        """השלב הראשון שנכשל, או None - "הסיבה" בשורה אחת."""
+        for row in self.stage_report:
+            if isinstance(row, dict) and not row.get("ok"):
+                return row
+        return None
 
     @property
     def stage_list(self):
@@ -299,6 +319,8 @@ class LookupJob(db.Model):
             "results": data.get("results") or [],
             "unverified": data.get("unverified") or [],
             "log": (self.log or "").strip().split("\n")[-LOG_LINES:] if self.log else [],
+            "diagnosis": self.stage_report,
+            "failed_stage": self.failed_stage,
             "from_cache": False,
         }
 
@@ -478,6 +500,7 @@ def run_step(job, runner=None):
     except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
         job.error = f"{source.name}: {exc}"
         job.resume_url, job.resume_hop = "", 0
+        job.diagnosis = _diagnosis(source, exc)
         # דווקא בכשל היומן הוא כל מה שיש: ההודעה אומרת *מה* קרה,
         # והיומן אומר *איפה* - איזו כתובת נפתחה ומה חזר ממנה.
         job.log = _append_log(job, trace.lines() + [f"{source.name}: {exc}"])
@@ -497,6 +520,7 @@ def run_step(job, runner=None):
     if resume.url:
         job.resume_url, job.resume_hop = resume.url[:500], resume.hop
         job.log = _append_log(job, trace.lines())
+        job.diagnosis = _diagnosis(source)
         job.error = None
         job.updated_at = _now()
         db.session.commit()
@@ -556,6 +580,8 @@ def run_step(job, runner=None):
 
     job.results = json.dumps(data, ensure_ascii=False)
     job.log = _append_log(job, trace.lines() + lines)
+    job.diagnosis = _diagnosis(source, saved=bool(accepted) and not read_only,
+                               read_only=read_only, accepted=len(accepted))
     job.error = None
     job.cursor += 1
     job.updated_at = _now()
@@ -563,6 +589,29 @@ def run_step(job, runner=None):
     if job.cursor >= len(stages):
         return _finish(job)
     return job
+
+
+def _diagnosis(source, error=None, saved=None, read_only=False, accepted=0):
+    """השלבים שנרשמו, בתוספת מה שרק ``run_step`` יודע.
+
+    שני שלבים אינם ידועים למקור עצמו: אם בסוף נכתב משהו לקטלוג, ואם
+    ‏READ_ONLY חסם את הכתיבה. שניהם מפרידים בין "לא נמצא" ל"נמצא ולא
+    נשמר", וזו הבחנה שמכונאי מרגיש ומנהל צריך לראות.
+    """
+    rows = trace.stages()
+    rows.insert(0, {"name": "המקור", "ok": error is None,
+                    "detail": source.name if error is None
+                    else f"{source.name}: {error}",
+                    "hint": ""})
+    if saved is not None:
+        if read_only and accepted:
+            rows.append({"name": "שמירה בקטלוג", "ok": False,
+                         "detail": f"{accepted} מק\"טים לא נשמרו - מצב קריאה בלבד",
+                         "hint": "כבה READ_ONLY כדי שהתוצאות ייכנסו לקטלוג."})
+        elif saved:
+            rows.append({"name": "שמירה בקטלוג", "ok": True,
+                         "detail": f"{accepted} מק\"טים נשמרו", "hint": ""})
+    return json.dumps(rows, ensure_ascii=False)[:8000]
 
 
 def _append_log(job, lines):

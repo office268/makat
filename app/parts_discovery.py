@@ -168,9 +168,19 @@ def validate(candidates, make, model, part_type):
 
     בלי סקירה אנושית זו ההגנה היחידה, ולכן היא מחמירה: ספק נפסל.
     """
+    # ייבוא עצל: ``parts_discovery`` נטען לפני ``catalog_sources``, וייבוא
+    # בראש הקובץ היה יוצר תלות מעגלית. היומן הוא כלי עזר, ולכן הוא גם
+    # לא אמור להשפיע על סדר הטעינה.
+    from .catalog_sources import trace
+
     wanted = marque_of(make)
     accepted, rejected = [], []
     seen = set()
+    if candidates:
+        trace.note(
+            f"  אימות: {len(candidates)} מועמדים · יצרן מבוקש: "
+            f"{wanted or '—'} · סוג חלק: {part_type}"
+        )
 
     for raw in candidates or []:
         if not isinstance(raw, dict):
@@ -203,6 +213,7 @@ def validate(candidates, make, model, part_type):
                 rejected.append((number, f"מספר OE של יצרן אחר: {other}"))
                 continue
             seen.add(number.lower())
+            trace.note(f"    ✓ {number} · {maker}")
             accepted.append({
                 "part_number": number,
                 "manufacturer": maker,
@@ -222,7 +233,43 @@ def validate(candidates, make, model, part_type):
                 "source_key": str(raw.get("source_key") or "").strip(),
                 "name": str((raw.get("extra") or {}).get("name") or "").strip()[:200],
             })
+    for number, reason in rejected:
+        trace.note(f"    ✗ {number or '?'} · {reason}")
+    if candidates:
+        trace.stage(
+            "אימות המק\"טים",
+            bool(accepted),
+            f"{len(accepted)} אושרו, {len(rejected)} נפסלו",
+            "" if accepted else _rejection_hint(rejected),
+        )
     return accepted, rejected
+
+
+# הסיבות שחוזרות, ומה לעשות עם כל אחת. ההחמרה של ``validate`` מכוונת -
+# בלי סקירה אנושית היא ההגנה היחידה - אבל מק"ט שנמצא ונפסל נראה על
+# המסך בדיוק כמו מק"ט שלא נמצא, וזה מה שהרמז הזה בא לפרק.
+_REJECTION_HINTS = (
+    ("המודל לא היה בטוח",
+     "המודל החזיר confidence=low. העמוד כנראה לא קשר את המק\"ט לרכב "
+     "הזה במפורש - ייתכן שזה עמוד קבוצה ולא עמוד התרשים."),
+    ("חסר יצרן חלק",
+     "המודל לא זיהה יצרן לחלק. במק\"ט מקורי היצרן הוא יצרן הרכב, "
+     "וחסרונו מרמז שהעמוד לא נקרא כמו שצריך."),
+    ("יצרן רכב אחר",
+     "בתיאור המק\"ט מוזכר יצרן אחר. זו ההגנה שתופסת חלק של רכב אחר "
+     "שהופיע באותו עמוד - ייתכן שהגענו לעמוד כללי מדי."),
+    ('חסר מק"ט',
+     "המודל החזיר רשומה בלי מספר. כנראה לא היה מה לקחת מהעמוד."),
+)
+
+
+def _rejection_hint(rejected):
+    """מה לעשות, לפי סיבת הפסילה השכיחה. ריק כשאין עצה טובה."""
+    reasons = " ".join(reason for _number, reason in rejected)
+    for needle, hint in _REJECTION_HINTS:
+        if needle in reasons:
+            return hint
+    return ""
 
 
 def search(make, model, part_type, client=None):
