@@ -14,6 +14,7 @@
 """
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -148,6 +149,41 @@ def _breathe(url):
     _last_fetch[host] = time.monotonic()
 
 
+# הכתובת שאליה נחתה ההבאה האחרונה ב-thread הזה. נשמרת כי אין דרך
+# אחרת לדעת שהאתר לא הכיר את הכתובת שביקשנו והחזיר את דף הבית: זה
+# ‏200 עם דף תקין לגמרי, ורק ההשוואה בין מה שביקשנו למה שקיבלנו
+# מבדילה בין "התבנית שגויה" ל"החלק לא קיים לרכב הזה".
+_landed = threading.local()
+
+
+def landed_at():
+    """הכתובת שאליה נחתה ההבאה האחרונה, או ריק כשלא ידוע."""
+    return getattr(_landed, "url", "") or ""
+
+
+def bounced_to_ancestor(requested, landed=None):
+    """האם האתר דחף אותנו לדף כללי יותר מזה שביקשנו.
+
+    התנאי הוא צר בכוונה: אותו מארח, הכתובת שביקשנו נשאה משהו שהכתובת
+    שקיבלנו איבדה, והנתיב שנחתנו בו הוא *אב* של זה שביקשנו. הפניה
+    שמעמיקה לתוך הקטלוג (חיפוש שהצליח והוביל לדף הרכב) אינה אב, ולכן
+    אינה נחשבת כאן - וזה ההבדל שמונע אזהרת שווא על שליפה מוצלחת.
+    """
+    landed = landed_at() if landed is None else landed
+    if not requested or not landed or landed == requested:
+        return False
+    want = urllib.parse.urlsplit(requested)
+    got = urllib.parse.urlsplit(landed)
+    if want.netloc != got.netloc or got.query:
+        return False
+    want_path = want.path.rstrip("/")
+    got_path = got.path.rstrip("/")
+    if not want_path.startswith(got_path) or len(got_path) > len(want_path):
+        return False
+    # או שקיצרו לנו את הנתיב, או שבלעו את השאילתה שנשאה את השלדה.
+    return len(got_path) < len(want_path) or bool(want.query)
+
+
 def describe_page(html, url="", final_url="", status=None, elapsed=None,
                   content_type=""):
     """שורת יומן על דף שהתקבל.
@@ -174,6 +210,8 @@ def describe_page(html, url="", final_url="", status=None, elapsed=None,
     if title:
         line += f"\n     כותרת: {title}"
     trace.note(line)
+    # נקבע גם כשאין הפניה: ההבאה הבאה לא צריכה לרשת את התשובה של זו.
+    _landed.url = final_url or url
 
 
 def content_type(response):
