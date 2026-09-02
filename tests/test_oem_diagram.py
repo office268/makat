@@ -121,3 +121,66 @@ def test_a_partial_csv_does_not_wipe_the_diagram(app, org_id):
         )
         db.session.expire_all()
         assert Part.query.filter_by(part_number="D-1").one().diagram_url == DIAGRAM
+
+
+# --------------------------------------------------------------------------
+# התרשים מהמקור שבאמת רץ
+# --------------------------------------------------------------------------
+
+def test_the_vin_source_asks_the_model_for_a_diagram():
+    """הפיצ'ר היה מחובר ל-laximo בלבד, שאינו רץ - ולכן מעולם לא ירה.
+
+    דווקא במקור הזה התרשים זמין כמעט תמיד: המסע בקטלוג יצרן נגמר
+    בעמוד התרשים, כי שם יושבים המק"טים.
+    """
+    from app.catalog_sources import epc_vin
+
+    prompt = epc_vin.build_prompt(
+        {"make": "טויוטה יפן", "model": "COROLLA", "vin": "X"},
+        "oil_filter", "דף", "https://a.com/", 0,
+    )
+    assert "diagram_url" in prompt
+    # ושהמודל יידע להבדיל בינו לבין תצלום המוצר
+    assert "תרשים פיצוץ הוא הסכמה" in prompt
+    assert "לא תצלום" in prompt
+
+
+def test_the_diagram_travels_from_the_model_to_the_candidate():
+    from app.catalog_sources import epc_vin
+
+    from test_catalog_real_sources import FakeClient
+
+    found = epc_vin.EpcVinSource().lookup(
+        {"make": "טויוטה יפן", "model": "COROLLA", "year": 2011,
+         "vin": "JTNBV58E20J147563", "engine_code": "1ZR"},
+        "oil_filter",
+        fetcher=lambda url, timeout=None: "<html><body>x</body></html>",
+        client=FakeClient({
+            "parts": [{"oe_number": "90915-YZZD4", "name": "Oil filter",
+                       "image_url": "https://img.example/photo.jpg",
+                       "diagram_url": "https://img.example/exploded.png",
+                       "confidence": "high"}],
+            "next_url": "", "vehicle_confirmed": True,
+        }),
+    )
+    assert len(found) == 1
+    # שני השדות נפרדים, ולא נדרסים זה בזה
+    assert found[0].image_url == "https://img.example/photo.jpg"
+    assert found[0].diagram_url == "https://img.example/exploded.png"
+    assert found[0].as_row()["diagram_url"] == "https://img.example/exploded.png"
+
+
+def test_a_missing_diagram_is_simply_empty():
+    """רוב העמודים לא ייתנו תרשים, וזו לא שגיאה."""
+    from app.catalog_sources import epc_vin
+
+    from test_catalog_real_sources import FakeClient
+
+    found = epc_vin.EpcVinSource().lookup(
+        {"make": "טויוטה יפן", "model": "COROLLA", "vin": "JTNBV58E20J147563"},
+        "oil_filter",
+        fetcher=lambda url, timeout=None: "<html><body>x</body></html>",
+        client=FakeClient({"parts": [{"oe_number": "90915-YZZD4"}],
+                           "next_url": "", "vehicle_confirmed": True}),
+    )
+    assert found[0].diagram_url == ""
