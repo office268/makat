@@ -24,6 +24,7 @@
 """
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
@@ -31,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 
 from . import catalog_sources, parts_discovery, services
 from .catalog_sources import trace
+from .catalog_sources.base import Continuation
 from .catalog_sources.base import PARSE_MODEL, fetcher_kind
 from .models import Part, db
 from .taxonomy import PART_TYPES, type_name
@@ -51,6 +53,15 @@ DAILY_LIMIT = int(os.environ.get("LOOKUP_DAILY_LIMIT", 50))
 # הוא נחתך בדיוק במקום שבו מתחילה החקירה.
 LOG_CHARS = int(os.environ.get("LOOKUP_LOG_CHARS", 24000))
 LOG_LINES = int(os.environ.get("LOOKUP_LOG_LINES", 200))
+
+# תקציב הזמן לבקשת שלב אחת, לפני ש-gunicorn הורג אותה. מקור שמנווט
+# בקטלוג עושה כמה הבאות ברצף, וכל אחת היא עשרות שניות; במקום לדחוס
+# את כולן לבקשה אחת ולהיהרג באמצע, הן נחתכות כאן וממשיכות בבקשה
+# הבאה. המרווח הוא לקריאת המודל שסוגרת את הצעד האחרון.
+STEP_BUDGET = float(os.environ.get("LOOKUP_STEP_BUDGET", 0)) or max(
+    10.0, float(os.environ.get("WEB_TIMEOUT", 60))
+    - float(os.environ.get("CATALOG_MODEL_BUDGET", 15)) - 10.0
+)
 
 
 def _now():
@@ -191,6 +202,10 @@ class LookupJob(db.Model):
     results = db.Column(db.Text, default="")       # JSON - מה נמצא
     saved = db.Column(db.Integer, default=0, nullable=False)
     log = db.Column(db.Text, default="")
+    # המשך המסע בתוך המקור הנוכחי, כשהוא לא הספיק בבקשה אחת. כל עוד
+    # יש כאן כתובת, ``cursor`` *אינו* מתקדם: אנחנו עדיין באותו מקור.
+    resume_url = db.Column(db.String(500), default="")
+    resume_hop = db.Column(db.Integer, default=0, nullable=False)
     error = db.Column(db.Text)
     organization_id = db.Column(db.Integer, db.ForeignKey("organizations.id"), index=True)
     started_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -270,6 +285,11 @@ class LookupJob(db.Model):
             "awaiting_approval": self.awaiting_approval,
             "cursor": self.cursor,
             "total": self.total,
+            # ‏cursor לבדו כבר אינו סימן להתקדמות: בזמן שמקור מנווט
+            # בקטלוג הוא נשאר במקומו והצעד הוא שזז. הדפדפן משתמש
+            # בשניהם יחד כדי לדעת שהשליפה לא נתקעה.
+            "hop": self.resume_hop or 0,
+            "resuming": bool(self.resume_url),
             "progress_pct": self.progress_pct,
             "is_running": self.is_running,
             "saved": self.saved,
@@ -450,10 +470,14 @@ def run_step(job, runner=None):
     # יומן נקי לכל שלב: מה שנרשם כאן שייך למקור הזה בלבד, ולא נגרר
     # מהמקור שרץ בבקשה הקודמת.
     trace.start()
+    resume = Continuation(url=job.resume_url or "", hop=job.resume_hop or 0)
     try:
-        candidates = (runner or _run_source)(source, vehicle, job.part_type, data)
+        candidates = (runner or _run_source)(
+            source, vehicle, job.part_type, data, resume=resume
+        )
     except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
         job.error = f"{source.name}: {exc}"
+        job.resume_url, job.resume_hop = "", 0
         # דווקא בכשל היומן הוא כל מה שיש: ההודעה אומרת *מה* קרה,
         # והיומן אומר *איפה* - איזו כתובת נפתחה ומה חזר ממנה.
         job.log = _append_log(job, trace.lines() + [f"{source.name}: {exc}"])
@@ -467,6 +491,17 @@ def run_step(job, runner=None):
         if job.cursor >= len(stages):
             return _finish(job)
         return job
+
+    # המקור לא סיים - הוא נעצר על תקציב הזמן ויש לו לאן להמשיך.
+    # ‏cursor נשאר במקומו: אנחנו עדיין באותו מקור, רק צעד אחד הלאה.
+    if resume.url:
+        job.resume_url, job.resume_hop = resume.url[:500], resume.hop
+        job.log = _append_log(job, trace.lines())
+        job.error = None
+        job.updated_at = _now()
+        db.session.commit()
+        return job
+    job.resume_url, job.resume_hop = "", 0
 
     rows = [candidate.as_row() for candidate in candidates]
     accepted, rejected = parts_discovery.validate(
@@ -538,12 +573,17 @@ def _append_log(job, lines):
     return ((job.log or "") + text + "\n")[-LOG_CHARS:]
 
 
-def _run_source(source, vehicle, part_type, data):
+def _run_source(source, vehicle, part_type, data, resume=None):
     """הקריאה למקור עצמו. מופרדת כדי שבדיקות יזריקו במקומה."""
     oem_numbers = ()
     if source.tier != "oem":
         oem_numbers = known_oem_numbers(vehicle, part_type, data.get("results") or [])
-    return source.lookup(vehicle, part_type, oem_numbers=oem_numbers)
+    extra = {}
+    # מקור שמביא עמוד אחד אינו צריך תקציב ואינו יודע לקבל אותו.
+    # הדגל מפורש ולא introspection, כדי שכותב מקור חדש יבחר במודע.
+    if getattr(source, "supports_resume", False):
+        extra = {"resume": resume, "deadline": time.monotonic() + STEP_BUDGET}
+    return source.lookup(vehicle, part_type, oem_numbers=oem_numbers, **extra)
 
 
 def _finish(job):

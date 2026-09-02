@@ -18,7 +18,7 @@ VEHICLE = {"make": "טויוטה", "model": "COROLLA", "year": 2015,
            "vin": "JTDBR32E560012345", "engine_code": "2ZR-FAE", "plate": "1234567"}
 
 
-def _laximo(source, vehicle, part_type, data):
+def _laximo(source, vehicle, part_type, data, **_):
     return [Candidate(
         part_number=OE, manufacturer="TOYOTA", tier="oem", confidence="high",
         oe_number=OE, image_url=PHOTO, diagram_url=DIAGRAM,
@@ -51,7 +51,7 @@ def test_the_diagram_reaches_the_screen_separately_from_the_photo(app):
 
 def test_a_hostile_diagram_url_is_filtered_like_any_other(app):
     """אותו סינון סכימות כמו לשאר הכתובות - הן מגיעות מאותו מקום."""
-    def hostile(source, vehicle, part_type, data):
+    def hostile(source, vehicle, part_type, data, **_):
         return [Candidate(part_number=OE, manufacturer="TOYOTA", tier="oem",
                           confidence="high", diagram_url="javascript:alert(1)")]
 

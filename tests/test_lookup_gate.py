@@ -34,7 +34,7 @@ def _job(**kwargs):
 
 def _sources(seen=None):
     """שני מקורות מדומים. השני רושם מה קיבל, כדי לבדוק את השרשרת."""
-    def runner(source, vehicle, part_type, data):
+    def runner(source, vehicle, part_type, data, **_):
         if source.tier == "oem":
             return [Candidate(part_number=OE, manufacturer="TOYOTA",
                               tier="oem", confidence="high", oe_number=OE)]
@@ -188,12 +188,12 @@ def test_the_gate_follows_the_configured_source_list(app, stages):
 # מקור שלא מצא כלום אינו "נמצא"
 # --------------------------------------------------------------------------
 
-def _nothing(source, vehicle, part_type, data):
+def _nothing(source, vehicle, part_type, data, **_):
     """המקור ענה כראוי, ופשוט אין לו את החלק לרכב הזה."""
     return []
 
 
-def _broken(source, vehicle, part_type, data):
+def _broken(source, vehicle, part_type, data, **_):
     from app.catalog_sources.base import FetchError
 
     raise FetchError("פסק זמן בטעינת laximo.ru")

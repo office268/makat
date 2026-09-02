@@ -56,7 +56,7 @@ def test_the_unverified_list_is_cleaned_too(app):
 
     זו דווקא הרשימה שאין לסמוך עליה, ולכן היא הנתיב שחשוב לבדוק.
     """
-    def hostile(source, vehicle, part_type, data):
+    def hostile(source, vehicle, part_type, data, **_):
         return [
             Candidate(part_number="OK-1", manufacturer="MAHLE", confidence="high",
                       source_url=EVIL, image_url=EVIL),

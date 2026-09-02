@@ -271,7 +271,7 @@ def test_a_step_writes_its_trace_into_the_job(app, monkeypatch):
     with app.app_context():
         job = _job()
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             trace.note("שורה מתוך המקור")
             return [Candidate(part_number="1525QN", tier="oem",
                               confidence="high", oe_number="1525QN")]
@@ -285,7 +285,7 @@ def test_a_failing_step_keeps_the_trace_that_explains_where_it_died(app):
     with app.app_context():
         job = _job()
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             trace.note("→ הבאה ישירה: https://7zap.com/en/search/?q=X")
             raise base.FetchError("האתר החזיר 404")
 
@@ -300,7 +300,7 @@ def test_one_step_does_not_inherit_the_lines_of_the_one_before_it(app):
         job = _job(stages=("epc", "aftermarket"))
         marks = ["ראשון", "שני"]
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             trace.note(marks[job.cursor])
             return []
 
@@ -320,7 +320,7 @@ def test_a_rejected_number_says_why_it_was_rejected(app):
     with app.app_context():
         job = _job()
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             return [Candidate(part_number="", tier="oem", confidence="low")]
 
         live_lookup.run_step(job, runner=runner)
@@ -333,7 +333,7 @@ def test_the_log_that_reaches_the_screen_is_bounded(app, monkeypatch):
     with app.app_context():
         job = _job()
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             for index in range(50):
                 trace.note(f"שורה {index}")
             return []
@@ -347,7 +347,7 @@ def test_the_stored_log_is_bounded_too(app, monkeypatch):
     with app.app_context():
         job = _job()
 
-        def runner(source, vehicle, part_type, data):
+        def runner(source, vehicle, part_type, data, **_):
             for index in range(200):
                 trace.note(f"שורה ארוכה מאוד מספר {index}")
             return []
