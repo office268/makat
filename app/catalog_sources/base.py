@@ -374,6 +374,20 @@ def fetcher_available(needs_js=False):
     return not needs_js
 
 
+def fetcher_name(fetcher):
+    """שם ההבאה שבאמת בשימוש, לא זו שמוגדרת.
+
+    ההבדל אינו תיאורטי: שני מקורות קראו ל-``fetch`` ישירות בזמן
+    ש-``CATALOG_FETCHER`` היה scraperapi, יצאו מכתובת הענן, ונחסמו
+    ב-403 - והיומן דיווח "scraperapi" כי הוא הסתכל על ההגדרה. שורת
+    יומן שמתארת את מה שהתכוונו אליו במקום את מה שקרה היא בדיוק
+    השורה שמאריכה חקירה.
+    """
+    if fetcher is fetch:
+        return "ישירה (urllib)"
+    return type(fetcher).__name__
+
+
 def default_fetcher(wait_selector=None, fill_selector=None, fill_value=None,
                     submit_selector=None):
     """פונקציית ההבאה למקור שצריך דף.
