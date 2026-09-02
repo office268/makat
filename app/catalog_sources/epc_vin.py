@@ -148,20 +148,29 @@ class EpcVinSource(CatalogSource):
 
     def _follow(self, start_url, vehicle, part_type, get_page, client,
                 resume=None, deadline=None, first_hop=0):
-        """תבנית אחת: הבאה, פענוח, ואם צריך צעד נוסף. מחזיר (מה שנמצא, כתובת)."""
+        """תבנית אחת: הבאה, פענוח, ואם צריך צעד נוסף.
+
+        מחזיר ``(מה שנמצא, כתובת, האם עמוד כלשהו זיהה את הרכב)``. הרכיב
+        השלישי הוא שמבדיל בין "האתר הכיר את הרכב ואין לו את החלק" לבין
+        "האתר לא מכיר את הרכב בכלל" - ראה ``lookup``.
+        """
         url = start_url
         found = []
+        # ממשיכים ממה שכבר נקבע בבקשה קודמת, אם זה המשך של מסע.
+        identified = bool(resume is not None and resume.identified)
         for hop in range(first_hop, MAX_HOPS):
             # מתחת לתקציב הזמן של הבקשה עוצרים ומעבירים את ההמשך
             # הלאה. עדיף עוד סיבוב מהדפדפן מאשר עובד שנהרג באמצע.
             if hop > first_hop and deadline is not None and time.monotonic() > deadline:
                 if resume is not None:
                     resume.url, resume.hop = url, hop
+                if resume is not None:
+                    resume.identified = identified
                 trace.note(
                     f"  ⏸ תקציב הבקשה נגמר אחרי {hop - first_hop} צעדים. "
                     f"ממשיכים מ-{url} בבקשה הבאה."
                 )
-                return found, url
+                return found, url, identified
             trace.note(f"  — צעד {hop + 1}/{MAX_HOPS} —")
             try:
                 html = get_page(url)
@@ -186,6 +195,7 @@ class EpcVinSource(CatalogSource):
                 client=client,
             )
             found = payload.get("parts") or []
+            identified = identified or bool(payload.get("vehicle_confirmed"))
             next_url = str(payload.get("next_url") or "").strip()
             # שלוש התשובות האלה הן ההבדל בין "האתר לא מכיר את הרכב",
             # "הגענו לדף הנכון והחלק לא שם" ו"זה דף ביניים": בלעדיהן
@@ -208,7 +218,7 @@ class EpcVinSource(CatalogSource):
             url = next_url
         if resume is not None:
             resume.clear()
-        return found, url
+        return found, url, identified
 
     def lookup(self, vehicle, part_type, oem_numbers=(), fetcher=None, client=None,
                resume=None, deadline=None):
@@ -223,10 +233,15 @@ class EpcVinSource(CatalogSource):
                 f"{self.name}: ממשיכים מצעד {resume.hop + 1} · {resume.url}"
             )
             start, hop = resume.url, resume.hop
-            found, source_url = self._follow(
+            found, source_url, identified = self._follow(
                 start, vehicle, part_type, get_page, client,
                 resume=resume, deadline=deadline, first_hop=hop,
             )
+            # אותה בדיקה כמו במסלול הרגיל, ולא במקרה: מסע ארוך נפרס
+            # על כמה בקשות, ובקטלוג אמיתי זה הרוב. בדיקה שחלה רק על
+            # מסע שהסתיים בבקשה אחת הייתה מפספסת בדיוק את המקרים
+            # שבגללם היא נכתבה.
+            self._require_identification(vehicle, found, identified, resume)
             return self._candidates(found, vehicle, source_url)
         urls = build_urls(vin)
         trace.note(
@@ -243,10 +258,11 @@ class EpcVinSource(CatalogSource):
                 trace.note(f"⚠ תבנית בלי {{vin}} - לא תוכל לזהות רכב: {template}")
 
         found, source_url, failure, answered = [], urls[0], None, False
+        identified = False
         for index, start in enumerate(urls, 1):
             trace.note(f"— תבנית {index}/{len(urls)}: {start} —")
             try:
-                found, source_url = self._follow(
+                found, source_url, confirmed = self._follow(
                     start, vehicle, part_type, get_page, client,
                     resume=resume, deadline=deadline,
                 )
@@ -255,6 +271,9 @@ class EpcVinSource(CatalogSource):
                 trace.note(f"  התבנית הזו לא עבדה: {exc}")
                 continue
             answered = True
+            # מספיקה תבנית אחת שזיהתה את הרכב כדי שהשליפה כולה תיחשב
+            # כמענה - אתר אחד שמכיר אותו הוא כל מה שצריך.
+            identified = identified or confirmed
             if found:
                 break
         # *כל* התבניות נפלו: זו תקלה, לא "לא נמצא". ההבחנה הזו היא מה
@@ -263,7 +282,36 @@ class EpcVinSource(CatalogSource):
         # שנפלה - אחרת תבנית שבורה ברשימה הייתה מסתירה אותה.
         if not answered and failure is not None:
             raise failure
+        if answered:
+            self._require_identification(vehicle, found, identified, resume)
         return self._candidates(found, vehicle, source_url)
+
+    def _require_identification(self, vehicle, found, identified, resume):
+        """אתר שלא זיהה את הרכב לא אמר "אין כאן כזה חלק".
+
+        הוא אמר "אני לא מכיר את הרכב הזה", ואלה שתי תשובות הפוכות.
+        בלי ההבחנה, קטלוג שמכסה יצרנים אחרים מהצי מחזיר תשובה ריקה
+        לכל רכב שאינו שלו - ``_finish`` שומר אותה במטמון ל-60 יום,
+        וכל מכונאי שישאל את אותה שאלה יקבל "אין מק"ט כזה" על רכב
+        שהאתר מעולם לא הכיר. זה בדיוק הכישלון השקט שהכתובת השגויה
+        יצרה, רק שהפעם הוא נכנס דרך *בחירת האתר*.
+
+        מסע שנעצר בתקציב הזמן אינו מסקנה - הוא באמצע, וייתכן שהעמוד
+        שיזהה את הרכב עוד לפניו. ``resume.url`` מסומן בדיוק אז.
+
+        המחיר: שליפה חוזרת כשהמודל לא הצליח לאשר את הרכב מהדף. זה
+        הכיוון הנכון לטעות בו - שליפה עולה פעם אחת, תשובה שגויה
+        במטמון עולה חודשיים.
+        """
+        if found or identified:
+            return
+        if resume is not None and resume.url:
+            return
+        raise FetchError(
+            "האתר ענה, אבל אף עמוד לא זיהה את הרכב הזה - כלומר הוא אינו "
+            "מכסה אותו, ולא שהחלק חסר לו. בדוק שהקטלוג שב-EPC_VIN_URL "
+            f"מכיל את {_brand(vehicle.get('make')) or 'היצרן'}."
+        )
 
     def _candidates(self, found, vehicle, source_url):
         candidates = []

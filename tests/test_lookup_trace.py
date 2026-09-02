@@ -188,13 +188,15 @@ def test_the_epc_log_says_what_the_model_understood(monkeypatch):
     monkeypatch.setattr(epc_vin, "MAX_HOPS", 1)
     client = FakeClient({"parts": [], "next_url": "", "vehicle_confirmed": False})
     trace.start()
-    found = epc_vin.EpcVinSource().lookup(
-        VEHICLE, "fuel_pump",
-        fetcher=lambda url, timeout=None: "<html><body>Home</body></html>",
-        client=client,
-    )
+    # דף שלא אישר את הרכב הוא "האתר אינו מכסה אותו", ולכן תקלה ולא
+    # תשובה ריקה. היומן נכתב לפני כן, וזה מה שנבדק כאן.
+    with pytest.raises(base.FetchError):
+        epc_vin.EpcVinSource().lookup(
+            VEHICLE, "fuel_pump",
+            fetcher=lambda url, timeout=None: "<html><body>Home</body></html>",
+            client=client,
+        )
     log = "\n".join(trace.lines())
-    assert found == []
     assert VEHICLE["vin"] in log
     assert "הרכב אושר בדף: לא" in log
     assert 'תוצאת הפענוח: 0 מק"טים' in log
