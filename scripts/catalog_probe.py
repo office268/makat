@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import catalog_sources  # noqa: E402
 from app import vehicles  # noqa: E402
-from app.catalog_sources import base  # noqa: E402
+from app.catalog_sources import base, trace  # noqa: E402
 from app.taxonomy import PART_TYPES, type_name  # noqa: E402
 
 
@@ -95,6 +95,17 @@ def _record_api(module, save_to):
     module.call_api = wrapped
 
 
+def _print_trace():
+    """יומן החקירה, בדיוק אותו יומן שהמסך מציג. מודפס גם בכשל -
+    שם הוא הכי שווה."""
+    lines = trace.lines()
+    if not lines:
+        return
+    print("\nיומן:")
+    for line in lines:
+        print(f"  {line}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plate", help="מספר רישוי - הרכב יילקח מהמרשם")
@@ -159,13 +170,16 @@ def main():
         _record_api(module, args.save)
 
     print("\nמריץ...")
+    trace.start()
     try:
         found = source.lookup(
             vehicle, args.part, oem_numbers=args.oem, fetcher=fetcher
         )
     except Exception as exc:
+        _print_trace()
         print(f"\n✗ נכשל: {type(exc).__name__}: {exc}")
         return 1
+    _print_trace()
 
     if not found:
         print("\nלא הוחזר אף מק\"ט.")

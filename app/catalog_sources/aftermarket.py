@@ -11,6 +11,7 @@
 import os
 
 from ..taxonomy import type_name
+from . import trace
 from .base import Candidate, CatalogSource, FetchError, ask_model, condense, fetch, parser_available
 
 URL_TEMPLATE = os.environ.get(
@@ -70,6 +71,14 @@ class AftermarketSource(CatalogSource):
 
     def lookup(self, vehicle, part_type, oem_numbers=(), fetcher=None, client=None):
         numbers = [str(n).strip() for n in oem_numbers if str(n or "").strip()]
+        # "אין מספרים" הוא הכישלון השקט של השלב הזה: הוא מחזיר רשימה
+        # ריקה בלי שהתרחשה שום בקשה, ועל המסך זה נראה כמו "האתר לא
+        # מצא". השורה הזו מבדילה בין השניים.
+        trace.note(
+            f"{self.name}: {len(numbers)} מספרים מקוריים לחיפוש"
+            + (f" ({', '.join(numbers[:MAX_NUMBERS])})" if numbers
+               else " - אין ממה להתחיל, השלב הקודם לא החזיר מק\"ט מקורי")
+        )
         if not numbers:
             return []
         get_page = fetcher or fetch
@@ -78,16 +87,20 @@ class AftermarketSource(CatalogSource):
         first_error = None
         for oem in numbers[:MAX_NUMBERS]:
             url = build_url(oem)
+            trace.note(f"— מספר מקורי {oem} —")
             try:
                 html = get_page(url)
             except FetchError as exc:
+                trace.note(f"  דילוג: {exc}")
                 first_error = first_error or exc
                 continue
             payload = ask_model(
                 build_prompt(vehicle, part_type, oem, condense(html, url), url),
                 client=client,
             )
-            for raw in payload.get("parts") or []:
+            rows = payload.get("parts") or []
+            trace.note(f"  תוצאת הפענוח: {len(rows)} חלופים")
+            for raw in rows:
                 number = str(raw.get("part_number") or "").strip()
                 if not number or number.lower() in seen:
                     continue

@@ -291,7 +291,14 @@ class BrowserFetcher:
         self.submit_selector = submit_selector
 
     def __call__(self, url, timeout=None):
-        return fetch_page(
+        from . import trace
+        from .base import describe_page
+
+        import time as _time
+
+        trace.note(f"→ דפדפן: {url}")
+        started = _time.monotonic()
+        body = fetch_page(
             url,
             wait_selector=self.wait_selector,
             timeout=timeout,
@@ -300,3 +307,5 @@ class BrowserFetcher:
             fill_value=self.fill_value,
             submit_selector=self.submit_selector,
         )
+        describe_page(body, url, elapsed=_time.monotonic() - started)
+        return body

@@ -22,6 +22,7 @@
 """
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,18 +58,35 @@ def build_url(url, api_key=None, render=None, country=None, premium=None):
     return f"{API_URL}?{urllib.parse.urlencode(params)}"
 
 
-def _explain(code, body):
+def _body_hint(body):
+    """שארית התשובה - רק כשהיא באמת אומרת משהו.
+
+    גוף של תשובת שגיאה הוא לרוב דף HTML, ומאתיים התווים הראשונים שלו
+    הם ``<!DOCTYPE>`` ורשימת מחלקות CSS. הדבקתם בהודעה שמגיעה למכונאי
+    אינה מוסיפה מידע - היא מסתירה את המשפט שכן אומר מה קרה.
+    """
+    text = " ".join((body or "").split())
+    if not text or text.lstrip().startswith("<") or "<html" in text[:400].lower():
+        return ""
+    return text[:200]
+
+
+def _explain(code, body, url=None):
     """שגיאות השירות בשפה שאפשר לפעול לפיה, לא מספר סטטוס."""
     known = {
         401: "מפתח ScraperAPI שגוי או חסר (SCRAPERAPI_KEY).",
         403: "אין הרשאה לבקשה הזו - ייתכן שהיא דורשת premium.",
-        404: "השירות לא מצא את הכתובת המבוקשת.",
+        # 404 כאן אינו של ScraperAPI אלא של האתר שאליו הוא פנה: הוא
+        # מעביר את הסטטוס כמות שהוא. כלומר הכתובת עצמה אינה קיימת שם,
+        # וזו הגדרה שגויה ולא תקלה חולפת.
+        404: "כתובת הקטלוג שהוגדרה אינה קיימת באתר (404).",
         429: "נגמרו הקרדיטים או חריגה מקצב הבקשות ב-ScraperAPI.",
         500: "ScraperAPI לא הצליח להביא את הדף (האתר חסם או נפל).",
     }
     detail = known.get(code, f"ScraperAPI החזיר {code}")
-    snippet = (body or "").strip()[:200]
-    return f"{detail} {snippet}".strip()
+    # הכתובת שנוסתה היא הפרט השימושי ביותר בשגיאת 404, והיא נעדרה
+    parts = [detail, url or "", _body_hint(body)]
+    return " ".join(part for part in parts if part).strip()
 
 
 class ScraperApiFetcher:
@@ -81,30 +99,46 @@ class ScraperApiFetcher:
         self.premium = premium
 
     def __call__(self, url, timeout=None):
-        from .base import FetchError, USER_AGENT, allowed_by_robots
+        from . import trace
+        from .base import (FetchError, USER_AGENT, allowed_by_robots, content_type,
+                           describe_page)
 
+        render = RENDER if self.render is None else self.render
+        trace.note(f"→ ScraperAPI: {url} (render={'כן' if render else 'לא'})")
         if not (self.api_key or API_KEY):
+            trace.note("  ← אין מפתח")
             raise FetchError("אין SCRAPERAPI_KEY.")
         # השירות מביא בשמנו, ולכן ה-robots של האתר עדיין מחייב אותנו.
         if not allowed_by_robots(url):
+            trace.note("  ← נחסם ב-robots.txt")
             raise FetchError(f"robots.txt של האתר אוסר את הכתובת: {url}")
 
         request = urllib.request.Request(
             build_url(url, self.api_key, self.render, self.country, self.premium),
             headers={"User-Agent": USER_AGENT},
         )
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=timeout or TIMEOUT) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
-                return response.read().decode(charset, errors="replace")
+                body = response.read().decode(charset, errors="replace")
+                describe_page(
+                    body, url,
+                    status=getattr(response, "status", None),
+                    elapsed=time.monotonic() - started,
+                    content_type=content_type(response),
+                )
+                return body
         except urllib.error.HTTPError as exc:
+            trace.note(f"  ← HTTP {exc.code} {exc.reason}")
             body = ""
             try:
                 body = exc.read().decode("utf-8", errors="replace")
             except Exception:
                 pass
-            raise FetchError(_explain(exc.code, body)) from exc
+            raise FetchError(_explain(exc.code, body, url)) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            trace.note(f"  ← לא נענה: {type(exc).__name__}: {exc}")
             raise FetchError(f"ScraperAPI לא נגיש: {exc}") from exc
 
 
