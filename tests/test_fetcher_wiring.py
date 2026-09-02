@@ -64,7 +64,11 @@ def test_an_injected_fetcher_still_wins(through_scraperapi):
 
     epc_vin.EpcVinSource().lookup(
         VEHICLE, "fuel_pump", fetcher=fetcher,
-        client=FakeClient({"parts": [], "next_url": ""}),
+        # ‏vehicle_confirmed נדרש כדי שזו תהיה תשובה ולא תקלה: דף שלא
+        # זיהה את הרכב אומר "האתר אינו מכסה אותו". כאן נבדקת ההבאה,
+        # ולכן הדף צריך להיות של מסלול תקין.
+        client=FakeClient({"parts": [], "next_url": "",
+                           "vehicle_confirmed": True}),
     )
     assert mine and not through_scraperapi
 
@@ -75,7 +79,11 @@ def test_the_log_names_the_fetcher_that_actually_ran(through_scraperapi):
     trace.start()
     epc_vin.EpcVinSource().lookup(
         VEHICLE, "fuel_pump",
-        client=FakeClient({"parts": [], "next_url": ""}),
+        # ‏vehicle_confirmed נדרש כדי שזו תהיה תשובה ולא תקלה: דף שלא
+        # זיהה את הרכב אומר "האתר אינו מכסה אותו". כאן נבדקת ההבאה,
+        # ולכן הדף צריך להיות של מסלול תקין.
+        client=FakeClient({"parts": [], "next_url": "",
+                           "vehicle_confirmed": True}),
     )
     assert "הבאה: ScraperApiFetcher" in "\n".join(trace.lines())
 

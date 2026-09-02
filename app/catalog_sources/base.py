@@ -95,9 +95,14 @@ class Continuation:
 
     url: str = ""
     hop: int = 0
+    # האם עמוד כלשהו במסע הזה זיהה את הרכב. נישא כאן ולא רק בתוך
+    # ``lookup``, כי מסע שנפרס על כמה בקשות מאבד אחרת את מה שנקבע
+    # בעמוד שכבר שולם עליו - וההבחנה "האתר לא מכיר את הרכב" נופלת
+    # בדיוק במסעות הארוכים, שהם הרוב בקטלוג אמיתי.
+    identified: bool = False
 
     def clear(self):
-        self.url, self.hop = "", 0
+        self.url, self.hop, self.identified = "", 0, False
 
 
 class CatalogSource:

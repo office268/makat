@@ -8,13 +8,20 @@
 import pytest
 
 from app.catalog_sources import base, epc_vin, trace
+from app.catalog_sources.base import Continuation
 
 from test_catalog_real_sources import FakeClient
 
 VEHICLE = {"make": "פיג'ו צרפת", "model": "5008", "year": 2020,
            "vin": "VF3M45GFRLS125956", "engine_code": "5G06", "plate": "1234567"}
 
-NOTHING = {"parts": [], "next_url": "", "vehicle_confirmed": False}
+# שתי התשובות הריקות האלה נראות זהות, והן הפוכות במשמעותן: האחת
+# אומרת "הכרתי את הרכב, החלק הזה לא אצלי" - תשובה, ששווה לשמור.
+# השנייה אומרת "לא הכרתי את הרכב בכלל" - כלומר האתר אינו מכסה אותו,
+# וזו לא תשובה שמותר לשמור במטמון כשלילית.
+NOT_IN_CATALOG = {"parts": [], "next_url": "", "vehicle_confirmed": True}
+UNKNOWN_CAR = {"parts": [], "next_url": "", "vehicle_confirmed": False}
+NOTHING = NOT_IN_CATALOG
 SOMETHING = {"parts": [{"oe_number": "1525 QN", "name": "Fuel pump",
                         "confidence": "high"}],
              "next_url": "", "vehicle_confirmed": True}
@@ -187,3 +194,120 @@ def test_the_follow_up_rules_forbid_a_generic_brand_page():
     # בצעד האחרון אין המשך, ולכן גם אין את הכללים שלו
     last = epc_vin.build_prompt(VEHICLE, "fuel_pump", "דף", "https://a.com/", 0)
     assert "דף מותג כללי" not in last
+
+
+# --------------------------------------------------------------------------
+# "לא הכרתי את הרכב" אינו "אין כאן כזה חלק"
+# --------------------------------------------------------------------------
+
+def test_a_catalog_that_does_not_cover_the_vehicle_is_not_an_empty_answer(monkeypatch):
+    """הכישלון השקט השני, וזה שנכנס דרך *בחירת האתר* ולא דרך הכתובת.
+
+    קטלוג שמכסה יצרנים אחרים מחזיר 200 ודף תקין לכל שלדה שאינה שלו.
+    בלי ההבחנה הזו התשובה "אין מק"ט לרכב הזה" נשמרת לחודשיים - על רכב
+    שהאתר מעולם לא הכיר.
+    """
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    with pytest.raises(base.FetchError) as caught:
+        epc_vin.EpcVinSource().lookup(
+            VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(UNKNOWN_CAR)
+        )
+    assert "לא זיהה את הרכב" in str(caught.value)
+    # השגיאה אומרת איזה יצרן חסר, כדי שאפשר יהיה לפעול לפיה
+    assert "פיג'ו" in str(caught.value)
+    assert "EPC_VIN_URL" in str(caught.value)
+
+
+def test_a_page_that_knew_the_car_and_had_no_part_stays_an_answer(monkeypatch):
+    """הצד השני של אותה הבחנה - אחרת לא היינו שומרים אף תשובה שלילית."""
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    assert epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(NOT_IN_CATALOG)
+    ) == []
+
+
+def test_one_template_that_knew_the_car_rescues_the_whole_lookup(monkeypatch):
+    """תבנית אחת שזיהתה את הרכב מספיקה - אתר אחד שמכיר אותו הוא הכל."""
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE",
+                        "https://blind.com/{vin}|https://knows.com/{vin}")
+    client = FakeClient(UNKNOWN_CAR, NOT_IN_CATALOG)
+    assert epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(), client=client
+    ) == []
+    assert len(client.messages.prompts) == 2
+
+
+def test_finding_a_part_needs_no_confirmation(monkeypatch):
+    """מק"ט שנמצא הוא ההוכחה החזקה ביותר שהאתר מכיר את הרכב."""
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(),
+        client=FakeClient({"parts": [{"oe_number": "1525 QN"}], "next_url": "",
+                           "vehicle_confirmed": False}),
+    )
+    assert [c.part_number for c in found] == ["1525 QN"]
+
+
+# --------------------------------------------------------------------------
+# ההבחנה חייבת לשרוד מסע שנפרס על כמה בקשות
+# --------------------------------------------------------------------------
+
+def test_a_paused_walk_is_not_judged_yet(monkeypatch):
+    """מסע שנעצר בתקציב הזמן אינו מסקנה - העמוד שיזהה את הרכב עוד לפניו."""
+    monkeypatch.setattr(epc_vin, "MAX_HOPS", 4)
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    resume = Continuation()
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(),
+        client=FakeClient({"parts": [], "next_url": "https://a.com/next/",
+                           "vehicle_confirmed": False}),
+        resume=resume, deadline=base.time.monotonic() - 1,
+    )
+    assert found == [] and resume.url, "היה אמור להיעצר, לא להסיק"
+
+
+def test_identification_survives_the_pause(monkeypatch):
+    """העמוד שזיהה את הרכב כבר שולם עליו בבקשה קודמת.
+
+    בלי שההבחנה תיסחב ב-Continuation, מסע ארוך היה מגיע לסופו בלי
+    זכר לזיהוי - ונזרק כתקלה. וזה הרוב: בקטלוג אמיתי כל מסע נפרס.
+    """
+    monkeypatch.setattr(epc_vin, "MAX_HOPS", 4)
+    resume = Continuation(url="https://a.com/group/", hop=1, identified=True)
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(),
+        client=FakeClient({"parts": [], "next_url": "", "vehicle_confirmed": False}),
+        resume=resume, deadline=base.time.monotonic() + 300,
+    )
+    assert found == [], "זו תשובה אמיתית: הרכב זוהה קודם, החלק לא שם"
+
+
+def test_a_resumed_walk_that_never_knew_the_car_is_still_a_failure(monkeypatch):
+    """החור שהיה ב-PR #80: הבדיקה חלה רק על מסע שהסתיים בבקשה אחת,
+    ולכן דילגה בדיוק על המקרה הנפוץ."""
+    monkeypatch.setattr(epc_vin, "MAX_HOPS", 4)
+    resume = Continuation(url="https://a.com/group/", hop=1, identified=False)
+    with pytest.raises(base.FetchError) as caught:
+        epc_vin.EpcVinSource().lookup(
+            VEHICLE, "fuel_pump", fetcher=_page(),
+            client=FakeClient({"parts": [], "next_url": "",
+                               "vehicle_confirmed": False}),
+            resume=resume, deadline=base.time.monotonic() + 300,
+        )
+    assert "לא זיהה את הרכב" in str(caught.value)
+
+
+def test_the_pause_writes_the_identification_forward(monkeypatch):
+    """מה שנקבע לפני העצירה נשמר להמשך, ולא נולד מחדש."""
+    monkeypatch.setattr(epc_vin, "MAX_HOPS", 4)
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    resume = Continuation()
+    epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(),
+        client=FakeClient({"parts": [], "next_url": "https://a.com/next/",
+                           "vehicle_confirmed": True}),
+        resume=resume, deadline=base.time.monotonic() - 1,
+    )
+    assert resume.identified is True
+    resume.clear()
+    assert resume.identified is False, "clear מאפס גם אותה"
