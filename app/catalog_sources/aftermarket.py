@@ -12,7 +12,8 @@ import os
 
 from ..taxonomy import type_name
 from . import trace
-from .base import Candidate, CatalogSource, FetchError, ask_model, condense, fetch, parser_available
+from .base import (Candidate, CatalogSource, FetchError, ask_model, condense,
+                   default_fetcher, fetch, fetcher_name, parser_available)
 
 URL_TEMPLATE = os.environ.get(
     "AFTERMARKET_URL", "https://www.autodoc.co.il/spare-parts/search?keyword={oem}"
@@ -75,13 +76,16 @@ class AftermarketSource(CatalogSource):
         # ריקה בלי שהתרחשה שום בקשה, ועל המסך זה נראה כמו "האתר לא
         # מצא". השורה הזו מבדילה בין השניים.
         trace.note(
+            f"{self.name}: הבאה: {fetcher_name(fetcher or default_fetcher())}"
+        )
+        trace.note(
             f"{self.name}: {len(numbers)} מספרים מקוריים לחיפוש"
             + (f" ({', '.join(numbers[:MAX_NUMBERS])})" if numbers
                else " - אין ממה להתחיל, השלב הקודם לא החזיר מק\"ט מקורי")
         )
         if not numbers:
             return []
-        get_page = fetcher or fetch
+        get_page = fetcher or default_fetcher()
         candidates = []
         seen = set()
         first_error = None
