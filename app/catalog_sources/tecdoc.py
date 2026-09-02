@@ -52,6 +52,9 @@ LANG = os.environ.get("TECDOC_LANG", "en")
 # או שאילתה אחרת = משתנה סביבה אחר, בלי פריסה מחדש.
 QUERY = os.environ.get("TECDOC_QUERY", "").strip()
 
+# גם כאן ברירת המחדל היא השערה שלא אומתה. בניגוד ל-Laximo היא לא נבדקה
+# מול האתר, ולכן אין לדעת אם היא עובדת - וזה בדיוק העניין: מקור שכתובתו
+# משוערת ידווח על כישלון בכל שליפה. ראה README.
 WEB_URL = os.environ.get(
     "TECDOC_WEB_URL", "https://webcat.tecalliance.services/search?query={oem}"
 )

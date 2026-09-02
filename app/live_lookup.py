@@ -30,6 +30,8 @@ from flask import current_app
 from sqlalchemy.exc import IntegrityError
 
 from . import catalog_sources, parts_discovery, services
+from .catalog_sources import trace
+from .catalog_sources.base import PARSE_MODEL, fetcher_kind
 from .models import Part, db
 from .taxonomy import PART_TYPES, type_name
 
@@ -42,6 +44,13 @@ CACHE_DAYS = int(os.environ.get("LOOKUP_CACHE_DAYS", 60))
 # תקרת שליפות חיות לארגון ליום. אחת שווה כמה בקשות רשת וכמה קריאות
 # מודל, ובלי תקרה לחיצה חוזרת היא חשבון פתוח.
 DAILY_LIMIT = int(os.environ.get("LOOKUP_DAILY_LIMIT", 50))
+
+# יומן החקירה. כמה תווים נשמרים בעבודה, וכמה שורות עולות למסך.
+# התקרה הקודמת (4,000 תווים, 20 שורות) נקבעה כשהיומן היה שורת סיכום
+# לכל מקור; יומן שמתעד כתובות, הפניות ותשובות מודל צריך מקום, אחרת
+# הוא נחתך בדיוק במקום שבו מתחילה החקירה.
+LOG_CHARS = int(os.environ.get("LOOKUP_LOG_CHARS", 24000))
+LOG_LINES = int(os.environ.get("LOOKUP_LOG_LINES", 200))
 
 
 def _now():
@@ -269,7 +278,7 @@ class LookupJob(db.Model):
             "part_type_name": type_name(self.part_type),
             "results": data.get("results") or [],
             "unverified": data.get("unverified") or [],
-            "log": (self.log or "").strip().split("\n")[-20:] if self.log else [],
+            "log": (self.log or "").strip().split("\n")[-LOG_LINES:] if self.log else [],
             "from_cache": False,
         }
 
@@ -332,6 +341,16 @@ def start_job(vehicle, part_type, user=None):
         results=json.dumps({"results": [], "unverified": []}, ensure_ascii=False),
         organization_id=organization_id,
         started_by_id=getattr(user, "id", None),
+    )
+    # הכותרת של היומן עונה על השאלה הראשונה בכל חקירה - *מה בעצם רץ*.
+    # ‏CATALOG_SOURCES ו-CATALOG_FETCHER נקראים בזמן ייבוא, ולכן אין
+    # דרך אחרת לדעת מהמסך אם משתנה סביבה שהוגדר אכן נתפס.
+    job.log = (
+        f"מקורות לפי הסדר: {' ← '.join(source.name for source in sources)}\n"
+        f"מסלול הבאה: {fetcher_kind()} · מודל פענוח: {PARSE_MODEL}\n"
+        f"רכב: {vehicle.get('make') or '—'} {vehicle.get('model') or ''} "
+        f"{vehicle.get('year') or ''} · מנוע {vehicle.get('engine_code') or '—'} · "
+        f"שלדה {vehicle.get('vin') or '—'}\n"
     )
     db.session.add(job)
     db.session.commit()
@@ -428,11 +447,16 @@ def run_step(job, runner=None):
         db.session.commit()
         return job
 
+    # יומן נקי לכל שלב: מה שנרשם כאן שייך למקור הזה בלבד, ולא נגרר
+    # מהמקור שרץ בבקשה הקודמת.
+    trace.start()
     try:
         candidates = (runner or _run_source)(source, vehicle, job.part_type, data)
     except Exception as exc:  # רשת, מפתח, מכסה או תשובה פגומה
         job.error = f"{source.name}: {exc}"
-        job.log = ((job.log or "") + f"{source.name}: {exc}\n")[-4000:]
+        # דווקא בכשל היומן הוא כל מה שיש: ההודעה אומרת *מה* קרה,
+        # והיומן אומר *איפה* - איזו כתובת נפתחה ומה חזר ממנה.
+        job.log = _append_log(job, trace.lines() + [f"{source.name}: {exc}"])
         # מקור שנפל אינו "לא נמצא". בלי הסימון הזה תקלת רשת רגעית
         # הייתה נשמרת במטמון והופכת לתשובה שלילית לחודשיים.
         data["failed"] = True
@@ -489,10 +513,14 @@ def run_step(job, runner=None):
             _result_row(raw, source, verified=False, reason=reason)
         )
     if rejected:
-        lines.append(f"    {len(rejected)} לא אומתו")
+        # הסיבה, ולא רק המספר: "מק"ט שנמצא ונפסל באימות" ו"מק"ט שלא
+        # נמצא בכלל" נראים זהים על המסך, והתיקון שלהם שונה לגמרי.
+        lines.append(f"    {len(rejected)} לא אומתו:")
+        for number, reason in rejected[:20]:
+            lines.append(f"      · {number or '?'} - {reason}")
 
     job.results = json.dumps(data, ensure_ascii=False)
-    job.log = ((job.log or "") + "\n".join(lines) + "\n")[-4000:]
+    job.log = _append_log(job, trace.lines() + lines)
     job.error = None
     job.cursor += 1
     job.updated_at = _now()
@@ -500,6 +528,14 @@ def run_step(job, runner=None):
     if job.cursor >= len(stages):
         return _finish(job)
     return job
+
+
+def _append_log(job, lines):
+    """מוסיף שורות ליומן העבודה, בתוך התקרה. מחזיר את היומן החדש."""
+    text = "\n".join(str(line) for line in lines if str(line).strip())
+    if not text:
+        return job.log or ""
+    return ((job.log or "") + text + "\n")[-LOG_CHARS:]
 
 
 def _run_source(source, vehicle, part_type, data):
