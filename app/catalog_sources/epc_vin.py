@@ -140,9 +140,15 @@ class EpcVinSource(CatalogSource):
         return bool(URL_TEMPLATE) and parser_available()
 
     def _follow(self, start_url, vehicle, part_type, get_page, client):
-        """תבנית אחת: הבאה, פענוח, ואם צריך צעד נוסף. מחזיר (מה שנמצא, כתובת)."""
+        """תבנית אחת: הבאה, פענוח, ואם צריך צעד נוסף.
+
+        מחזיר ``(מה שנמצא, כתובת, האם הדף זיהה את הרכב)``. הרכיב
+        השלישי הוא שמבדיל בין "האתר הכיר את הרכב ואין לו את החלק"
+        לבין "האתר לא הכיר את הרכב בכלל" - ראה ``lookup``.
+        """
         url = start_url
         found = []
+        identified = False
         for hop in range(MAX_HOPS):
             trace.note(f"  — צעד {hop + 1}/{MAX_HOPS} —")
             try:
@@ -168,6 +174,7 @@ class EpcVinSource(CatalogSource):
                 client=client,
             )
             found = payload.get("parts") or []
+            identified = identified or bool(payload.get("vehicle_confirmed"))
             next_url = str(payload.get("next_url") or "").strip()
             # שלוש התשובות האלה הן ההבדל בין "האתר לא מכיר את הרכב",
             # "הגענו לדף הנכון והחלק לא שם" ו"זה דף ביניים": בלעדיהן
@@ -188,7 +195,7 @@ class EpcVinSource(CatalogSource):
                 trace.note("    אין המשך לעקוב אחריו - עוצרים כאן.")
                 break
             url = next_url
-        return found, url
+        return found, url, identified
 
     def lookup(self, vehicle, part_type, oem_numbers=(), fetcher=None, client=None):
         vin = (vehicle.get("vin") or "").strip()
@@ -209,10 +216,11 @@ class EpcVinSource(CatalogSource):
                 trace.note(f"⚠ תבנית בלי {{vin}} - לא תוכל לזהות רכב: {template}")
 
         found, source_url, failure, answered = [], urls[0], None, False
+        identified = False
         for index, start in enumerate(urls, 1):
             trace.note(f"— תבנית {index}/{len(urls)}: {start} —")
             try:
-                found, source_url = self._follow(
+                found, source_url, confirmed = self._follow(
                     start, vehicle, part_type, get_page, client
                 )
             except FetchError as exc:
@@ -220,6 +228,7 @@ class EpcVinSource(CatalogSource):
                 trace.note(f"  התבנית הזו לא עבדה: {exc}")
                 continue
             answered = True
+            identified = identified or confirmed
             if found:
                 break
         # *כל* התבניות נפלו: זו תקלה, לא "לא נמצא". ההבחנה הזו היא מה
@@ -228,6 +237,18 @@ class EpcVinSource(CatalogSource):
         # שנפלה - אחרת תבנית שבורה ברשימה הייתה מסתירה אותה.
         if not answered and failure is not None:
             raise failure
+        # אותה הבחנה, צעד אחד פנימה. אתר שהחזיר 200 ודף תקין אבל לא
+        # זיהה את הרכב לא אמר "אין כאן כזה חלק" - הוא אמר "אני לא מכיר
+        # את הרכב הזה", ואלה שתי תשובות שונות לגמרי. בלי ההבחנה, קטלוג
+        # שמכסה יצרנים אחרים מהצי מחזיר "אין מק"ט" לכל רכב שאינו שלו,
+        # והתשובה הזו נשמרת במטמון לחודשיים - בדיוק הכישלון השקט
+        # שהכתובת השגויה יצרה, רק שהפעם הוא נכנס דרך בחירת האתר.
+        if answered and not found and not identified:
+            raise FetchError(
+                "האתר ענה, אבל אף עמוד לא זיהה את הרכב הזה - כלומר הוא "
+                "אינו מכסה אותו, ולא שהחלק חסר לו. בדוק שהקטלוג "
+                f"שב-EPC_VIN_URL מכיל את {_brand(vehicle.get('make')) or 'היצרן'}."
+            )
         candidates = []
         for raw in found:
             number = str(raw.get("oe_number") or "").strip()

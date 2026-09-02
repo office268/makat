@@ -14,7 +14,13 @@ from test_catalog_real_sources import FakeClient
 VEHICLE = {"make": "פיג'ו צרפת", "model": "5008", "year": 2020,
            "vin": "VF3M45GFRLS125956", "engine_code": "5G06", "plate": "1234567"}
 
-NOTHING = {"parts": [], "next_url": "", "vehicle_confirmed": False}
+# שתי התשובות הריקות האלה נראות זהות על המסך, והן הפוכות במשמעותן:
+# האחת אומרת "הכרתי את הרכב, החלק הזה לא אצלי" - תשובה, ששווה לשמור.
+# השנייה אומרת "לא הכרתי את הרכב בכלל" - כלומר האתר אינו מכסה אותו,
+# וזו לא תשובה שמותר לשמור במטמון כשלילית.
+NOT_IN_CATALOG = {"parts": [], "next_url": "", "vehicle_confirmed": True}
+UNKNOWN_CAR = {"parts": [], "next_url": "", "vehicle_confirmed": False}
+NOTHING = UNKNOWN_CAR  # שם ותיק, נשאר כדי לא לשבור קוראים קיימים
 SOMETHING = {"parts": [{"oe_number": "1525 QN", "name": "Fuel pump",
                         "confidence": "high"}],
              "next_url": "", "vehicle_confirmed": True}
@@ -78,7 +84,7 @@ def test_a_template_without_a_vin_placeholder_is_flagged(monkeypatch):
     monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/catalog/")
     trace.start()
     epc_vin.EpcVinSource().lookup(
-        VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(NOTHING)
+        VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(NOT_IN_CATALOG)
     )
     assert "תבנית בלי {vin}" in "\n".join(trace.lines())
 
@@ -150,9 +156,53 @@ def test_a_template_that_answered_nothing_beats_one_that_failed(monkeypatch):
         return html
 
     found = epc_vin.EpcVinSource().lookup(
-        VEHICLE, "fuel_pump", fetcher=fetcher, client=FakeClient(NOTHING)
+        VEHICLE, "fuel_pump", fetcher=fetcher, client=FakeClient(NOT_IN_CATALOG)
     )
     assert found == []
+
+
+# --------------------------------------------------------------------------
+# "לא הכרתי את הרכב" אינו "אין כאן כזה חלק"
+# --------------------------------------------------------------------------
+
+def test_a_catalog_that_does_not_cover_the_vehicle_is_not_an_empty_answer(monkeypatch):
+    """הכישלון השקט השני, וזה שנכנס דרך *בחירת האתר* ולא דרך הכתובת.
+
+    קטלוג שמכסה יצרנים אחרים מחזיר 200 ודף תקין לכל שלדה שאינה שלו.
+    בלי ההבחנה הזו התשובה "אין מק"ט לרכב הזה" נשמרת לחודשיים - על רכב
+    שהאתר מעולם לא הכיר.
+    """
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    with pytest.raises(base.FetchError) as caught:
+        epc_vin.EpcVinSource().lookup(
+            VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(UNKNOWN_CAR)
+        )
+    assert "לא זיהה את הרכב" in str(caught.value)
+    # השגיאה אומרת איזה יצרן חסר, כדי שאפשר יהיה לפעול לפיה
+    assert "פיג'ו" in str(caught.value)
+    assert "EPC_VIN_URL" in str(caught.value)
+
+
+def test_a_page_that_knew_the_car_and_had_no_part_stays_an_answer(monkeypatch):
+    """הצד השני של אותה הבחנה - אחרת לא היינו שומרים אף תשובה שלילית."""
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE", "https://a.com/?q={vin}")
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(), client=FakeClient(NOT_IN_CATALOG)
+    )
+    assert found == []
+
+
+def test_one_template_that_knew_the_car_rescues_the_whole_lookup(monkeypatch):
+    """תבנית שזיהתה את הרכב הופכת את התשובה לאמיתית, גם אם אחותה לא."""
+    monkeypatch.setattr(epc_vin, "URL_TEMPLATE",
+                        "https://blind.com/{vin}|https://knows.com/{vin}")
+    # התבנית הראשונה לא הכירה את הרכב, השנייה כן - ואין לה את החלק.
+    client = FakeClient(UNKNOWN_CAR, NOT_IN_CATALOG)
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "fuel_pump", fetcher=_page(), client=client
+    )
+    assert found == []
+    assert len(client.messages.prompts) == 2
 
 
 def test_when_every_template_fails_it_is_a_failure(monkeypatch):
