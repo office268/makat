@@ -41,6 +41,9 @@ SKIP_ENDPOINTS = frozenset(
         "admin.discovery_status",
         "admin.discovery_step",
         "admin.discovery_plan",
+        "admin.seed_status",
+        "admin.seed_step",
+        "admin.seed_propose",
     }
 )
 
@@ -65,6 +68,9 @@ ACTION_LABELS = {
     "identify.lookup_step": "שליפה חיה - שלב",
     "identify.lookup_cancel": "ביטול שליפה חיה",
     "lookup.stopped": "שליפה חיה - נעצרה אחרי מקור",
+    "admin.seed": "זריעת הקטלוג",
+    "admin.seed_start": "זריעת קטלוג - הפעלה",
+    "admin.seed_cancel": "זריעת קטלוג - ביטול",
     "identify.api_vehicle": "שליפת רכב (API)",
     "identify.api_identify": "זיהוי חלק (API)",
     "web.dashboard": "לוח מחוונים",
