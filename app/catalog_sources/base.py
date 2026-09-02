@@ -32,6 +32,9 @@ FETCH_TIMEOUT = float(os.environ.get("CATALOG_FETCH_TIMEOUT", 12))
 # כמה תווים מהדף המצומצם נשלחים למודל. דף קטלוג מגיע ל-300KB, והחלק
 # המעניין בו הוא כמה אלפי תווים.
 MAX_CONDENSED = int(os.environ.get("CATALOG_MAX_CONDENSED", 30000))
+# מתחת לזה הדף אינו דף: עמוד קטלוג אמיתי מגיע לאלפי תווי טקסט, ושלד
+# שנבנה ב-JavaScript מגיע לכמה עשרות.
+MIN_TEXT = int(os.environ.get("CATALOG_MIN_TEXT", 200))
 # נשימה בין בקשות לאותו מארח. אנחנו אורחים באתר של מישהו אחר.
 HOST_PAUSE = float(os.environ.get("CATALOG_HOST_PAUSE", 1.0))
 RESPECT_ROBOTS = os.environ.get("CATALOG_RESPECT_ROBOTS", "1").strip() != "0"
@@ -243,6 +246,18 @@ def describe_page(html, url="", final_url="", status=None, elapsed=None,
     _landed.url = final_url or url
 
 
+def _http_hint(code):
+    """מה לעשות עם קוד השגיאה הזה. ריק כשאין עצה טובה."""
+    return {
+        403: "האתר חוסם אותנו. ScraperAPI, ואם גם הוא נחסם - "
+             "SCRAPERAPI_PREMIUM=1 (פרוקסי מגורים).",
+        404: "הכתובת אינה קיימת באתר. בדוק את התבנית ב-EPC_VIN_URL.",
+        429: "חריגה מקצב הבקשות. העלה את CATALOG_HOST_PAUSE.",
+        500: "האתר עצמו נפל. שווה לנסות שוב מאוחר יותר.",
+        503: "האתר עצמו נפל. שווה לנסות שוב מאוחר יותר.",
+    }.get(code, "")
+
+
 def content_type(response):
     """‏Content-Type מהתשובה, או ריק.
 
@@ -265,6 +280,8 @@ def fetch(url, timeout=None):
     trace.note(f"→ הבאה ישירה: {url}")
     if not allowed_by_robots(url):
         trace.note("  ← נחסם ב-robots.txt")
+        trace.stage("הבאת הדף", False, "robots.txt של האתר אוסר את הכתובת",
+                    "אתר שאוסר גרידה - צריך מקור אחר, או הסכם מולו.")
         raise FetchError(f"robots.txt של האתר אוסר את הכתובת: {url}")
     _breathe(url)
     request = urllib.request.Request(
@@ -290,9 +307,13 @@ def fetch(url, timeout=None):
             return body
     except urllib.error.HTTPError as exc:
         trace.note(f"  ← HTTP {exc.code} {exc.reason}")
+        trace.stage("הבאת הדף", False, f"האתר החזיר {exc.code} {exc.reason}",
+                    _http_hint(exc.code))
         raise FetchError(f"האתר החזיר {exc.code} עבור {url}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         trace.note(f"  ← לא נענה: {type(exc).__name__}: {exc}")
+        trace.stage("הבאת הדף", False, f"{type(exc).__name__}: {exc}",
+                    "בדוק חיבור רשת, או הגדר ScraperAPI אם האתר חוסם ענן.")
         raise FetchError(f"לא ניתן להגיע ל-{url}: {exc}") from exc
 
 
@@ -364,11 +385,31 @@ def condense(html, base_url="", limit=None):
     text = re.sub(r"\n{3,}", "\n\n", text)
     cap = limit or MAX_CONDENSED
     result = text[:cap]
+    links = sum(1 for chunk in parser.chunks if chunk.startswith("[LINK "))
+    images = sum(1 for chunk in parser.chunks if chunk.startswith("[IMG "))
+    # *אורך* הטקסט ולא מספר הקטעים: עמוד עם פסקה אחת ארוכה הוא עמוד
+    # מלא, ועמוד עם חמישים כותרות ריקות הוא שלד. ספירת קטעים הייתה
+    # מסמנת את הראשון כשלד ומפספסת את השני.
+    letters = sum(len(chunk) for chunk in parser.chunks
+                  if not chunk.startswith(("[LINK ", "[IMG ")))
     trace.note(
         f"  צמצום: {len(html or ''):,} → {len(text):,} תווים"
         + (f" (נחתך ל-{cap:,})" if len(text) > cap else "")
-        + f" · {len(parser.chunks):,} קטעים"
+        + f" · {letters:,} תווי טקסט · {links:,} קישורים · {images:,} תמונות"
     )
+    # דף שנראה תקין בגודלו אבל אין בו טקסט הוא שלד שנבנה ב-JavaScript,
+    # וזו תקלה אחרת לגמרי מ"הדף לא רלוונטי". המדידה מבדילה ביניהן.
+    if letters < MIN_TEXT:
+        trace.note("  ⚠ כמעט אין טקסט בדף - ייתכן ששלד ריק שנבנה ב-JavaScript")
+        trace.stage(
+            "תוכן הדף", False,
+            f"רק {letters} תווי טקסט בדף של {len(html or ''):,} תווים",
+            "האתר בונה את התוכן ב-JavaScript. צריך SCRAPERAPI_RENDER=1 "
+            "(ברירת מחדל) או מסלול דפדפן.",
+        )
+    else:
+        trace.stage("תוכן הדף", True,
+                    f"{letters:,} תווי טקסט · {links:,} קישורים · {images:,} תמונות")
     trace.preview(result, "  הטקסט שנשלח למודל")
     return result
 
