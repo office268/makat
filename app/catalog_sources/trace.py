@@ -21,6 +21,7 @@
 """
 import os
 import re
+import sys
 import threading
 
 # כיבוי מלא בסביבה שלא רוצה את התקורה. ברירת המחדל דלוקה: יומן שכבוי
@@ -32,6 +33,12 @@ MAX_LINES = int(os.environ.get("CATALOG_TRACE_LINES", 200))
 # כמה מהטקסט שנשלח למודל נכנס ליומן. זו השורה שמבדילה בין דף תוצאות
 # לדף נחיתה, ומאתיים תווים מספיקים לה.
 PREVIEW_CHARS = int(os.environ.get("CATALOG_TRACE_PREVIEW", 400))
+# האם היומן נשפך גם ל-stdout. ‏gunicorn רץ עם accesslog="-", ו-Railway
+# אוסף את stdout של המכולה - כך שכל שורה כאן מגיעה ליומן הריצה של
+# השירות, ואפשר לקרוא כישלון בלי שמישהו יעתיק אותו מהמסך.
+TO_STDOUT = os.environ.get("CATALOG_TRACE_STDOUT", "1").strip() != "0"
+# הסימן שמאפשר לשלוף את השורות שלנו מתוך יומן שרובו שורות גישה.
+MARKER = "[makat]"
 
 _local = threading.local()
 
@@ -135,3 +142,45 @@ def preview(text, label="פתיחת הטקסט"):
         return
     cut = flat[:PREVIEW_CHARS]
     note(f"{label}: {cut}" + ("…" if len(flat) > PREVIEW_CHARS else ""))
+
+
+# --------------------------------------------------------------------------
+# שפיכה ל-stdout: היומן במקום שאפשר לקרוא ממנו מרחוק
+# --------------------------------------------------------------------------
+
+# מפתחות שנכנסים לכתובת של שירות הבאה. היומן רושם את כתובת *היעד*
+# ולא את הכתובת הבנויה, אבל שורה אחת שתעקוף את זה תדליף מפתח ליומן
+# שאפשר לקרוא מהדשבורד, ולכן החיתוך כאן ולא במקום שמייצר את השורה.
+_SECRET = re.compile(r"\b(api_?key|token|secret|password)=([^&\s\"']+)", re.I)
+
+
+def _safe(line):
+    return _SECRET.sub(r"\1=***", str(line))
+
+
+def echo(title, extra=()):
+    """שופך את היומן של השלב ל-stdout, כבלוק אחד וממוסגר.
+
+    הבלוק נכתב בכתיבה אחת כדי שלא יתערבב עם עובד אחר שכותב במקביל,
+    וכל שורה נושאת את ``MARKER`` כדי שאפשר יהיה לסנן אותה משורות
+    הגישה. כישלון בכתיבה נבלע: יומן לא מפיל שליפה.
+    """
+    if not TO_STDOUT:
+        return
+    rows = list(lines()) + [str(item) for item in extra if str(item).strip()]
+    stop = verdict()
+    if stop:
+        detail = f" - {stop['detail']}" if stop["detail"] else ""
+        rows.append(f"✗ נעצר ב: {stop['name']}{detail}")
+        # הרמז הוא מה *לעשות*. בלעדיו הבלוק אומר מה נשבר ולא מה לתקן,
+        # ומי שקורא יומן מרחוק הוא בדיוק מי שצריך את החלק השני.
+        if stop["hint"]:
+            rows.append(f"  ← {stop['hint']}")
+    block = [f"{MARKER} ── {_safe(title)}"]
+    block += [f"{MARKER} {_safe(row)}" for row in rows]
+    block.append(f"{MARKER} ── סוף ({len(rows)} שורות)")
+    try:
+        sys.stdout.write("\n".join(block) + "\n")
+        sys.stdout.flush()
+    except Exception:
+        pass

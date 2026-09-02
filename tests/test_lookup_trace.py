@@ -356,3 +356,91 @@ def test_the_stored_log_is_bounded_too(app, monkeypatch):
 
         live_lookup.run_step(job, runner=runner)
         assert len(job.log) <= 200
+
+
+# --------------------------------------------------------------------------
+# היומן ב-stdout: אותן שורות, במקום שאפשר לקרוא ממנו מרחוק
+# --------------------------------------------------------------------------
+
+def test_the_trace_also_goes_to_stdout_so_it_can_be_read_from_the_server_log(
+        app, capsys):
+    """היומן בבסיס הנתונים עונה למי שמול המסך; ‏stdout עונה למי שמרחוק."""
+    with app.app_context():
+        job = _job()
+
+        def runner(source, vehicle, part_type, data, **_):
+            trace.note("→ ScraperAPI: https://partsouq.com/en/search/all?q=X")
+            raise base.FetchError("האתר החזיר 403")
+
+        live_lookup.run_step(job, runner=runner)
+    out = capsys.readouterr().out
+    assert trace.MARKER in out
+    assert "https://partsouq.com/en/search/all?q=X" in out
+    assert "האתר החזיר 403" in out
+    # השורה הראשונה היא מי הרכב ומה החלק - בלעדיה בלוק ביומן משותף
+    # הוא שורות בלי בעלים.
+    assert VEHICLE["vin"] in out
+
+
+def test_every_stdout_line_carries_the_marker_so_it_can_be_filtered(app, capsys):
+    """יומן השירות רובו שורות גישה. בלי סימן אין דרך לשלוף משם בלוק."""
+    with app.app_context():
+        job = _job()
+
+        def runner(source, vehicle, part_type, data, **_):
+            trace.note("שורה ראשונה")
+            trace.note("שורה שנייה")
+            return []
+
+        live_lookup.run_step(job, runner=runner)
+    printed = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert printed
+    assert all(line.startswith(trace.MARKER) for line in printed)
+
+
+def test_the_failed_stage_is_the_last_line_of_the_block(app, capsys):
+    """מי שקורא יומן מרחוק רוצה את הסיבה בשורה אחת, לא בשלושים."""
+    with app.app_context():
+        job = _job()
+
+        def runner(source, vehicle, part_type, data, **_):
+            trace.stage("הבאת הדף", True, "HTTP 200")
+            trace.stage("תוכן הדף", False, "רק 12 תווי טקסט",
+                        "האתר בונה את התוכן ב-JavaScript")
+            return []
+
+        live_lookup.run_step(job, runner=runner)
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert "נעצר ב: תוכן הדף" in lines[-3]
+    assert "רק 12 תווי טקסט" in lines[-3]
+    # הרמז אומר מה לעשות, וזה החלק שמי שקורא מרחוק צריך
+    assert "האתר בונה את התוכן ב-JavaScript" in lines[-2]
+
+
+def test_a_key_that_leaks_into_a_line_does_not_reach_the_server_log(app, capsys):
+    """היומן רושם כתובת יעד ולא כתובת בנויה, אבל שורה אחת שתעקוף את
+    זה תדליף מפתח ליומן שקריא מהדשבורד."""
+    with app.app_context():
+        job = _job()
+
+        def runner(source, vehicle, part_type, data, **_):
+            trace.note("→ https://api.scraperapi.com/?api_key=SECRET123&url=x")
+            return []
+
+        live_lookup.run_step(job, runner=runner)
+    out = capsys.readouterr().out
+    assert "SECRET123" not in out
+    assert "api_key=***" in out
+
+
+def test_stdout_can_be_turned_off(app, capsys, monkeypatch):
+    monkeypatch.setattr(trace, "TO_STDOUT", False)
+    with app.app_context():
+        job = _job()
+
+        def runner(source, vehicle, part_type, data, **_):
+            trace.note("שורה")
+            return []
+
+        live_lookup.run_step(job, runner=runner)
+    assert trace.MARKER not in capsys.readouterr().out

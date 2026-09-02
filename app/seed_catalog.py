@@ -19,9 +19,11 @@
 שהוא משלם על הבא. העבודה נעצרת אחרי כל מק"ט ומחכה.
 """
 import json
+import sys
 from datetime import datetime, timezone
 
 from . import live_lookup, services, vehicles
+from .catalog_sources import trace
 from .fleet_stats import FleetModelCount
 from .models import db
 from .taxonomy import PART_TYPES, type_name
@@ -270,7 +272,19 @@ def _vehicle_of(target):
 
 
 def _note(job, line):
+    """שורה ליומן הזריעה, ובמקביל ליומן הריצה של השירות.
+
+    הזריעה היא התהליך שרץ בלי שאיש מסתכל על המסך: לוחצים, וחוזרים
+    כעבור רבע שעה לראות כמה נמצא. השורה ב-stdout היא מה שמאפשר
+    לראות *איזו* מטרה נפלה ולמה, אחרי שהחלון כבר נסגר.
+    """
     job.log = ((job.log or "") + line + "\n")[-20000:]
+    if trace.TO_STDOUT:
+        try:
+            sys.stdout.write(f"{trace.MARKER} זריעה {job.id}: {line}\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
 
 
 def _close(job, target, outcome, detail, numbers=(), saved=0):

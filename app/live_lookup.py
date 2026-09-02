@@ -504,6 +504,7 @@ def run_step(job, runner=None):
         # דווקא בכשל היומן הוא כל מה שיש: ההודעה אומרת *מה* קרה,
         # והיומן אומר *איפה* - איזו כתובת נפתחה ומה חזר ממנה.
         job.log = _append_log(job, trace.lines() + [f"{source.name}: {exc}"])
+        _echo(job, source, vehicle, [f"{source.name}: {exc}"])
         # מקור שנפל אינו "לא נמצא". בלי הסימון הזה תקלת רשת רגעית
         # הייתה נשמרת במטמון והופכת לתשובה שלילית לחודשיים.
         data["failed"] = True
@@ -520,6 +521,8 @@ def run_step(job, runner=None):
     if resume.url:
         job.resume_url, job.resume_hop = resume.url[:500], resume.hop
         job.log = _append_log(job, trace.lines())
+        _echo(job, source, vehicle,
+              [f"נעצר על תקציב הזמן בעקיפה {resume.hop}, ימשיך מ-{resume.url}"])
         job.diagnosis = _diagnosis(source)
         job.error = None
         job.updated_at = _now()
@@ -580,6 +583,7 @@ def run_step(job, runner=None):
 
     job.results = json.dumps(data, ensure_ascii=False)
     job.log = _append_log(job, trace.lines() + lines)
+    _echo(job, source, vehicle, lines)
     job.diagnosis = _diagnosis(source, saved=bool(accepted) and not read_only,
                                read_only=read_only, accepted=len(accepted))
     job.error = None
@@ -612,6 +616,26 @@ def _diagnosis(source, error=None, saved=None, read_only=False, accepted=0):
             rows.append({"name": "שמירה בקטלוג", "ok": True,
                          "detail": f"{accepted} מק\"טים נשמרו", "hint": ""})
     return json.dumps(rows, ensure_ascii=False)[:8000]
+
+
+def _echo(job, source, vehicle, extra=()):
+    """מוציא את יומן השלב ל-stdout, ומשם ליומן הריצה של השירות.
+
+    היומן בבסיס הנתונים עונה למי שיושב מול המסך. הוא לא עונה למי
+    שמנסה להבין תקלה מרחוק, כי אין דרך לקרוא ממנו בלי גישה לבסיס
+    הנתונים. אותן שורות בדיוק, ב-stdout, נגישות לכל מי שקורא את
+    יומן השירות - וזו הדרך היחידה לאבחן כישלון בלי להעתיק אותו ביד.
+    """
+    label = " ".join(str(part) for part in (
+        vehicle.get("make"), vehicle.get("model"), vehicle.get("year")
+    ) if part)
+    vin = vehicle.get("vin") or ""
+    trace.echo(
+        f"שליפה {job.id} · {source.name} · {label or '?'}"
+        + (f" · {vin}" if vin else "")
+        + f" · {job.part_type}",
+        extra,
+    )
 
 
 def _append_log(job, lines):
