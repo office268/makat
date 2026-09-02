@@ -278,3 +278,152 @@ def test_a_proposal_does_not_start_anything(superadmin, app, monkeypatch):
     assert body["count"] == 1 and body["vehicles"] == 1
     with app.app_context():
         assert seed_catalog.active_job() is None
+
+
+# --------------------------------------------------------------------------
+# הצי הקבוע: הרכבים כתובים, ולא נגזרים מחדש בכל לחיצה
+# --------------------------------------------------------------------------
+
+MAZDA = {"plate": "7654321", "vin": "JMZBM14F601234567", "make": "מאזדה יפן",
+         "model": "3", "year": 2016, "engine_code": "PE", "model_code": "BM",
+         "source": "data.gov.il"}
+
+
+def test_without_a_saved_fleet_the_list_moves_under_your_feet(app):
+    """זו הבעיה שהטבלה פותרת, ולכן היא נבדקת לפני הפתרון.
+
+    צילום צי חדש מחליף את הסדר, וייבוא מרשם חדש מחליף את הרכב
+    המייצג - ואותה לחיצה מייצרת מחר רשימה אחרת.
+    """
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    with app.app_context():
+        first, _ = seed_catalog.propose(1, part_types=["oil_filter"],
+                                        lookup=lambda make, model: COROLLA)
+        # אותו דגם, רכב מייצג אחר מהמרשם
+        other = dict(COROLLA, vin="JTNBV58E20J999999", plate="9999999")
+        second, _ = seed_catalog.propose(1, part_types=["oil_filter"],
+                                         lookup=lambda make, model: other)
+        assert first[0]["vin"] != second[0]["vin"]
+
+
+def test_a_saved_fleet_is_read_and_not_rebuilt(app):
+    """אחרי שנקבע, המרשם והצילום כבר לא משנים את הרשימה."""
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA])
+        targets, skipped = seed_catalog.propose(
+            10, part_types=["oil_filter"],
+            # מרשם שמחזיר רכב אחר לגמרי - ולא אמור להישאל בכלל
+            lookup=lambda make, model: MAZDA,
+        )
+        assert [t["vin"] for t in targets] == [COROLLA["vin"]]
+        assert skipped == []
+
+
+def test_the_saved_fleet_keeps_the_order_it_was_given(app):
+    with app.app_context():
+        seed_catalog.save_fleet([MAZDA, COROLLA])
+        assert [row.vin for row in seed_catalog.fleet()] == \
+            [MAZDA["vin"], COROLLA["vin"]]
+        assert [row.position for row in seed_catalog.fleet()] == [0, 1]
+
+
+def test_saving_replaces_the_fleet_and_does_not_merge_into_it(app):
+    """מיזוג היה מותיר ברשימה רכב שנמחק בעריכה."""
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA, MAZDA])
+        seed_catalog.save_fleet([MAZDA])
+        assert [row.vin for row in seed_catalog.fleet()] == [MAZDA["vin"]]
+
+
+def test_the_same_vin_twice_is_saved_once(app):
+    """אותו רכב פעמיים הוא אותה זריעה פעמיים, על חשבון מי שלוחץ."""
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA, dict(COROLLA, plate="0000000")])
+        assert len(seed_catalog.fleet()) == 1
+
+
+def test_a_fleet_without_a_vin_is_refused(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            seed_catalog.save_fleet([{"make": "טויוטה", "model": "COROLLA"}])
+
+
+def test_an_inactive_vehicle_stays_on_record_but_out_of_the_plan(app):
+    """ביטול החלטה שמוחק את הראיה הוא ביטול שאי אפשר לחזור ממנו."""
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA, dict(MAZDA, active=False)])
+        assert [row.vin for row in seed_catalog.fleet()] == [COROLLA["vin"]]
+        assert len(seed_catalog.fleet(include_inactive=True)) == 2
+
+
+def test_the_first_seed_run_fixes_the_fleet_by_itself(app):
+    """מי ששותק מקבל יציבות: הזריעה הראשונה כותבת את הרכבים."""
+    with app.app_context():
+        assert not seed_catalog.fleet_is_set()
+        seed_catalog.start_job([dict(COROLLA, part_type="oil_filter"),
+                                dict(COROLLA, part_type="air_filter"),
+                                dict(MAZDA, part_type="oil_filter")])
+        assert [row.vin for row in seed_catalog.fleet()] == \
+            [COROLLA["vin"], MAZDA["vin"]]
+
+
+def test_a_second_run_does_not_overwrite_a_fleet_that_was_set(app):
+    with app.app_context():
+        seed_catalog.save_fleet([MAZDA])
+        job = seed_catalog.start_job([dict(COROLLA, part_type="oil_filter")])
+        seed_catalog.cancel_job(job)
+        assert [row.vin for row in seed_catalog.fleet()] == [MAZDA["vin"]]
+
+
+def test_releasing_the_fleet_brings_the_derivation_back(app):
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    with app.app_context():
+        seed_catalog.save_fleet([MAZDA])
+        assert seed_catalog.clear_fleet() == 1
+        targets, _, fixed = seed_catalog.propose_detailed(
+            1, part_types=["oil_filter"], lookup=lambda make, model: COROLLA)
+        assert [t["vin"] for t in targets] == [COROLLA["vin"]]
+        assert fixed is False
+
+
+# --------------------------------------------------------------------------
+# המסך
+# --------------------------------------------------------------------------
+
+def test_the_screen_saves_the_fleet_and_says_it_is_fixed(app, superadmin):
+    response = superadmin.post("/admin/seed/fleet", data={
+        "vehicles": json.dumps([COROLLA, MAZDA])})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 2
+    assert payload["fixed"] is True
+    with app.app_context():
+        assert [row.vin for row in seed_catalog.fleet()] == \
+            [COROLLA["vin"], MAZDA["vin"]]
+
+
+def test_the_proposal_says_whether_the_list_is_fixed(app, superadmin):
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA])
+    payload = superadmin.get(
+        "/admin/seed/propose?vehicles=1&part_type=oil_filter").get_json()
+    assert payload["fixed"] is True
+    assert payload["vehicles"] == 1
+
+
+def test_the_screen_can_release_the_fleet(app, superadmin):
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA])
+    payload = superadmin.post("/admin/seed/fleet/clear").get_json()
+    assert payload["removed"] == 1
+    assert payload["fixed"] is False
+    with app.app_context():
+        assert not seed_catalog.fleet_is_set()
+
+
+def test_a_fleet_save_without_vehicles_is_a_clear_error(app, superadmin):
+    response = superadmin.post("/admin/seed/fleet", data={"vehicles": "[]"})
+    assert response.status_code == 400
+    assert "רכבים" in response.get_json()["error"]

@@ -381,6 +381,7 @@ def seed():
         default_vehicles=seed_catalog.DEFAULT_VEHICLES,
         available=live_lookup.available(),
         catalog_size=Part.query.count(),
+        fleet_fixed=seed_catalog.fleet_is_set(),
     )
 
 
@@ -405,13 +406,55 @@ def seed_propose():
     except ValueError:
         limit = seed_catalog.DEFAULT_VEHICLES
     chosen = request.args.getlist("part_type") or None
-    targets, skipped = seed_catalog.propose(limit, part_types=chosen)
+    if request.args.get("fresh") == "1":
+        # בנייה מחדש מהנתונים, במפורש. הצי הקבוע נמחק כאן ולא בשקט:
+        # מי שלחץ "בנה מחדש" ביקש רשימה אחרת, וזו הפעולה.
+        seed_catalog.clear_fleet()
+    targets, skipped, fixed = seed_catalog.propose_detailed(limit, part_types=chosen)
     return jsonify({
         "targets": targets,
         "skipped": skipped,
         "count": len(targets),
         "vehicles": len({t["vin"] for t in targets}),
+        "fixed": fixed,
     })
+
+
+@admin_bp.get("/seed/fleet")
+@superadmin_required
+def seed_fleet():
+    """הצי הקבוע כפי שהוא שמור."""
+    rows = [vehicle.as_row() for vehicle in seed_catalog.fleet(include_inactive=True)]
+    return jsonify({"fleet": rows, "count": len(rows)})
+
+
+@admin_bp.post("/seed/fleet")
+@superadmin_required
+def seed_fleet_save():
+    """קובע את הצי: הרכבים שברשימה נכתבים, ומעכשיו הם המקור."""
+    try:
+        rows = json.loads(request.form.get("vehicles") or "[]")
+    except ValueError:
+        return jsonify({"error": "רשימת הרכבים אינה תקינה."}), 400
+    try:
+        saved = seed_catalog.save_fleet(rows)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    activity.note(
+        summary=f"צי הזריעה נקבע · {len(saved)} רכבים",
+        vehicles=[vehicle.vin for vehicle in saved],
+    )
+    return jsonify({"fleet": [vehicle.as_row() for vehicle in saved],
+                    "count": len(saved), "fixed": True})
+
+
+@admin_bp.post("/seed/fleet/clear")
+@superadmin_required
+def seed_fleet_clear():
+    """משחרר את הצי. הלחיצה הבאה תציע רשימה חדשה מהנתונים."""
+    removed = seed_catalog.clear_fleet()
+    activity.note(summary=f"צי הזריעה שוחרר · {removed} רכבים")
+    return jsonify({"count": 0, "fixed": False, "removed": removed})
 
 
 @admin_bp.post("/seed/start")

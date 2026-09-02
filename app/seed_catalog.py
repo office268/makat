@@ -14,6 +14,11 @@
 מכדי שיושקע בהם. זה בדיוק "נפוץ מאוד ויש לו פוטנציאל מכירה", והוא
 נמדד ולא משוער.
 
+**קבוע ולא נגזר.** הרכבים נכתבים ל-``seed_vehicles`` ומשם נקראים.
+רשימה שנגזרת מחדש בכל לחיצה זזה מתחת לרגליים - צילום צי חדש מחליף
+את הסדר, וייבוא מרשם חדש מחליף את השלדה המייצגת - וזריעה שבנתה מאגר
+במשך שבוע הייתה ממשיכה לשלדות אחרות ומפזרת את מה שנצבר.
+
 **קצב.** מטרה אחת לכל פעולה, ולא הרצה של שעות. כל מטרה היא כמה בקשות
 רשת וקריאות מודל שעולות כסף, והאדם שלוחץ צריך לראות מה קיבל לפני
 שהוא משלם על הבא. העבודה נעצרת אחרי כל מק"ט ומחכה.
@@ -87,34 +92,194 @@ def a_vehicle_of(make, model, lookup=None):
     return found
 
 
-def propose(limit=DEFAULT_VEHICLES, part_types=None, lookup=None):
-    """הצעת רשימת מטרות: רכבים מובילים × חלקים נצרכים.
+class SeedVehicle(db.Model):
+    """הצי הקבוע של הזריעה: הרכבים, כתובים ולא מחושבים מחדש בכל פעם.
 
-    מחזיר (מטרות, דילוגים). דילוג הוא דגם שאין לו רכב עם שלדה במרשם,
-    והוא מוצג ולא נבלע - "הצענו 7 מתוך 10" היא עובדה שצריך לראות.
+    בלי הטבלה הזו הרשימה נגזרת מחדש בכל לחיצה: ``FleetModelCount``
+    ממוין מחדש, ומהמרשם נשלף *רכב מייצג אחד* לכל דגם. שני הצדדים
+    זזים - צילום צי חדש מחליף את הסדר, וייבוא מרשם חדש מחליף את
+    השלדה - וכך אותה לחיצה מייצרת מחר רשימה אחרת.
+
+    זו בעיה אמיתית ולא תיאורטית, כי הזריעה בונה מאגר לאורך זמן: מק"ט
+    שהובא אתמול לשלדה א' לא נמצא מחר אם המערכת שואלת על שלדה ב', והצי
+    שהושקע בו מתפזר. רשימה קבועה היא מה שהופך זריעה של שבוע לקטלוג
+    ולא לאוסף ניסיונות.
+
+    השורות נכתבות פעם אחת - מהצעה אוטומטית, אחרי עריכה - ומשם הן
+    המקור. ``vehicles`` ו-``prime`` נשמרים כראיה למה הרכב נבחר, לא
+    כמדד חי: הם הצילום שלפיו הוחלט.
     """
-    types = [t for t in (part_types or DEFAULT_PART_TYPES) if t in PART_TYPES]
-    targets, skipped = [], []
+
+    __tablename__ = "seed_vehicles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    # הסדר שבו נזרעים. הראשון הוא הנפוץ ביותר, וזה גם סדר התשלום.
+    position = db.Column(db.Integer, default=0, nullable=False, index=True)
+    vin = db.Column(db.String(32), nullable=False, unique=True)
+    plate = db.Column(db.String(20), default="")
+    make = db.Column(db.String(80), nullable=False)
+    model = db.Column(db.String(120), nullable=False)
+    year = db.Column(db.Integer)
+    engine_code = db.Column(db.String(40), default="")
+    model_code = db.Column(db.String(60), default="")
+    # הצילום שלפיו נבחר, ולא ספירה חיה.
+    vehicles = db.Column(db.Integer, default=0, nullable=False)
+    prime = db.Column(db.Integer, default=0, nullable=False)
+    # כיבוי רכב בלי למחוק אותו: הרשימה היא החלטה, וביטול החלטה
+    # שמוחק את הראיה הוא ביטול שאי אפשר לחזור ממנו.
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    note = db.Column(db.String(200), default="")
+    created_at = db.Column(db.DateTime, default=_now)
+    updated_at = db.Column(db.DateTime, default=_now)
+
+    def as_row(self):
+        return {
+            "id": self.id,
+            "position": self.position,
+            "plate": self.plate or "",
+            "vin": self.vin,
+            "make": self.make,
+            "model": self.model,
+            "year": self.year,
+            "engine_code": self.engine_code or "",
+            "model_code": self.model_code or "",
+            "vehicles": self.vehicles,
+            "prime": self.prime,
+            "active": self.active,
+            "note": self.note or "",
+        }
+
+
+def fleet(include_inactive=False):
+    """הצי הקבוע, לפי סדר. רשימה ריקה = עוד לא נקבע."""
+    query = SeedVehicle.query
+    if not include_inactive:
+        query = query.filter_by(active=True)
+    return query.order_by(SeedVehicle.position, SeedVehicle.id).all()
+
+
+def fleet_is_set():
+    return db.session.query(SeedVehicle.id).first() is not None
+
+
+def save_fleet(rows):
+    """כותב את הצי, ומחליף את מה שהיה. מחזיר את השורות שנשמרו.
+
+    החלפה ולא מיזוג: הרשימה היא החלטה אחת ולא אוסף שנצבר, ומיזוג היה
+    מותיר בה רכב שנמחק בעריכה. כפילות שלדה נבלעת - אותו רכב פעמיים
+    הוא אותה זריעה פעמיים, על חשבון מי שלוחץ.
+    """
+    seen, clean = set(), []
+    for row in rows or ():
+        vin = str((row or {}).get("vin") or "").strip().upper()
+        if not vin or vin in seen:
+            continue
+        seen.add(vin)
+        clean.append((vin, row))
+    if not clean:
+        raise ValueError("אין רכבים לשמור.")
+
+    SeedVehicle.query.delete()
+    saved = []
+    for position, (vin, row) in enumerate(clean):
+        vehicle = SeedVehicle(
+            position=position,
+            vin=vin,
+            plate=str(row.get("plate") or "")[:20],
+            make=str(row.get("make") or "")[:80],
+            model=str(row.get("model") or "")[:120],
+            year=_as_int(row.get("year")),
+            engine_code=str(row.get("engine_code") or "")[:40],
+            model_code=str(row.get("model_code") or "")[:60],
+            vehicles=_as_int(row.get("vehicles")) or 0,
+            prime=_as_int(row.get("prime")) or 0,
+            active=bool(row.get("active", True)),
+            note=str(row.get("note") or "")[:200],
+        )
+        db.session.add(vehicle)
+        saved.append(vehicle)
+    db.session.commit()
+    return saved
+
+
+def clear_fleet():
+    """מוחק את הצי הקבוע. הלחיצה הבאה תציע רשימה חדשה מהנתונים."""
+    removed = SeedVehicle.query.delete()
+    db.session.commit()
+    return removed
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fleet_rows(limit, lookup=None):
+    """הרכבים שייזרעו, ומאיפה הם באו.
+
+    מחזיר (רכבים, דילוגים, קבוע). ``קבוע`` אומר שהרשימה נקראה
+    מהטבלה ולא נגזרה מחדש - וזו ההבחנה שקובעת אם אותה לחיצה מחר
+    תיתן את אותו דבר.
+    """
+    saved = fleet()
+    if saved:
+        return [{
+            "plate": row.plate or "",
+            "vin": row.vin,
+            "make": row.make,
+            "model": row.model,
+            "year": row.year,
+            "engine_code": row.engine_code or "",
+            "model_code": row.model_code or "",
+            "vehicles": row.vehicles,
+            "prime": row.prime,
+        } for row in saved[:limit]], [], True
+
+    rows, skipped = [], []
     for row in ranked_models(limit):
         vehicle = a_vehicle_of(row.search_make or row.make, row.model, lookup=lookup)
         if vehicle is None:
             skipped.append(f"{row.make} {row.model}")
             continue
+        rows.append({
+            "plate": vehicle.get("plate") or "",
+            "vin": vehicle.get("vin") or "",
+            "make": vehicle.get("make") or row.make,
+            "model": vehicle.get("model") or row.model,
+            "year": vehicle.get("year"),
+            "engine_code": vehicle.get("engine_code") or "",
+            "model_code": vehicle.get("model_code") or "",
+            "vehicles": row.vehicles,
+            "prime": row.prime,
+        })
+    return rows, skipped, False
+
+
+def propose(limit=DEFAULT_VEHICLES, part_types=None, lookup=None):
+    """הצעת רשימת מטרות: רכבים × חלקים נצרכים.
+
+    מחזיר (מטרות, דילוגים). דילוג הוא דגם שאין לו רכב עם שלדה במרשם,
+    והוא מוצג ולא נבלע - "הצענו 7 מתוך 10" היא עובדה שצריך לראות.
+    כשהצי כבר נקבע אין דילוגים בכלל: הרשימה נקראת ולא נבנית.
+    """
+    return propose_detailed(limit, part_types, lookup)[:2]
+
+
+def propose_detailed(limit=DEFAULT_VEHICLES, part_types=None, lookup=None):
+    """כמו ``propose``, ובנוסף אם הרשימה קבועה. מחזיר (מטרות, דילוגים, קבוע)."""
+    types = [t for t in (part_types or DEFAULT_PART_TYPES) if t in PART_TYPES]
+    rows, skipped, fixed = _fleet_rows(limit, lookup=lookup)
+    targets = []
+    for vehicle in rows:
         for part_type in types:
             targets.append({
-                "plate": vehicle.get("plate") or "",
-                "vin": vehicle.get("vin") or "",
-                "make": vehicle.get("make") or row.make,
-                "model": vehicle.get("model") or row.model,
-                "year": vehicle.get("year"),
-                "engine_code": vehicle.get("engine_code") or "",
-                "model_code": vehicle.get("model_code") or "",
+                **vehicle,
                 "part_type": part_type,
                 "part_type_name": type_name(part_type),
-                "vehicles": row.vehicles,
-                "prime": row.prime,
             })
-    return targets, skipped
+    return targets, skipped, fixed
 
 
 # --------------------------------------------------------------------------
@@ -229,12 +394,20 @@ def latest_job():
 
 
 def start_job(targets, user_id=None):
-    """פותח זריעה. זריעה פעילה קיימת מוחזרת כמות שהיא."""
+    """פותח זריעה. זריעה פעילה קיימת מוחזרת כמות שהיא.
+
+    זריעה ראשונה גם *קובעת* את הצי: הרכבים שנבחרו בפועל נכתבים
+    לטבלה. בלי זה הרשימה נשארת נגזרת, והזריעה הבאה - שבועיים ומאתיים
+    מק"טים אחר כך - הייתה יוצאת לשלדות אחרות ומפזרת את מה שנצבר.
+    מי שרוצה רשימה אחרת מוחק אותה במסך; מי ששותק מקבל יציבות.
+    """
     existing = active_job()
     if existing is not None:
         return existing
     if not targets:
         raise ValueError("אין מטרות לזרוע.")
+    if not fleet_is_set():
+        save_fleet(targets)
     job = SeedJob(targets=json.dumps(targets, ensure_ascii=False),
                   started_by_id=user_id, log="")
     db.session.add(job)

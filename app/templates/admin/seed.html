@@ -31,7 +31,9 @@
          data-start="{{ url_for('admin.seed_start') }}"
          data-step="{{ url_for('admin.seed_step') }}"
          data-cancel="{{ url_for('admin.seed_cancel') }}"
-         data-status="{{ url_for('admin.seed_status') }}">
+         data-status="{{ url_for('admin.seed_status') }}"
+         data-fleet="{{ url_for('admin.seed_fleet_save') }}"
+         data-fleet-clear="{{ url_for('admin.seed_fleet_clear') }}">
       {{ csrf_field() }}
       <div class="card-body">
         <label class="form-label fw-bold" for="seed-vehicles">כמה רכבים</label>
@@ -58,11 +60,18 @@
           {% endfor %}
         </div>
 
-        <div class="d-grid">
+        <div class="d-grid gap-2">
           <button class="btn btn-outline-primary" id="seed-propose">
             הצע רשימה
           </button>
+          <button class="btn btn-outline-secondary btn-sm d-none" id="seed-fix">
+            קבע את הרכבים האלה
+          </button>
+          <button class="btn btn-outline-secondary btn-sm d-none" id="seed-unfix">
+            שחרר ובנה מחדש מהנתונים
+          </button>
         </div>
+        <div class="small mt-2" id="seed-fleet-note"></div>
         <div class="small text-muted mt-2" id="seed-plan-note"></div>
       </div>
     </div>
@@ -124,6 +133,13 @@
   const log = document.getElementById("seed-log");
 
   let targets = [];
+  // הצי הקבוע: הרכבים כתובים בבסיס הנתונים, ולא נגזרים מחדש בכל
+  // לחיצה. ההבחנה חשובה למי שלוחץ - רשימה נגזרת משתנה מתחתיו כשמגיע
+  // צילום צי חדש או ייבוא מרשם, ומה שנזרע אתמול לא נמצא מחר.
+  const fixBtn = document.getElementById("seed-fix");
+  const unfixBtn = document.getElementById("seed-unfix");
+  const fleetNote = document.getElementById("seed-fleet-note");
+  let fixed = {{ 'true' if fleet_fixed else 'false' }};
 
   async function send(url, body, method) {
     const headers = {"X-Requested-With": "XMLHttpRequest"};
@@ -182,6 +198,7 @@
         btn.addEventListener("click", () => {
           targets.splice(index, 1);
           drawTargets(done);
+          drawFleetState();
         });
         remove.appendChild(btn);
       } else {
@@ -198,27 +215,91 @@
     goBtn.classList.toggle("d-none", !targets.length);
   }
 
+  function drawFleetState() {
+    fleetNote.className = "small mt-2 " + (fixed ? "text-success" : "text-warning");
+    fleetNote.textContent = fixed
+      ? "✓ הרכבים קבועים - כל זריעה תצא לאותן שלדות"
+      : (targets.length
+         ? "הרשימה נגזרה עכשיו ותשתנה בפעם הבאה. קבע אותה כדי שתישאר."
+         : "");
+    fixBtn.classList.toggle("d-none", fixed || !targets.length);
+    unfixBtn.classList.toggle("d-none", !fixed);
+  }
+
+  function vehiclesOf(list) {
+    const seen = new Map();
+    list.forEach((t) => { if (!seen.has(t.vin)) seen.set(t.vin, t); });
+    return Array.from(seen.values());
+  }
+
+  async function loadPlan(params) {
+    const data = await send(box.dataset.propose + "?" + params, null, "GET");
+    targets = data.targets || [];
+    fixed = !!data.fixed;
+    drawTargets(0);
+    drawFleetState();
+    note.textContent = data.skipped && data.skipped.length
+      ? "דילגתי על " + data.skipped.length + " דגמים בלי רכב מייצג במרשם: "
+        + data.skipped.join(", ")
+      : "";
+    goBtn.textContent = 'התחל · מק"ט אחד';
+  }
+
+  function planParams() {
+    const params = new URLSearchParams();
+    params.set("vehicles", document.getElementById("seed-vehicles").value);
+    chosenTypes().forEach((t) => params.append("part_type", t));
+    return params;
+  }
+
+  drawFleetState();
+
   proposeBtn.addEventListener("click", async () => {
     errorBox.classList.add("d-none");
     proposeBtn.disabled = true;
     note.textContent = "מחפש רכבים מייצגים במרשם...";
     try {
-      const params = new URLSearchParams();
-      params.set("vehicles", document.getElementById("seed-vehicles").value);
-      chosenTypes().forEach((t) => params.append("part_type", t));
-      const data = await send(box.dataset.propose + "?" + params, null, "GET");
-      targets = data.targets || [];
-      drawTargets(0);
-      note.textContent = data.skipped && data.skipped.length
-        ? "דילגתי על " + data.skipped.length + " דגמים בלי רכב מייצג במרשם: "
-          + data.skipped.join(", ")
-        : "";
-      goBtn.textContent = 'התחל · מק"ט אחד';
+      await loadPlan(planParams());
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.classList.remove("d-none");
     } finally {
       proposeBtn.disabled = false;
+    }
+  });
+
+  fixBtn.addEventListener("click", async () => {
+    errorBox.classList.add("d-none");
+    fixBtn.disabled = true;
+    try {
+      const form = new FormData();
+      form.append("vehicles", JSON.stringify(vehiclesOf(targets)));
+      const data = await send(box.dataset.fleet, form, "POST");
+      fixed = true;
+      fleetNote.textContent = "✓ " + data.count + " רכבים נכתבו";
+      drawFleetState();
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      fixBtn.disabled = false;
+    }
+  });
+
+  unfixBtn.addEventListener("click", async () => {
+    errorBox.classList.add("d-none");
+    unfixBtn.disabled = true;
+    try {
+      await send(box.dataset.fleetClear, new FormData(), "POST");
+      fixed = false;
+      const params = planParams();
+      params.set("fresh", "1");
+      await loadPlan(params);
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      unfixBtn.disabled = false;
     }
   });
 
