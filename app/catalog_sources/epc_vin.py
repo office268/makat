@@ -14,12 +14,13 @@
 המודל מחזיר את הקישור שממנו יגיע החלק, ואנחנו הולכים לשם פעם אחת.
 """
 import os
+import time
 
 from . import trace
 from ..taxonomy import type_name
-from .base import (Candidate, CatalogSource, FetchError, ask_model,
-                   bounced_to_ancestor, condense, default_fetcher, fetch,
-                   fetcher_name, landed_at, parser_available)
+from .base import (Candidate, CatalogSource, Continuation, FetchError,
+                   ask_model, bounced_to_ancestor, condense, default_fetcher,
+                   fetch, fetcher_name, landed_at, parser_available)
 
 # תבנית אחת, או כמה מופרדות ב-"|". כמה, כי כתובת חיפוש שלדה של אתר
 # שאין לו תיעוד היא ניחוש, וניחוש אחד לכל פריסה הופך כיוון לשעה. עם
@@ -40,7 +41,12 @@ URL_TEMPLATE = os.environ.get(
     "EPC_VIN_URL", "https://partsouq.com/en/search/all?q={vin}"
 )
 SOURCE_NAME = os.environ.get("EPC_SOURCE_NAME", "קטלוג יצרן לפי שלדה")
-MAX_HOPS = int(os.environ.get("EPC_MAX_HOPS", 2))
+# קטלוג יצרן הוא עץ: עמוד הרכב -> קבוצה -> תרשים -> מספרי חלקים.
+# שניים לא הספיקו כדי להגיע לתרשים, וזה נמדד: הצעד הראשון זיהה את
+# הרכב, השני הגיע לקבוצה, והמק"טים נשארו צעד אחד משם. ההגבלה האמיתית
+# אינה המספר הזה אלא תקציב הזמן - וזה כבר מטופל ב-Continuation, שמעביר
+# את המשך המסע לבקשה הבאה במקום לדחוס הכול לאחת.
+MAX_HOPS = int(os.environ.get("EPC_MAX_HOPS", 4))
 
 
 def templates():
@@ -135,15 +141,27 @@ class EpcVinSource(CatalogSource):
     name = SOURCE_NAME
     tier = "oem"
     needs_vin = True
+    supports_resume = True
 
     def available(self):
         return bool(URL_TEMPLATE) and parser_available()
 
-    def _follow(self, start_url, vehicle, part_type, get_page, client):
+    def _follow(self, start_url, vehicle, part_type, get_page, client,
+                resume=None, deadline=None, first_hop=0):
         """תבנית אחת: הבאה, פענוח, ואם צריך צעד נוסף. מחזיר (מה שנמצא, כתובת)."""
         url = start_url
         found = []
-        for hop in range(MAX_HOPS):
+        for hop in range(first_hop, MAX_HOPS):
+            # מתחת לתקציב הזמן של הבקשה עוצרים ומעבירים את ההמשך
+            # הלאה. עדיף עוד סיבוב מהדפדפן מאשר עובד שנהרג באמצע.
+            if hop > first_hop and deadline is not None and time.monotonic() > deadline:
+                if resume is not None:
+                    resume.url, resume.hop = url, hop
+                trace.note(
+                    f"  ⏸ תקציב הבקשה נגמר אחרי {hop - first_hop} צעדים. "
+                    f"ממשיכים מ-{url} בבקשה הבאה."
+                )
+                return found, url
             trace.note(f"  — צעד {hop + 1}/{MAX_HOPS} —")
             try:
                 html = get_page(url)
@@ -188,13 +206,28 @@ class EpcVinSource(CatalogSource):
                 trace.note("    אין המשך לעקוב אחריו - עוצרים כאן.")
                 break
             url = next_url
+        if resume is not None:
+            resume.clear()
         return found, url
 
-    def lookup(self, vehicle, part_type, oem_numbers=(), fetcher=None, client=None):
+    def lookup(self, vehicle, part_type, oem_numbers=(), fetcher=None, client=None,
+               resume=None, deadline=None):
         vin = (vehicle.get("vin") or "").strip()
         if not vin:
             return []
         get_page = fetcher or default_fetcher()
+        # המשך של בקשה קודמת: מרימים מאותה כתובת, ולא מתחילים מחדש
+        # מעמוד הרכב. בלי זה כל בקשה הייתה חוזרת על הצעדים שכבר שולמו.
+        if resume is not None and resume.url:
+            trace.note(
+                f"{self.name}: ממשיכים מצעד {resume.hop + 1} · {resume.url}"
+            )
+            start, hop = resume.url, resume.hop
+            found, source_url = self._follow(
+                start, vehicle, part_type, get_page, client,
+                resume=resume, deadline=deadline, first_hop=hop,
+            )
+            return self._candidates(found, vehicle, source_url)
         urls = build_urls(vin)
         trace.note(
             f'{self.name}: שלדה {vin} · חלק "{type_name(part_type)}" · '
@@ -214,7 +247,8 @@ class EpcVinSource(CatalogSource):
             trace.note(f"— תבנית {index}/{len(urls)}: {start} —")
             try:
                 found, source_url = self._follow(
-                    start, vehicle, part_type, get_page, client
+                    start, vehicle, part_type, get_page, client,
+                    resume=resume, deadline=deadline,
                 )
             except FetchError as exc:
                 failure = failure or exc
@@ -229,6 +263,9 @@ class EpcVinSource(CatalogSource):
         # שנפלה - אחרת תבנית שבורה ברשימה הייתה מסתירה אותה.
         if not answered and failure is not None:
             raise failure
+        return self._candidates(found, vehicle, source_url)
+
+    def _candidates(self, found, vehicle, source_url):
         candidates = []
         for raw in found:
             number = str(raw.get("oe_number") or "").strip()

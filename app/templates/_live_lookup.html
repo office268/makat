@@ -414,19 +414,25 @@
       }
 
       let job = started.job;
-      let last = -1;
+      let last = "";
       let stopped = false;
       while (job && job.is_running) {
-        busy(true, job.stage_label ? "שולף מ" + job.stage_label + "..." : "מחפש...");
+        busy(true, job.resuming
+          ? "מנווט בקטלוג " + job.stage_label + " · צעד " + (job.hop + 1) + "..."
+          : (job.stage_label ? "שולף מ" + job.stage_label + "..." : "מחפש..."));
         bar.style.width = Math.max(10, job.progress_pct) + "%";
         const step = new FormData();
         step.append("job", job.id);
         const data = await post(box.dataset.step, step);
         job = data.job;
         if (!job) break;
-        // רשת ביטחון: שלב שלא מתקדם לא ייתקע בלולאה
-        if (job.cursor === last) throw new Error("השליפה לא מתקדמת.");
-        last = job.cursor;
+        // רשת ביטחון: שלב שלא מתקדם לא ייתקע בלולאה. ‏cursor לבדו
+        // כבר אינו מספיק - מקור שמנווט בקטלוג נשאר עליו בזמן שהצעד
+        // שבתוכו מתקדם, ובדיקה על cursor בלבד הייתה מפילה בדיוק את
+        // השליפות הארוכות שבשבילן נבנתה ההמשכה.
+        const progress = job.cursor + ":" + (job.hop || 0);
+        if (progress === last) throw new Error("השליפה לא מתקדמת.");
+        last = progress;
 
         // מקור סיים ויש עוד אחריו: מציגים את מה שכבר יש, ושואלים.
         if (job.awaiting_approval) {
