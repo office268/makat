@@ -36,6 +36,12 @@ COUNTRY = os.environ.get("SCRAPERAPI_COUNTRY", "il").strip()
 PREMIUM = os.environ.get("SCRAPERAPI_PREMIUM", "0").strip() == "1"
 # חייב להישאר מתחת ל-WEB_TIMEOUT פחות הזמן של קריאת המודל.
 TIMEOUT = float(os.environ.get("SCRAPERAPI_TIMEOUT", 40))
+# תקציב הזמן של gunicorn לבקשה שלמה. אינו בשימוש להבאה עצמה - הוא
+# התקרה שההבאה חייבת להישאר מתחתיה, ביחד עם קריאת המודל שאחריה.
+WEB_TIMEOUT = float(os.environ.get("WEB_TIMEOUT", 60))
+# כמה זמן להשאיר לקריאת המודל ולשאר הבקשה. קריאה על דף מצומצם של
+# 25K תווים נמדדה בכ-4 שניות; פי שלוש מזה הוא מרווח ולא ניחוש.
+MODEL_BUDGET = float(os.environ.get("CATALOG_MODEL_BUDGET", 15))
 
 
 def configured():
@@ -89,6 +95,55 @@ def _explain(code, body, url=None):
     return " ".join(part for part in parts if part).strip()
 
 
+def _timed_out(exc):
+    """האם החריגה היא פקיעת זמן ולא כשל רשת.
+
+    ‏urllib עוטף timeout של socket ב-URLError, ולכן ``isinstance``
+    לבדו אינו מספיק והבדיקה יורדת גם ל-``reason``.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, TimeoutError):
+        return True
+    return "timed out" in str(exc).lower()
+
+
+def budget_warning():
+    """אזהרה כשתקציב ההבאה לא משאיר מקום לשאר הבקשה, או ריק.
+
+    ‏gunicorn הורג בקשה אחרי ``WEB_TIMEOUT``. הבאה שמותר לה לרוץ עד
+    התקרה הזו לא משאירה זמן לקריאת המודל שאחריה - ובמקרה הגרוע העובד
+    נהרג באמצע, והמשתמש לא מקבל אפילו הודעת שגיאה.
+    """
+    room = WEB_TIMEOUT - MODEL_BUDGET
+    if TIMEOUT <= room:
+        return ""
+    return (
+        f"⚠ SCRAPERAPI_TIMEOUT={TIMEOUT:.0f}ש אינו מותיר מקום מתחת "
+        f"ל-WEB_TIMEOUT={WEB_TIMEOUT:.0f}ש (צריך גם ~{MODEL_BUDGET:.0f}ש "
+        f"לקריאת המודל). העלה את WEB_TIMEOUT או הורד את SCRAPERAPI_TIMEOUT."
+    )
+
+
+def _explain_timeout(waited, render):
+    """מה לעשות כשההבאה לא הספיקה, ולא רק שהיא לא הספיקה."""
+    lines = [f"ScraperAPI לא סיים תוך {waited:.0f} שניות."]
+    if render:
+        lines.append(
+            "עם render=true העיבוד הוא הרצת דפדפן מלאה אצלם, ולוקח "
+            "עשרות שניות. שני לבנים: SCRAPERAPI_RENDER=0 (מהיר וזול, "
+            "אם האתר לא בונה את התוצאה ב-JavaScript), או להעלות את "
+            "SCRAPERAPI_TIMEOUT - וביחד איתו את WEB_TIMEOUT."
+        )
+    else:
+        lines.append("אפשר להעלות את SCRAPERAPI_TIMEOUT, וביחד איתו את WEB_TIMEOUT.")
+    warning = budget_warning()
+    if warning:
+        lines.append(warning)
+    return " ".join(lines)
+
+
 class ScraperApiFetcher:
     """מתאם לחתימת ה-fetcher של המקורות: ``fetcher(url, timeout=None)``."""
 
@@ -104,7 +159,14 @@ class ScraperApiFetcher:
                            describe_page)
 
         render = RENDER if self.render is None else self.render
-        trace.note(f"→ ScraperAPI: {url} (render={'כן' if render else 'לא'})")
+        budget = timeout or TIMEOUT
+        trace.note(
+            f"→ ScraperAPI: {url} "
+            f"(render={'כן' if render else 'לא'} · תקציב {budget:.0f}ש)"
+        )
+        warning = budget_warning()
+        if warning:
+            trace.note(f"  {warning}")
         if not (self.api_key or API_KEY):
             trace.note("  ← אין מפתח")
             raise FetchError("אין SCRAPERAPI_KEY.")
@@ -138,7 +200,16 @@ class ScraperApiFetcher:
                 pass
             raise FetchError(_explain(exc.code, body, url)) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            trace.note(f"  ← לא נענה: {type(exc).__name__}: {exc}")
+            waited = timeout or TIMEOUT
+            trace.note(
+                f"  ← לא נענה אחרי {time.monotonic() - started:.0f}ש "
+                f"(תקציב {waited:.0f}ש): {type(exc).__name__}: {exc}"
+            )
+            # ‏timeout אינו "לא נגיש". השירות ענה בסדר גמור - הוא פשוט
+            # לא סיים בזמן שהקצבנו לו, וזו הגדרה ולא תקלה. הודעה שאומרת
+            # "לא נגיש" שולחת לבדוק רשת במקום לשנות מספר.
+            if _timed_out(exc):
+                raise FetchError(_explain_timeout(waited, render)) from exc
             raise FetchError(f"ScraperAPI לא נגיש: {exc}") from exc
 
 

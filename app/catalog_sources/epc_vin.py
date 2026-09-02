@@ -18,8 +18,8 @@ import os
 from . import trace
 from ..taxonomy import type_name
 from .base import (Candidate, CatalogSource, FetchError, ask_model,
-                   bounced_to_ancestor, condense, fetch, landed_at,
-                   parser_available)
+                   bounced_to_ancestor, condense, default_fetcher, fetch,
+                   fetcher_name, landed_at, parser_available)
 
 # תבנית אחת, או כמה מופרדות ב-"|". כמה, כי כתובת חיפוש שלדה של אתר
 # שאין לו תיעוד היא ניחוש, וניחוש אחד לכל פריסה הופך כיוון לשעה. עם
@@ -201,11 +201,12 @@ class EpcVinSource(CatalogSource):
         vin = (vehicle.get("vin") or "").strip()
         if not vin:
             return []
-        get_page = fetcher or fetch
+        get_page = fetcher or default_fetcher()
         urls = build_urls(vin)
         trace.note(
             f'{self.name}: שלדה {vin} · חלק "{type_name(part_type)}" · '
-            f"{len(urls)} תבניות · עד {MAX_HOPS} צעדים לכל אחת"
+            f"{len(urls)} תבניות · עד {MAX_HOPS} צעדים לכל אחת · "
+            f"הבאה: {fetcher_name(get_page)}"
         )
         if not urls:
             raise FetchError("לא הוגדרה כתובת קטלוג (EPC_VIN_URL).")
