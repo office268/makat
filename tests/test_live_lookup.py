@@ -269,7 +269,7 @@ def test_a_failing_source_does_not_kill_the_job(app, mock_sources):
     with app.app_context():
         job = live_lookup.start_job(VEHICLE, "oil_filter")
 
-        def explode(source, vehicle, part_type, data):
+        def explode(source, vehicle, part_type, data, **_):
             raise base.FetchError("האתר לא נגיש")
 
         live_lookup.run_step(job, runner=explode)
@@ -282,7 +282,7 @@ def test_a_failed_lookup_is_not_remembered(app, mock_sources):
     with app.app_context():
         job = live_lookup.start_job(VEHICLE, "oil_filter")
 
-        def explode(source, vehicle, part_type, data):
+        def explode(source, vehicle, part_type, data, **_):
             raise base.FetchError("האתר לא נגיש")
 
         live_lookup.run_step(job, runner=explode)
@@ -291,7 +291,7 @@ def test_a_failed_lookup_is_not_remembered(app, mock_sources):
 
         # ואילו "רצנו ולא מצאנו" כן נשמר - הוא חוסך את החיפוש הבא
         empty = live_lookup.start_job(VEHICLE, "air_filter")
-        live_lookup.run_step(empty, runner=lambda *args: [])
+        live_lookup.run_step(empty, runner=lambda *a, **k: [])
         assert live_lookup.cached(VEHICLE, "air_filter") is not None
 
 
