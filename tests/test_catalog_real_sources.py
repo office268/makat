@@ -496,3 +496,44 @@ def test_laximo_fetches_through_scraperapi(monkeypatch):
     assert found[0].part_number == "04152-YZZA1"
     # מה שנרשם כמקור הוא הכתובת האמיתית, לא זו של השירות
     assert found[0].source_url.startswith("https://laximo.ru/")
+
+
+# ---------------------------------------------------------------------------
+# הודעת שגיאה שאדם יכול לפעול לפיה
+# ---------------------------------------------------------------------------
+
+def test_an_html_error_page_is_not_pasted_into_the_message():
+    """גוף תשובת שגיאה הוא לרוב HTML, ומאתיים התווים הראשונים שלו הם
+    doctype ורשימת מחלקות CSS. הם הופיעו על מסך המכונאי."""
+    from app.catalog_sources.scraperapi import _explain
+
+    html = (
+        '<!DOCTYPE html><html xml:lang="ru" lang="ru" '
+        'class="bx-integrated-gpu --ui-reset-bg-blur bx-core bx-linux '
+        'bx-no-touch bx-no-retina bx-chrome"><head> <meta http-equiv="X'
+    )
+    message = _explain(404, html, "https://laximo.ru/search?type=vin&q=VF3")
+
+    assert "DOCTYPE" not in message
+    assert "bx-core" not in message
+    assert "<html" not in message
+    # ומה שכן צריך להיות שם: מה קרה, ועל איזו כתובת
+    assert "404" in message
+    assert "https://laximo.ru/search?type=vin&q=VF3" in message
+
+
+def test_a_real_message_from_the_service_is_kept():
+    """בקרה: לא כל גוף הוא HTML, ו-429 עם הסבר אמיתי שווה להציג."""
+    from app.catalog_sources.scraperapi import _explain
+
+    message = _explain(429, "You have exceeded your request limit.")
+    assert "You have exceeded your request limit." in message
+
+
+def test_the_404_says_it_is_a_configuration_problem():
+    """‏ScraperAPI מעביר את הסטטוס של האתר כמו שהוא. 404 פירושו שהנתיב
+    אינו קיים שם - הגדרה שגויה, לא תקלה חולפת שכדאי לנסות שוב."""
+    from app.catalog_sources.scraperapi import _explain
+
+    message = _explain(404, "", "https://example.com/nope")
+    assert "כתובת הקטלוג" in message

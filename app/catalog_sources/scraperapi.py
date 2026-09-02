@@ -57,18 +57,35 @@ def build_url(url, api_key=None, render=None, country=None, premium=None):
     return f"{API_URL}?{urllib.parse.urlencode(params)}"
 
 
-def _explain(code, body):
+def _body_hint(body):
+    """שארית התשובה - רק כשהיא באמת אומרת משהו.
+
+    גוף של תשובת שגיאה הוא לרוב דף HTML, ומאתיים התווים הראשונים שלו
+    הם ``<!DOCTYPE>`` ורשימת מחלקות CSS. הדבקתם בהודעה שמגיעה למכונאי
+    אינה מוסיפה מידע - היא מסתירה את המשפט שכן אומר מה קרה.
+    """
+    text = " ".join((body or "").split())
+    if not text or text.lstrip().startswith("<") or "<html" in text[:400].lower():
+        return ""
+    return text[:200]
+
+
+def _explain(code, body, url=None):
     """שגיאות השירות בשפה שאפשר לפעול לפיה, לא מספר סטטוס."""
     known = {
         401: "מפתח ScraperAPI שגוי או חסר (SCRAPERAPI_KEY).",
         403: "אין הרשאה לבקשה הזו - ייתכן שהיא דורשת premium.",
-        404: "השירות לא מצא את הכתובת המבוקשת.",
+        # 404 כאן אינו של ScraperAPI אלא של האתר שאליו הוא פנה: הוא
+        # מעביר את הסטטוס כמות שהוא. כלומר הכתובת עצמה אינה קיימת שם,
+        # וזו הגדרה שגויה ולא תקלה חולפת.
+        404: "כתובת הקטלוג שהוגדרה אינה קיימת באתר (404).",
         429: "נגמרו הקרדיטים או חריגה מקצב הבקשות ב-ScraperAPI.",
         500: "ScraperAPI לא הצליח להביא את הדף (האתר חסם או נפל).",
     }
     detail = known.get(code, f"ScraperAPI החזיר {code}")
-    snippet = (body or "").strip()[:200]
-    return f"{detail} {snippet}".strip()
+    # הכתובת שנוסתה היא הפרט השימושי ביותר בשגיאת 404, והיא נעדרה
+    parts = [detail, url or "", _body_hint(body)]
+    return " ".join(part for part in parts if part).strip()
 
 
 class ScraperApiFetcher:
@@ -103,7 +120,7 @@ class ScraperApiFetcher:
                 body = exc.read().decode("utf-8", errors="replace")
             except Exception:
                 pass
-            raise FetchError(_explain(exc.code, body)) from exc
+            raise FetchError(_explain(exc.code, body, url)) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise FetchError(f"ScraperAPI לא נגיש: {exc}") from exc
 

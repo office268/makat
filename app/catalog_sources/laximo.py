@@ -34,6 +34,11 @@ from .base import (
     parser_available,
 )
 
+# ברירת המחדל היא **השערה שלא אומתה**, ובפועל laximo.ru מחזיר עליה 404:
+# הנתיב הזה אינו קיים שם. חיפוש לפי שלדה אצל Laximo הוא מוצר בתשלום,
+# ואין ודאות שיש לו כתובת ציבורית כלשהי. עד שתוגדר כתובת אמיתית ב-
+# LAXIMO_WEB_URL, כל שליפה תיכשל - בהודעה שאומרת את זה במפורש, ותוך
+# שהיא צורכת קרדיט ומכסה יומית. ראה README, "מה עוד צריך כדי שזה יעבוד".
 WEB_URL = os.environ.get("LAXIMO_WEB_URL", "https://laximo.ru/search?type=vin&q={vin}")
 WEB_WAIT_SELECTOR = os.environ.get("LAXIMO_WEB_WAIT", "").strip() or None
 # כשהחיפוש אינו כתובת אלא טופס: השדה שממלאים והכפתור שלוחצים.
