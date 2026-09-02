@@ -213,10 +213,73 @@
     return name + ' לא החזיר מק"ט';
   }
 
+  // יומן החקירה. סגור כברירת מחדל - מכונאי מחפש מק"ט, לא כתובות -
+  // ופתוח בלחיצה אחת למי שבא לברר *למה* לא נמצא כלום. זו ההבחנה בין
+  // "האתר לא ענה", "הופנינו לדף הבית" ו"החלק לא קיים לרכב הזה", ובלי
+  // היומן שלושתן נראות על המסך אותו הדבר.
+  function logPanel(payload) {
+    const lines = payload.log || [];
+    if (!lines.length) return null;
+
+    const box = document.createElement("details");
+    box.className = "mt-3";
+    box.id = "live-log";
+
+    const head = document.createElement("summary");
+    head.className = "small text-muted";
+    head.textContent = "פרטי החיפוש (" + lines.length + " שורות)";
+    box.appendChild(head);
+
+    const pre = document.createElement("pre");
+    pre.className = "small bg-light border rounded p-2 mt-2 mb-0";
+    pre.style.maxHeight = "320px";
+    pre.style.overflow = "auto";
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.wordBreak = "break-word";
+    pre.style.marginBottom = "0";
+    // שורה-שורה, ולכל אחת dir="auto". יומן מעורב הוא הבעיה: שורה
+    // שמתחילה במילה עברית ושורה שכולה כתובת צריכות כיוון בסיס הפוך,
+    // וכיוון אחד לכל הקופסה הופך את אחת מהן לבלתי קריאה - הנקודתיים
+    // והנקודות קופצות לצד הלא נכון.
+    lines.forEach((line) => {
+      String(line).split("\n").forEach((part) => {
+        const div = document.createElement("div");
+        div.dir = "auto";
+        // כתובת בסוף שורה עברית נשברת: הלוכסן הסוגר הוא תו ניטרלי,
+        // הוא מקבל את כיוון הפסקה וקופץ לתחילת הכתובת. bdi מבודד
+        // אותה, וזו הסיבה היחידה שהשורה אינה textContent אחד.
+        part.split(/(https?:\/\/\S+)/g).forEach((piece, index) => {
+          if (!piece) return;
+          // ‏textContent בשני הענפים - היומן מכיל טקסט מדף של מישהו אחר.
+          const node = index % 2
+            ? document.createElement("bdi") : document.createTextNode(piece);
+          if (index % 2) node.textContent = piece;
+          div.appendChild(node);
+        });
+        pre.appendChild(div);
+      });
+    });
+    box.appendChild(pre);
+
+    const copy = document.createElement("button");
+    copy.className = "btn btn-sm btn-outline-secondary mt-2";
+    copy.type = "button";
+    copy.textContent = "העתק יומן";
+    copy.addEventListener("click", () => {
+      navigator.clipboard.writeText(lines.join("\n")).then(
+        () => { copy.textContent = "הועתק"; },
+        () => { copy.textContent = "ההעתקה נכשלה - סמן והעתק ידנית"; }
+      );
+    });
+    box.appendChild(copy);
+    return box;
+  }
+
   function render(payload) {
     resultsBox.innerHTML = "";
     const found = payload.results || [];
     const unverified = payload.unverified || [];
+    const log = logPanel(payload);
 
     if (!found.length && !unverified.length) {
       // הסיבה, כשיש אחת: תקלת רשת ו"אין לרכב הזה" הן שתי תשובות
@@ -231,6 +294,7 @@
           || payload.done_stage_label + ' לא מצא מק"ט לחלק הזה ברכב הזה.';
         resultsBox.appendChild(none);
       }
+      if (log) resultsBox.appendChild(log);
       return;
     }
 
@@ -274,6 +338,7 @@
         : "המק\"טים שאומתו נשמרו בקטלוג - החיפוש הבא לרכב כזה מיידי.";
       resultsBox.appendChild(hint);
     }
+    if (log) resultsBox.appendChild(log);
   }
 
   // השער בין מקור למקור. כל מקור הוא בקשת רשת וקריאת מודל, ונספר

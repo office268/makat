@@ -22,6 +22,8 @@ import urllib.robotparser
 from dataclasses import dataclass, field, asdict
 from html.parser import HTMLParser
 
+from . import trace
+
 USER_AGENT = os.environ.get(
     "CATALOG_USER_AGENT", "makat/1.0 (+https://github.com/office268/makat)"
 )
@@ -146,9 +148,56 @@ def _breathe(url):
     _last_fetch[host] = time.monotonic()
 
 
+def describe_page(html, url="", final_url="", status=None, elapsed=None,
+                  content_type=""):
+    """שורת יומן על דף שהתקבל.
+
+    ``final_url`` הוא הפרט שהכי קשה בלעדיו: אתר שמפנה חיפוש שלדה
+    שאינו מוכר לדף הבית מחזיר 200 עם דף תקין לגמרי, והדרך היחידה
+    לדעת שזה קרה היא להשוות את הכתובת שביקשנו לכתובת שקיבלנו.
+    """
+    bits = []
+    if status is not None:
+        bits.append(f"HTTP {status}")
+    bits.append(f"{len(html or ''):,} תווים")
+    if content_type:
+        bits.append(content_type.split(";")[0].strip())
+    if elapsed is not None:
+        bits.append(f"{elapsed:.1f}ש")
+    # פותח במילה עברית בכוונה: היומן מוצג בעמוד ימין-לשמאל, ושורה
+    # שמתחילה ב-"HTTP" מקבלת כיוון בסיס הפוך משאר השורות ונדבקת לצד
+    # השני של הקופסה.
+    line = "  ← התקבל: " + " · ".join(bits)
+    if final_url and url and final_url != url:
+        line += f"\n     הופנינו אל: {final_url}"
+    title = trace.page_title(html)
+    if title:
+        line += f"\n     כותרת: {title}"
+    trace.note(line)
+
+
+def content_type(response):
+    """‏Content-Type מהתשובה, או ריק.
+
+    ‏defensive בכוונה: היומן הוא כלי עזר, ואסור שכותרת חסרה תפיל דרכו
+    שליפה שהצליחה. תשובות מזויפות בבדיקות אינן מחזיקות אובייקט
+    כותרות מלא, וגם בשטח יש שרתים בלי הכותרת הזו.
+    """
+    headers = getattr(response, "headers", None)
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return ""
+    try:
+        return getter("Content-Type", "") or ""
+    except Exception:
+        return ""
+
+
 def fetch(url, timeout=None):
     """מביא דף. מרים ``FetchError`` עם סיבה קריאה, לא מחזיר None שקט."""
+    trace.note(f"→ הבאה ישירה: {url}")
     if not allowed_by_robots(url):
+        trace.note("  ← נחסם ב-robots.txt")
         raise FetchError(f"robots.txt של האתר אוסר את הכתובת: {url}")
     _breathe(url)
     request = urllib.request.Request(
@@ -159,13 +208,24 @@ def fetch(url, timeout=None):
             "Accept-Language": "he,en;q=0.8",
         },
     )
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout or FETCH_TIMEOUT) as response:
             charset = response.headers.get_content_charset() or "utf-8"
-            return response.read().decode(charset, errors="replace")
+            body = response.read().decode(charset, errors="replace")
+            describe_page(
+                body, url,
+                final_url=getattr(response, "url", "") or "",
+                status=getattr(response, "status", None),
+                elapsed=time.monotonic() - started,
+                content_type=content_type(response),
+            )
+            return body
     except urllib.error.HTTPError as exc:
+        trace.note(f"  ← HTTP {exc.code} {exc.reason}")
         raise FetchError(f"האתר החזיר {exc.code} עבור {url}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        trace.note(f"  ← לא נענה: {type(exc).__name__}: {exc}")
         raise FetchError(f"לא ניתן להגיע ל-{url}: {exc}") from exc
 
 
@@ -227,7 +287,15 @@ def condense(html, base_url="", limit=None):
         pass
     text = "\n".join(parser.chunks)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text[: (limit or MAX_CONDENSED)]
+    cap = limit or MAX_CONDENSED
+    result = text[:cap]
+    trace.note(
+        f"  צמצום: {len(html or ''):,} → {len(text):,} תווים"
+        + (f" (נחתך ל-{cap:,})" if len(text) > cap else "")
+        + f" · {len(parser.chunks):,} קטעים"
+    )
+    trace.preview(result, "  הטקסט שנשלח למודל")
+    return result
 
 
 # מי מביא את הדף. auto בוחר את הטוב ביותר שזמין, לפי הסדר:
@@ -332,6 +400,8 @@ def ask_model(prompt, client=None, max_tokens=3000):
         import anthropic
 
         client = anthropic.Anthropic()
+    trace.note(f"  → מודל {PARSE_MODEL} · הנחיה של {len(prompt):,} תווים")
+    started = time.monotonic()
     response = client.messages.create(
         model=PARSE_MODEL,
         max_tokens=max_tokens,
@@ -340,7 +410,14 @@ def ask_model(prompt, client=None, max_tokens=3000):
     text = "".join(
         block.text for block in response.content if getattr(block, "type", "") == "text"
     )
+    trace.note(
+        f"  ← המודל החזיר {len(text):,} תווים "
+        f"({time.monotonic() - started:.1f}ש)"
+    )
     payload = _json_from(text)
     if payload is None:
+        # התשובה עצמה היא הראיה היחידה למה הפענוח נכשל, ובלעדיה
+        # "אינה JSON תקין" הוא משפט שאי אפשר לפעול לפיו.
+        trace.preview(text, "  תשובת המודל")
         raise ValueError("התשובה מהמודל אינה JSON תקין")
     return payload

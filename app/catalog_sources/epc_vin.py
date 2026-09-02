@@ -15,6 +15,7 @@
 """
 import os
 
+from . import trace
 from ..taxonomy import type_name
 from .base import Candidate, CatalogSource, FetchError, ask_model, condense, fetch, parser_available
 
@@ -100,23 +101,45 @@ class EpcVinSource(CatalogSource):
         get_page = fetcher or fetch
         url = build_url(vin)
         found = []
+        trace.note(
+            f'{self.name}: שלדה {vin} · חלק "{type_name(part_type)}" · '
+            f"עד {MAX_HOPS} צעדים"
+        )
+        trace.note(f"תבנית הכתובת: {URL_TEMPLATE}")
         for hop in range(MAX_HOPS):
+            trace.note(f"— צעד {hop + 1}/{MAX_HOPS} —")
             try:
                 html = get_page(url)
-            except FetchError:
+            except FetchError as exc:
                 if hop == 0:
                     raise
-                break  # הצעד הנוסף הוא בונוס, לא סיבה להפיל את השליפה
+                # הצעד הנוסף הוא בונוס, לא סיבה להפיל את השליפה
+                trace.note(f"הצעד הנוסף נכשל, ממשיכים עם מה שיש: {exc}")
+                break
             payload = ask_model(
                 build_prompt(vehicle, part_type, condense(html, url), url,
                              MAX_HOPS - hop - 1),
                 client=client,
             )
             found = payload.get("parts") or []
+            next_url = str(payload.get("next_url") or "").strip()
+            # שלוש התשובות האלה הן ההבדל בין "האתר לא מכיר את הרכב",
+            # "הגענו לדף הנכון והחלק לא שם" ו"זה דף ביניים": בלעדיהן
+            # כל שלושתן נראות על המסך כ'לא החזיר מק"ט'.
+            trace.note(
+                f'  תוצאת הפענוח: {len(found)} מק"טים · '
+                f"הרכב אושר בדף: {'כן' if payload.get('vehicle_confirmed') else 'לא'} · "
+                f"המשך מוצע: {next_url or '—'}"
+            )
+            for raw in found:
+                trace.note(
+                    f"    · {raw.get('oe_number') or '?'} "
+                    f"[{raw.get('confidence') or 'low'}] {raw.get('name') or ''}"
+                )
             if found:
                 break
-            next_url = str(payload.get("next_url") or "").strip()
             if not next_url or next_url == url:
+                trace.note("  אין המשך לעקוב אחריו - עוצרים כאן.")
                 break
             url = next_url
 

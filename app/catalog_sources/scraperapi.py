@@ -22,6 +22,7 @@
 """
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -98,23 +99,38 @@ class ScraperApiFetcher:
         self.premium = premium
 
     def __call__(self, url, timeout=None):
-        from .base import FetchError, USER_AGENT, allowed_by_robots
+        from . import trace
+        from .base import (FetchError, USER_AGENT, allowed_by_robots, content_type,
+                           describe_page)
 
+        render = RENDER if self.render is None else self.render
+        trace.note(f"→ ScraperAPI: {url} (render={'כן' if render else 'לא'})")
         if not (self.api_key or API_KEY):
+            trace.note("  ← אין מפתח")
             raise FetchError("אין SCRAPERAPI_KEY.")
         # השירות מביא בשמנו, ולכן ה-robots של האתר עדיין מחייב אותנו.
         if not allowed_by_robots(url):
+            trace.note("  ← נחסם ב-robots.txt")
             raise FetchError(f"robots.txt של האתר אוסר את הכתובת: {url}")
 
         request = urllib.request.Request(
             build_url(url, self.api_key, self.render, self.country, self.premium),
             headers={"User-Agent": USER_AGENT},
         )
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=timeout or TIMEOUT) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
-                return response.read().decode(charset, errors="replace")
+                body = response.read().decode(charset, errors="replace")
+                describe_page(
+                    body, url,
+                    status=getattr(response, "status", None),
+                    elapsed=time.monotonic() - started,
+                    content_type=content_type(response),
+                )
+                return body
         except urllib.error.HTTPError as exc:
+            trace.note(f"  ← HTTP {exc.code} {exc.reason}")
             body = ""
             try:
                 body = exc.read().decode("utf-8", errors="replace")
@@ -122,6 +138,7 @@ class ScraperApiFetcher:
                 pass
             raise FetchError(_explain(exc.code, body, url)) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            trace.note(f"  ← לא נענה: {type(exc).__name__}: {exc}")
             raise FetchError(f"ScraperAPI לא נגיש: {exc}") from exc
 
 
