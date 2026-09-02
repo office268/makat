@@ -75,6 +75,7 @@ def create_app(config_object=Config):
     from . import fleet_stats  # noqa: F401
     from . import parts_discovery  # noqa: F401
     from . import live_lookup  # noqa: F401
+    from . import seed_catalog  # noqa: F401
     from .auth import auth_bp, login_manager
 
     login_manager.init_app(app)

@@ -3,6 +3,8 @@
 מה שנמצא כאן משפיע על כל הלקוחות במערכת ולא על מוסך בודד, ולכן הכל
 מוגן ב-superadmin_required ולא בתפקידים שבתוך הארגון.
 """
+import json
+
 from flask import (
     Blueprint,
     flash,
@@ -14,7 +16,8 @@ from flask import (
 )
 from flask_login import current_user
 
-from .. import activity, fleet_stats, part_columns, parts_discovery, services
+from .. import (activity, fleet_stats, live_lookup, part_columns,
+                parts_discovery, seed_catalog, services)
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
@@ -354,3 +357,96 @@ def columns_save():
         action=action or "save",
     )
     return redirect(url_for("admin.columns"))
+
+
+# ---------------------------------------------------------------------------
+# זריעת הקטלוג: מק"טים שמובאים מראש לרכבים נפוצים
+# ---------------------------------------------------------------------------
+
+def _seed_payload(job):
+    return {
+        "job": job.to_dict() if job else None,
+        "catalog_size": Part.query.count(),
+    }
+
+
+@admin_bp.get("/seed")
+@superadmin_required
+def seed():
+    return render_template(
+        "admin/seed.html",
+        job=seed_catalog.latest_job(),
+        part_types=all_types(),
+        default_types=seed_catalog.DEFAULT_PART_TYPES,
+        default_vehicles=seed_catalog.DEFAULT_VEHICLES,
+        available=live_lookup.available(),
+        catalog_size=Part.query.count(),
+    )
+
+
+@admin_bp.get("/seed/status")
+@superadmin_required
+def seed_status():
+    return jsonify(_seed_payload(seed_catalog.latest_job()))
+
+
+@admin_bp.get("/seed/propose")
+@superadmin_required
+def seed_propose():
+    """הצעת רשימת מטרות - לפני שמתחייבים לתשלום.
+
+    כל מטרה היא כמה בקשות רשת וקריאות מודל, ולכן הרשימה מוצגת לעריכה
+    ולא מורצת מיד. הדילוגים מוצגים גם הם: "הצענו 7 מתוך 10" היא עובדה
+    שצריך לראות, לא שקט.
+    """
+    try:
+        limit = min(30, max(1, int(request.args.get("vehicles", 0) or
+                                   seed_catalog.DEFAULT_VEHICLES)))
+    except ValueError:
+        limit = seed_catalog.DEFAULT_VEHICLES
+    chosen = request.args.getlist("part_type") or None
+    targets, skipped = seed_catalog.propose(limit, part_types=chosen)
+    return jsonify({
+        "targets": targets,
+        "skipped": skipped,
+        "count": len(targets),
+        "vehicles": len({t["vin"] for t in targets}),
+    })
+
+
+@admin_bp.post("/seed/start")
+@superadmin_required
+def seed_start():
+    if not live_lookup.available():
+        return jsonify({"error": "השליפה החיה כבויה - אין מפתח או מקור."}), 400
+    try:
+        targets = json.loads(request.form.get("targets") or "[]")
+    except ValueError:
+        return jsonify({"error": "רשימת המטרות אינה תקינה."}), 400
+    targets = [t for t in targets if isinstance(t, dict) and t.get("vin")
+               and t.get("part_type")]
+    if not targets:
+        return jsonify({"error": "אין מטרות לזרוע."}), 400
+    job = seed_catalog.start_job(targets, user_id=current_user.id)
+    activity.note(
+        summary=f"זריעת קטלוג הופעלה · {len(targets)} מטרות",
+        entity_type="job", entity_id=job.id, targets=len(targets),
+    )
+    return jsonify(_seed_payload(job))
+
+
+@admin_bp.post("/seed/step")
+@superadmin_required
+def seed_step():
+    job = seed_catalog.active_job()
+    if job is None:
+        return jsonify({"error": "אין זריעה פעילה.",
+                        **_seed_payload(seed_catalog.latest_job())}), 409
+    return jsonify(_seed_payload(seed_catalog.run_step(job, user=current_user)))
+
+
+@admin_bp.post("/seed/cancel")
+@superadmin_required
+def seed_cancel():
+    activity.note(summary="זריעת קטלוג בוטלה")
+    return jsonify(_seed_payload(seed_catalog.cancel_job(seed_catalog.active_job())))

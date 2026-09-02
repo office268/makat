@@ -182,6 +182,38 @@ def _query(resource_id, params):
     return (payload.get("result") or {}).get("records") or [], None
 
 
+def by_model(make, model, resource_id=None):
+    """רכב אמיתי אחד מהדגם הזה, או None.
+
+    זריעת הקטלוג צריכה *שלדה*, כי חיפוש קטלוג היצרן הוא לפי שלדה -
+    ודגם אינו שלדה. המרשם הוא המקום היחיד שבו יש שלדות אמיתיות, והוא
+    יודע לסנן לפי יצרן ודגם בדיוק כמו שהוא מסנן לפי מספר רישוי.
+
+    ‏``limit`` הוא 1 ב-``_query``, ולכן זה רכב שרירותי מהדגם ולא
+    "הרכב הנכון" - וזה בסדר: כל רכב מהדגם נותן את אותה שלדה מבחינת
+    שמונת התווים שקובעים את ההתאמה. שנת הדגם עשויה להשתנות, ולכן
+    השדות המוחזרים הם של הרכב שנמצא ולא של הדגם בכללותו.
+    """
+    make, model = (make or "").strip(), (model or "").strip()
+    if not model:
+        return None
+    targets = [(resource_id, "")] if resource_id else resources()
+    # היצרן במרשם הוא "טויוטה יפן"; סינון על "טויוטה" לא יתפוס. לכן
+    # מנסים קודם עם היצרן ואחריו בלעדיו - הדגם לבדו כבר מצמצם מספיק.
+    filters = [{"kinuy_mishari": model}]
+    if make:
+        filters.insert(0, {"tozeret_nm": make, "kinuy_mishari": model})
+    for target_id, _label in targets:
+        for where in filters:
+            records, error = _query(target_id, {"filters": json.dumps(where)})
+            if error or not records:
+                continue
+            found = _normalize_record(records[0], "data.gov.il")
+            if (found.get("vin") or "").strip():
+                return found
+    return None
+
+
 def _strategies(digits):
     """דרכי החיפוש, מהמדויקת לסלחנית.
 

@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block title %}זריעת מק"טים{% endblock %}
+{% block content %}
+<h1 class="h4 mb-1">זריעת מק"טים לרכבים נפוצים</h1>
+<p class="text-muted small mb-3">
+  מביא מק"טים לקטלוג <strong>לפני</strong> שמכונאי שואל. הרכבים נבחרים לפי
+  ספירת הרכבים שבאמת נוסעים בישראל — בני 4-12, חלון האפטרמרקט — והשלדה
+  האמיתית שלהם נלקחת מהמרשם. מהרגע שמק"ט נכנס לקטלוג, אותה שאלה נענית
+  מיידית בלי רשת ובלי מודל.
+</p>
+
+{% if not available %}
+<div class="alert alert-warning">
+  <strong>השליפה החיה כבויה.</strong>
+  <div class="small mt-1">
+    צריך <code>ANTHROPIC_API_KEY</code> ומקור קטלוגי ב-<code>CATALOG_SOURCES</code>.
+  </div>
+</div>
+{% endif %}
+
+<div class="alert alert-info small">
+  <strong>מק"ט אחד בכל לחיצה.</strong> כל מטרה היא כמה בקשות רשת וקריאות
+  מודל שעולות כסף — לכן הזריעה נעצרת אחרי כל מק"ט ומראה מה קיבלה, ואתה
+  מחליט אם להמשיך לבא.
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card" id="seed-plan"
+         data-propose="{{ url_for('admin.seed_propose') }}"
+         data-start="{{ url_for('admin.seed_start') }}"
+         data-step="{{ url_for('admin.seed_step') }}"
+         data-cancel="{{ url_for('admin.seed_cancel') }}"
+         data-status="{{ url_for('admin.seed_status') }}">
+      {{ csrf_field() }}
+      <div class="card-body">
+        <label class="form-label fw-bold" for="seed-vehicles">כמה רכבים</label>
+        <input class="form-control mb-3" type="number" id="seed-vehicles"
+               min="1" max="30" value="{{ default_vehicles }}">
+
+        <div class="d-flex justify-content-between align-items-center">
+          <label class="form-label fw-bold mb-0">סוגי חלקים</label>
+          <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="seed-all" checked>
+            <label class="form-check-label small fw-bold" for="seed-all">הכל</label>
+          </div>
+        </div>
+        <div class="border rounded p-2 mb-3" style="max-height:220px;overflow:auto">
+          {% for pt in part_types %}
+          <div class="form-check">
+            <input class="form-check-input seed-type" type="checkbox"
+                   value="{{ pt.key }}" id="st-{{ pt.key }}"
+                   {% if pt.key in default_types %}checked{% endif %}>
+            <label class="form-check-label small" for="st-{{ pt.key }}">
+              {{ pt.name_he }}
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="d-grid">
+          <button class="btn btn-outline-primary" id="seed-propose">
+            הצע רשימה
+          </button>
+        </div>
+        <div class="small text-muted mt-2" id="seed-plan-note"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="fw-bold" id="seed-title">אין רשימה עדיין</span>
+          <span class="small text-muted">בקטלוג: {{ catalog_size }} מק"טים</span>
+        </div>
+
+        <div class="progress mb-2 d-none" id="seed-progress" style="height:6px">
+          <div class="progress-bar" id="seed-bar" style="width:0%"></div>
+        </div>
+        <div class="small text-muted mb-2" id="seed-status"></div>
+        <div class="alert alert-warning small d-none" id="seed-error"></div>
+
+        <div id="seed-last" class="mb-2"></div>
+
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-primary d-none" id="seed-go">התחל</button>
+          <button class="btn btn-outline-secondary d-none" id="seed-stop">עצור</button>
+        </div>
+
+        <div style="max-height:340px;overflow:auto">
+          <table class="table table-sm align-middle mb-0" id="seed-table">
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <details class="mt-3 d-none" id="seed-log-box">
+          <summary class="small text-muted">יומן הזריעה</summary>
+          <pre class="small bg-light border rounded p-2 mt-2 mb-0"
+               id="seed-log" style="max-height:240px;overflow:auto"></pre>
+        </details>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const box = document.getElementById("seed-plan");
+  const token = document.querySelector('meta[name="csrf-token"]');
+  const proposeBtn = document.getElementById("seed-propose");
+  const goBtn = document.getElementById("seed-go");
+  const stopBtn = document.getElementById("seed-stop");
+  const title = document.getElementById("seed-title");
+  const note = document.getElementById("seed-plan-note");
+  const status = document.getElementById("seed-status");
+  const errorBox = document.getElementById("seed-error");
+  const progress = document.getElementById("seed-progress");
+  const bar = document.getElementById("seed-bar");
+  const rows = document.querySelector("#seed-table tbody");
+  const lastBox = document.getElementById("seed-last");
+  const logBox = document.getElementById("seed-log-box");
+  const log = document.getElementById("seed-log");
+
+  let targets = [];
+
+  async function send(url, body, method) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: method || "POST", headers, body});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה");
+    return data;
+  }
+
+  function chosenTypes() {
+    return Array.from(document.querySelectorAll(".seed-type:checked"))
+      .map((el) => el.value);
+  }
+
+  document.getElementById("seed-all").addEventListener("change", (event) => {
+    document.querySelectorAll(".seed-type")
+      .forEach((el) => { el.checked = event.target.checked; });
+  });
+
+  // הרשימה מוצגת לפני שמריצים, כי כל שורה בה עולה כסף. מחיקת שורה
+  // כאן היא הדרך להוריד מטרה שלא רלוונטית למוסך הזה.
+  // ‏cursor הוא כמה מטרות נסגרו, והרשימה כאן היא אותה רשימה ובאותו
+  // סדר - ולכן אינדקס קטן ממנו הוא מטרה שכבר שולם עליה. בלי הסימון
+  // הזה, אחרי עשרים לחיצות אי אפשר לדעת איפה עומדים חוץ מהמונה.
+  function drawTargets(cursor) {
+    const done = cursor || 0;
+    rows.innerHTML = "";
+    targets.forEach((target, index) => {
+      const tr = document.createElement("tr");
+      if (index < done) tr.className = "text-muted opacity-50";
+      else if (index === done && done) tr.className = "table-active fw-bold";
+      const car = document.createElement("td");
+      car.className = "small";
+      car.textContent = [target.make, target.model, target.year]
+        .filter(Boolean).join(" ");
+      tr.appendChild(car);
+
+      const vin = document.createElement("td");
+      vin.className = "small text-muted font-monospace";
+      vin.dir = "ltr";
+      vin.textContent = target.vin || "";
+      tr.appendChild(vin);
+
+      const part = document.createElement("td");
+      part.className = "small";
+      part.textContent = target.part_type_name || target.part_type;
+      tr.appendChild(part);
+
+      const remove = document.createElement("td");
+      remove.className = "text-start";
+      if (index >= done) {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-sm btn-link text-danger p-0";
+        btn.textContent = "הסר";
+        btn.addEventListener("click", () => {
+          targets.splice(index, 1);
+          drawTargets(done);
+        });
+        remove.appendChild(btn);
+      } else {
+        remove.textContent = "✓";
+      }
+      tr.appendChild(remove);
+      rows.appendChild(tr);
+    });
+    if (done) return;                    // המונה בזמן ריצה מנוהל ב-render
+    title.textContent = targets.length
+      ? targets.length + ' מטרות · ' +
+        new Set(targets.map((t) => t.vin)).size + " רכבים"
+      : "אין רשימה עדיין";
+    goBtn.classList.toggle("d-none", !targets.length);
+  }
+
+  proposeBtn.addEventListener("click", async () => {
+    errorBox.classList.add("d-none");
+    proposeBtn.disabled = true;
+    note.textContent = "מחפש רכבים מייצגים במרשם...";
+    try {
+      const params = new URLSearchParams();
+      params.set("vehicles", document.getElementById("seed-vehicles").value);
+      chosenTypes().forEach((t) => params.append("part_type", t));
+      const data = await send(box.dataset.propose + "?" + params, null, "GET");
+      targets = data.targets || [];
+      drawTargets(0);
+      note.textContent = data.skipped && data.skipped.length
+        ? "דילגתי על " + data.skipped.length + " דגמים בלי רכב מייצג במרשם: "
+          + data.skipped.join(", ")
+        : "";
+      goBtn.textContent = 'התחל · מק"ט אחד';
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      proposeBtn.disabled = false;
+    }
+  });
+
+  const OUTCOME = {
+    found: ["text-bg-success", "נמצא"],
+    missing: ["text-bg-secondary", "אין"],
+    failed: ["text-bg-danger", "נכשל"],
+  };
+
+  function drawLast(result) {
+    lastBox.innerHTML = "";
+    if (!result) return;
+    const wrap = document.createElement("div");
+    wrap.className = "border rounded p-2";
+    const head = document.createElement("div");
+    const badge = document.createElement("span");
+    const style = OUTCOME[result.outcome] || OUTCOME.missing;
+    badge.className = "badge me-2 " + style[0];
+    badge.textContent = style[1];
+    head.appendChild(badge);
+    const what = document.createElement("span");
+    what.className = "fw-bold";
+    what.textContent = " " + (result.target || "");
+    head.appendChild(what);
+    wrap.appendChild(head);
+
+    const detail = document.createElement("div");
+    detail.className = "small text-muted";
+    detail.textContent = result.detail || "";
+    wrap.appendChild(detail);
+
+    (result.numbers || []).forEach((number) => {
+      const sku = document.createElement("div");
+      sku.className = "font-monospace fw-bold";
+      sku.dir = "ltr";
+      sku.textContent = number;
+      wrap.appendChild(sku);
+    });
+    lastBox.appendChild(wrap);
+  }
+
+  function render(job) {
+    if (!job) return;
+    progress.classList.remove("d-none");
+    bar.style.width = job.progress_pct + "%";
+    title.textContent = job.cursor + " / " + job.total + " מטרות · נמצאו "
+      + job.found + " · אין " + job.missing + " · נכשלו " + job.failed;
+    drawLast(job.last_result);
+    drawTargets(job.cursor);
+    if (job.log && job.log.length) {
+      logBox.classList.remove("d-none");
+      log.textContent = job.log.join("\n");
+    }
+    stopBtn.classList.toggle("d-none", !job.is_running);
+    goBtn.classList.toggle("d-none", !job.awaiting);
+    goBtn.textContent = 'המשך · המק"ט הבא';
+    if (!job.is_running) {
+      status.textContent = job.status_label + " · " + job.saved + " נשמרו בקטלוג";
+      stopBtn.classList.add("d-none");
+    }
+  }
+
+  // מקדם מטרה אחת ועוצר. השליפה הפנימית מנווטת בקטלוג ולכן נדרשות
+  // כמה בקשות למטרה - הלולאה כאן רצה עד שהמטרה נסגרה, לא מעבר לה.
+  async function runOneTarget() {
+    goBtn.disabled = true;
+    errorBox.classList.add("d-none");
+    let guard = 0;
+    try {
+      for (;;) {
+        const data = await send(box.dataset.step, new FormData());
+        const job = data.job;
+        render(job);
+        if (!job || !job.is_running) return;
+        if (job.awaiting) return;               // המטרה נסגרה - עוצרים
+        status.textContent = "עובד על " + job.current + "...";
+        if (++guard > 40) throw new Error("הזריעה לא מתקדמת.");
+      }
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      goBtn.disabled = false;
+    }
+  }
+
+  goBtn.addEventListener("click", async () => {
+    if (!targets.length && goBtn.textContent.indexOf("המשך") < 0) return;
+    errorBox.classList.add("d-none");
+    try {
+      if (goBtn.textContent.indexOf("המשך") < 0) {
+        const form = new FormData();
+        form.append("targets", JSON.stringify(targets));
+        render((await send(box.dataset.start, form)).job);
+      }
+      await runOneTarget();
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    }
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    render((await send(box.dataset.cancel, new FormData())).job);
+  });
+
+  {% if job and job.is_running %}
+  send(box.dataset.status, null, "GET").then((data) => render(data.job));
+  {% endif %}
+})();
+</script>
+{% endblock %}
