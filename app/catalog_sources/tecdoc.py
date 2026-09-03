@@ -144,7 +144,8 @@ def build_prompt(vehicle, part_type, oem, payload, origin):
   {{"part_number": "מק\\"ט היצרן של החלף",
     "manufacturer": "שם יצרן החלף",
     "image_url": "כתובת תמונת המוצר מהתשובה, או ריק",
-    "price_eur": מספר או null,
+    "price_listed": המחיר כפי שהוא בעמוד, מספר או null,
+    "currency": "קוד המטבע של המחיר הזה: ILS / EUR / USD, או ריק",
     "confidence": "high" או "low",
     "note": "משפט קצר בעברית"}}
 ]}}
@@ -232,7 +233,8 @@ class TecDocSource(CatalogSource):
                         if (vehicle.get("make") or "").strip()
                         else "",
                         image_url=str(raw.get("image_url") or "").strip()[:500],
-                        price_eur=raw.get("price_eur"),
+                        price_listed=raw.get("price_listed"),
+                        currency=str(raw.get("currency") or "").strip()[:8].upper(),
                         source_url=origin[:500],
                         source_key=self.key,
                         confidence=str(raw.get("confidence") or "low").lower(),

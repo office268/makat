@@ -16,7 +16,7 @@
 import os
 import time
 
-from . import trace
+from . import toyota_groups, trace
 from ..taxonomy import type_name
 from .base import (Candidate, CatalogSource, Continuation, FetchError,
                    ask_model, bounced_to_ancestor, condense, default_fetcher,
@@ -244,6 +244,16 @@ class EpcVinSource(CatalogSource):
                         "ייתכן שהקטלוג אינו מכסה את היצרן הזה.")
             if found:
                 break
+            # הצעד הזה ידוע מראש: אם הגענו לעמוד רכב של קטלוג טויוטה,
+            # מספר הקבוצה של החלק המבוקש אינו צריך קריאת מודל כדי
+            # להתגלות - הוא תקן. קופצים ישר לתרשים ומדלגים על שני
+            # צעדי הביניים. כשאין תבנית או אין קבוצה לסוג הזה,
+            # ``diagram_url`` מחזיר ``None`` והמסע ממשיך כרגיל.
+            shortcut = toyota_groups.diagram_url(next_url or url, part_type)
+            if shortcut and shortcut != url:
+                trace.note(f"  ⤳ קפיצה ישירה לתרשים הקבוצה: {shortcut}")
+                url = shortcut
+                continue
             if not next_url or next_url == url:
                 trace.note("    אין המשך לעקוב אחריו - עוצרים כאן.")
                 break

@@ -91,7 +91,8 @@ def build_prompt(make, model, part_type):
 {{"parts": [
   {{"part_number": "מק\\"ט היצרן", "manufacturer": "שם יצרן החלק",
     "oe_number": "מספר OE מקורי או ריק", "oe_brand": "יצרן ה-OE או ריק",
-    "price_eur": מספר או null, "source_url": "הכתובת שממנה נלקח",
+    "price_listed": מספר או null, "currency": "ILS / EUR / USD או ריק",
+    "source_url": "הכתובת שממנה נלקח",
     "confidence": "high" או "low", "note": "הערה קצרה"}}
 ]}}
 
@@ -220,7 +221,8 @@ def validate(candidates, make, model, part_type):
                 "part_type": part_type,
                 "oe_number": str(raw.get("oe_number") or "").strip(),
                 "oe_brand": oe_brand.strip(),
-                "price_eur": raw.get("price_eur"),
+                "price_listed": raw.get("price_listed"),
+                "currency": str(raw.get("currency") or "").strip()[:8].upper(),
                 "source_url": safe_url(raw.get("source_url")),
                 "make": make,
                 "model": model,

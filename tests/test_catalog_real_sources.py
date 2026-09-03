@@ -194,12 +194,27 @@ def test_tecdoc_readable_survives_a_non_json_answer():
 # החיבור בין השניים, והדפדפן
 # --------------------------------------------------------------------------
 
-def test_the_default_chain_is_laximo_then_tecdoc(monkeypatch):
-    """הסדר הוא המהות: Laximo מוציא את המספר ש-TecDoc מחפש לפיו."""
+def test_the_default_chain_is_epc_then_aftermarket(monkeypatch):
+    """הסדר הוא המהות: epc מוציא את המספר ש-aftermarket מחפש לפיו.
+
+    ברירת המחדל הייתה ``laximo,tecdoc``, ושונתה: כתובת ברירת המחדל של
+    Laximo היא השערה ש-laximo.ru מחזיר עליה 404, כלומר ברירת המחדל
+    הפעילה שרשרת שאינה יכולה לענות וכיבתה את ``epc`` - המקור היחיד
+    שנבדק מול האתר החי והחזיר מק"טים. שני המקורות הישנים נשארים
+    בקוד למי שיש לו חשבון מולם.
+    """
     monkeypatch.delenv("CATALOG_SOURCES", raising=False)
-    assert catalog_sources.enabled_keys() == ["laximo", "tecdoc"]
-    assert catalog_sources.get("laximo").tier == "oem"
-    assert catalog_sources.get("tecdoc").tier == "aftermarket"
+    assert catalog_sources.enabled_keys() == ["epc", "aftermarket"]
+    assert catalog_sources.get("epc").tier == "oem"
+    assert catalog_sources.get("aftermarket").tier == "aftermarket"
+
+
+def test_the_first_source_of_the_default_chain_needs_a_vin(monkeypatch):
+    """זה מה שמצדיק את הסדר: בלי שלדה השלב הראשון אינו קיים בכלל."""
+    monkeypatch.delenv("CATALOG_SOURCES", raising=False)
+    first, second = catalog_sources.enabled_sources()
+    assert first.needs_vin is True
+    assert second.needs_vin is False
 
 
 def test_the_oem_number_flows_from_the_first_source_to_the_second(app):

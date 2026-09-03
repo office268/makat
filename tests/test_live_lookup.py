@@ -155,12 +155,64 @@ def test_epc_source_follows_one_link_when_the_first_page_is_empty():
     assert visited[1] == "https://example.test/group/1901"
 
 
+def test_epc_source_jumps_straight_to_the_group_diagram():
+    """עמוד רכב של קטלוג טויוטה: הקבוצה ידועה, ולא שואלים עליה את המודל.
+
+    המודל מציע ללכת לקטגוריה (שסי), והחלק המבוקש הוא מסנן שמן שיושב
+    בקטגוריה אחרת לגמרי. הקיצור מתקן את שתיהן, וחוסך את שני צעדי
+    הביניים שהמסע הרגיל היה משלם עליהם בבקשה וקריאת מודל כל אחד.
+    """
+    vehicle_url = (
+        "https://partsouq.com/en/catalog/toyota/vehicle/NA/2015/RAV4-JPP/"
+        "ASA44L-ANTGKA/category/2/vin/JTDBR32E560095678"
+    )
+    client = FakeClient(
+        {"parts": [], "next_url": vehicle_url, "vehicle_confirmed": True},
+        {"parts": [{"oe_number": "04152-YZZA1", "confidence": "high"}]},
+    )
+    visited = []
+
+    def fetcher(url, timeout=None):
+        visited.append(url)
+        return (FIXTURES / "epc_vin_page.html").read_text(encoding="utf-8")
+
+    found = epc_vin.EpcVinSource().lookup(
+        VEHICLE, "oil_filter", fetcher=fetcher, client=client
+    )
+    assert [candidate.part_number for candidate in found] == ["04152-YZZA1"]
+    assert visited[1] == (
+        "https://partsouq.com/en/catalog/toyota/diagram/NA/2015/RAV4-JPP/"
+        "ASA44L-ANTGKA/category/1/diagram/1502/vin/JTDBR32E560095678"
+    )
+    # שתי הבאות בסך הכול: החיפוש, ואז התרשים עצמו
+    assert len(visited) == 2
+
+
+def test_epc_source_keeps_following_the_model_when_there_is_no_shortcut():
+    """קטלוג שאינו טויוטה אינו מקבל ניחוש קבוצה - הוא ממשיך כרגיל."""
+    other = "https://partsouq.com/en/catalog/kia/vehicle/NA/2015/RIO/X/category/2"
+    client = FakeClient(
+        {"parts": [], "next_url": other},
+        {"parts": [{"oe_number": "26300-35505", "confidence": "high"}]},
+    )
+    visited = []
+
+    def fetcher(url, timeout=None):
+        visited.append(url)
+        return (FIXTURES / "epc_vin_page.html").read_text(encoding="utf-8")
+
+    epc_vin.EpcVinSource().lookup(
+        VEHICLE, "oil_filter", fetcher=fetcher, client=client
+    )
+    assert visited[1] == other
+
+
 def test_aftermarket_source_searches_by_the_oem_number():
     client = FakeClient({
         "parts": [
             {"part_number": "W 610/3", "manufacturer": "MANN-FILTER",
              "image_url": "https://cdn.example.test/mann-w610.jpg",
-             "price_eur": 4.99, "confidence": "high", "note": "מופיע כתחליף"},
+             "price_listed": 4.99, "confidence": "high", "note": "מופיע כתחליף"},
         ]
     })
     found = aftermarket.AftermarketSource().lookup(

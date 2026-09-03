@@ -15,8 +15,16 @@ from . import trace
 from .base import (Candidate, CatalogSource, FetchError, ask_model, condense,
                    default_fetcher, fetch, fetcher_name, parser_available)
 
+# ברירת המחדל הקודמת הייתה ``autodoc.co.il``, והיא נכשלה עוד לפני
+# הרשת: לדומיין הזה אין רשומת DNS כלל. AUTODOC פועלת בגרמניה, בבריטניה
+# ובעוד מדינות - לא בישראל - ולכן כל שליפה של השלב הזה מתה ב-
+# "‏Name or service not known", שגיאה שנראית על המסך כמו "לא נמצא חלף".
+#
+# ‏alvadi.co.il נבדק מול האתר החי: חיפוש לפי מק"ט מקורי מחזיר את החלק
+# המקורי ולצידו עשרות חלופים עם שם יצרן ומחיר בשקלים. נבדק גם על מק"ט
+# טויוטה וגם על מק"ט קיה, וה-robots.txt שלו מתיר את הנתיב הזה.
 URL_TEMPLATE = os.environ.get(
-    "AFTERMARKET_URL", "https://www.autodoc.co.il/spare-parts/search?keyword={oem}"
+    "AFTERMARKET_URL", "https://alvadi.co.il/en/search?q={oem}"
 )
 SOURCE_NAME = os.environ.get("AFTERMARKET_SOURCE_NAME", "קטלוג חלופים")
 # כמה מספרי OE נבדקים בשליפה אחת. כל אחד הוא בקשה לאתר וקריאה למודל.
@@ -46,7 +54,8 @@ def build_prompt(vehicle, part_type, oem, page, url):
   {{"part_number": "מק\\"ט היצרן של החלף",
     "manufacturer": "שם יצרן החלף",
     "image_url": "כתובת תמונת המוצר מהעמוד, או ריק",
-    "price_eur": מספר או null,
+    "price_listed": המחיר כפי שהוא בעמוד, מספר או null,
+    "currency": "קוד המטבע של המחיר הזה: ILS / EUR / USD, או ריק",
     "confidence": "high" או "low",
     "note": "משפט קצר בעברית"}}
 ]}}
@@ -117,7 +126,8 @@ class AftermarketSource(CatalogSource):
                         oe_number=oem,
                         oe_brand=vehicle.get("make") or "",
                         image_url=str(raw.get("image_url") or "").strip()[:500],
-                        price_eur=raw.get("price_eur"),
+                        price_listed=raw.get("price_listed"),
+                        currency=str(raw.get("currency") or "").strip()[:8].upper(),
                         source_url=url[:500],
                         source_key=self.key,
                         confidence=str(raw.get("confidence") or "low").lower(),
