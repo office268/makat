@@ -523,7 +523,13 @@ def suppliers():
 
 @web_bp.route("/export.csv")
 def export_csv():
-    """ייצוא תוצאות החיפוש הנוכחיות ל-CSV.
+    """ייצוא ל-CSV: תוצאות החיפוש הנוכחיות, או הקטלוג המלא.
+
+    ``?full=1`` מתעלם מהמסננים *ומכליל גם מק"טים לא פעילים*. שתי
+    האפשרויות נחוצות ואינן זהות: הייצוא המסונן הוא מה שרואים על
+    המסך, והמלא הוא גיבוי - ומק"ט שכובה הוא בדיוק מה שגיבוי חייב
+    לכלול. בלי הדגל הזה "הורדתי הכל" היה שקר שקט, כי ``active_only``
+    הוא ברירת המחדל של המסך.
 
     כל השדות שהקובץ מכיל נטענים מראש. בלי זה כל שורה בקובץ עלתה חמש
     שאילתות נפרדות - יצרן, קטגוריה, מקבילים, התאמות ושכבת הארגון -
@@ -531,8 +537,11 @@ def export_csv():
     בבקשה אחת, שגם ככה חייבת להיגמר לפני שגאניקורן הורג אותה.
     """
     org_id = services.current_org_id()
+    full = request.args.get("full") == "1"
+    filters = ({"active_only": False, "organization_id": org_id}
+               if full else _filters_from_request())
     parts = (
-        services.search_parts(**_filters_from_request())
+        services.search_parts(**filters)
         .options(
             selectinload(Part.manufacturer),
             selectinload(Part.category).selectinload(Category.parent),
@@ -542,11 +551,15 @@ def export_csv():
         )
         .all()
     )
-    activity.note(summary=f'ייצוא {len(parts)} מק"טים', rows=len(parts))
+    name = "makat_catalog_full.csv" if full else "makat_export.csv"
+    activity.note(
+        summary=f'ייצוא {len(parts)} מק"טים' + (" · הקטלוג המלא" if full else ""),
+        rows=len(parts), full=full,
+    )
     return Response(
         services.export_csv(parts, organization_id=org_id),
         mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=makat_export.csv"},
+        headers={"Content-Disposition": f"attachment; filename={name}"},
     )
 
 

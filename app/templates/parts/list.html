@@ -106,7 +106,13 @@
       {% if is_filtered %}
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('web.parts_list', sort=filters.sort) }}">ניקוי סינון</a>
       {% endif %}
-      <a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ url_for('web.export_csv', **request.args) }}">ייצוא CSV</a>
+      {# שני ייצואים, ובכוונה: המסונן הוא מה שרואים על המסך, והמלא הוא
+         גיבוי - ולכן הוא כולל גם מק"טים שכובו. #}
+      <a class="btn btn-sm btn-outline-secondary ms-auto"
+         href="{{ url_for('web.export_csv', **request.args) }}">ייצוא CSV</a>
+      <a class="btn btn-sm btn-outline-secondary"
+         href="{{ url_for('web.export_csv', full=1) }}"
+         title="כל המק"טים בקטלוג, בלי סינון וכולל לא פעילים">כל הקטלוג</a>
     </div>
   </div>
 </form>

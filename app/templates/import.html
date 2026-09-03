@@ -24,6 +24,18 @@
 
     <div class="card mt-3 d-none" id="import-result"><div class="card-body"></div></div>
 
+    {# מסך של נתונים נכנסים הוא גם המקום שבו מחפשים אותם יוצאים. #}
+    <div class="card mt-3"><div class="card-body">
+      <p class="mb-1 fw-bold">הורדת הקטלוג</p>
+      <p class="small text-muted mb-2">
+        קובץ CSV עם כל המק"טים, באותן עמודות שהייבוא מקבל - כלומר אפשר
+        לערוך אותו ולהחזיר. כולל מק"טים לא פעילים, כי גיבוי שמשמיט
+        אותם אינו גיבוי.
+      </p>
+      <a class="btn btn-outline-primary"
+         href="{{ url_for('web.export_csv', full=1) }}">⬇ הורדת כל הקטלוג</a>
+    </div></div>
+
     {% if result %}
     <div class="card mt-3"><div class="card-body">
       <p class="mb-1">נוספו: <strong>{{ result.created }}</strong> · עודכנו: <strong>{{ result.updated }}</strong></p>
