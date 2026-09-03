@@ -381,7 +381,7 @@ def test_releasing_the_fleet_brings_the_derivation_back(app):
     with app.app_context():
         seed_catalog.save_fleet([MAZDA])
         assert seed_catalog.clear_fleet() == 1
-        targets, _, fixed = seed_catalog.propose_detailed(
+        targets, _, fixed, _ = seed_catalog.propose_detailed(
             1, part_types=["oil_filter"], lookup=lambda make, model: COROLLA)
         assert [t["vin"] for t in targets] == [COROLLA["vin"]]
         assert fixed is False
@@ -427,3 +427,68 @@ def test_a_fleet_save_without_vehicles_is_a_clear_error(app, superadmin):
     response = superadmin.post("/admin/seed/fleet", data={"vehicles": "[]"})
     assert response.status_code == 400
     assert "רכבים" in response.get_json()["error"]
+
+
+# --------------------------------------------------------------------------
+# ההצעה מציעה חורים, ולא את מה שכבר יש
+# --------------------------------------------------------------------------
+
+def _catalog_part(app, number, part_type, make, model, year_from, year_to):
+    from app.models import Fitment, Part, db
+
+    with app.app_context():
+        part = Part(part_number=number, name_he="חלק", part_type=part_type)
+        part.fitments.append(Fitment(make=make, model=model,
+                                     year_from=year_from, year_to=year_to))
+        db.session.add(part)
+        db.session.commit()
+
+
+def test_a_pair_already_in_the_catalog_is_not_proposed_again(app):
+    """‏run_step ידע לסגור אותו בלי רשת, ולכן זה לא עלה כסף - אבל זה
+    עלה בתשומת לב: חצי מהרשימה הייתה רעש שצריך לגלול."""
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    _catalog_part(app, "90915-YZZD4", "oil_filter", "טויוטה", "COROLLA", 2005, 2015)
+    with app.app_context():
+        targets, _, _, covered = seed_catalog.propose_detailed(
+            1, part_types=["oil_filter", "air_filter"],
+            lookup=lambda make, model: COROLLA)
+    assert [t["part_type"] for t in targets] == ["air_filter"]
+    assert covered == 1
+
+
+def test_asking_for_everything_still_returns_everything(app):
+    """‏gaps_only=False נחוץ למי שרוצה לרענן מק"ט קיים ולא לסגור חור."""
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    _catalog_part(app, "90915-YZZD4", "oil_filter", "טויוטה", "COROLLA", 2005, 2015)
+    with app.app_context():
+        targets, _, _, covered = seed_catalog.propose_detailed(
+            1, part_types=["oil_filter", "air_filter"],
+            lookup=lambda make, model: COROLLA, gaps_only=False)
+    assert len(targets) == 2
+    assert covered == 0
+
+
+def test_the_screen_reports_how_many_pairs_were_already_covered(app, superadmin):
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    _catalog_part(app, "90915-YZZD4", "oil_filter", "טויוטה", "COROLLA", 2005, 2015)
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA])
+    payload = superadmin.get(
+        "/admin/seed/propose?vehicles=1&part_type=oil_filter"
+        "&part_type=air_filter").get_json()
+    assert payload["covered"] == 1
+    assert payload["count"] == 1
+    assert payload["gaps_only"] is True
+
+
+def test_the_screen_can_ask_for_the_covered_ones_too(app, superadmin):
+    _counts(app, [("טויוטה יפן", "COROLLA", 9, 9)])
+    _catalog_part(app, "90915-YZZD4", "oil_filter", "טויוטה", "COROLLA", 2005, 2015)
+    with app.app_context():
+        seed_catalog.save_fleet([COROLLA])
+    payload = superadmin.get(
+        "/admin/seed/propose?vehicles=1&gaps=0&part_type=oil_filter"
+        "&part_type=air_filter").get_json()
+    assert payload["count"] == 2
+    assert payload["gaps_only"] is False

@@ -238,10 +238,18 @@
     fixed = !!data.fixed;
     drawTargets(0);
     drawFleetState();
-    note.textContent = data.skipped && data.skipped.length
-      ? "דילגתי על " + data.skipped.length + " דגמים בלי רכב מייצג במרשם: "
-        + data.skipped.join(", ")
-      : "";
+    // מה שנשאר אחרי שהחורים סוננו הוא ההודעה החשובה: כמה צמדים כבר
+    // מכוסים, וכמה באמת נסגרים בלחיצה הזו.
+    const lines = [];
+    if (data.covered) {
+      lines.push(data.covered + " צמדים כבר בקטלוג ולא נכללו · " +
+                 targets.length + " חורים נשארו");
+    }
+    if (data.skipped && data.skipped.length) {
+      lines.push("דילגתי על " + data.skipped.length +
+                 " דגמים בלי רכב מייצג במרשם: " + data.skipped.join(", "));
+    }
+    note.textContent = lines.join(" · ");
     goBtn.textContent = 'התחל · מק"ט אחד';
   }
 
