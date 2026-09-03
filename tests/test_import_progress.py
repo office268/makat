@@ -94,3 +94,17 @@ def test_a_visitor_cannot_import_a_chunk(app, client):
     client.post("/logout")
     response = client.post("/import/chunk", data={"rows": _rows("1,א,oil_filter")})
     assert response.status_code in (302, 401, 403)
+
+
+def test_a_chunk_that_still_carries_the_bom_is_not_rejected(app, auth_client):
+    """הייצוא כותב BOM כדי שאקסל יציג עברית נכון.
+
+    ‏``import_csv`` פירק אותו רק כשהקלט היה בתים; מנה מהמסך מגיעה
+    כמחרוזת, ואז שם העמודה הראשונה היה "\\ufeffpart_number" - כלומר
+    ‏``part_number`` נקרא ריק וכל שורה בקובץ נדחתה ב'חסר מק"ט'.
+    """
+    response = auth_client.post("/import/chunk", data={
+        "rows": "﻿" + _rows("17801-0T030,מסנן אוויר,air_filter")})
+    payload = response.get_json()
+    assert payload["created"] == 1
+    assert payload["error_count"] == 0
