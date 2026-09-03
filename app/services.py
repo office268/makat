@@ -4,7 +4,7 @@ import io
 
 from sqlalchemy import and_, func, literal_column, or_
 
-from . import part_columns
+from . import oem_prefixes, part_columns
 from .models import (
     Category,
     CrossReference,
@@ -826,6 +826,15 @@ def import_csv(stream, organization_id=None):
             continue
         if not (row.get("name_he") or "").strip():
             errors.append(f"שורה {line_no}: חסר שם לחלק {number}")
+            continue
+        # אותה בדיקה שהשליפה החיה עושה, במקום השני שבו מק"טים נכנסים
+        # לקטלוג. בלעדיה הקובץ הוא דלת אחורית: מק"ט של רפידות אחוריות
+        # שנרשם כקדמיות נחסם בשליפה ונכנס בייבוא, ומי שמזמין לפיו מגלה
+        # את הטעות במוסך. ‏``explain`` שותק על תחילית לא מוכרת, ולכן
+        # מחירון ספק רגיל עובר כרגיל.
+        clash = oem_prefixes.explain(number, (row.get("part_type") or "").strip())
+        if clash:
+            errors.append(f"שורה {line_no}: {clash}")
             continue
         existing = Part.query.filter_by(part_number=number).first()
         # נקודת שמירה לכל שורה. בלעדיה שורה פגומה בסוף הקובץ גררה

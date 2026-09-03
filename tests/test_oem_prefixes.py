@@ -163,3 +163,63 @@ def test_a_rear_disc_prefix_also_covers_the_drum_on_a_pickup():
     assert oem_prefixes.conflict("42431-42050", "brake_disc_rear") is None
     assert oem_prefixes.conflict("42431-42050", "brake_caliper") is None
     assert oem_prefixes.conflict("42431-42050", "air_filter") == "brake_disc_rear"
+
+
+# --------------------------------------------------------------------------
+# הדלת השנייה: ייבוא CSV
+# --------------------------------------------------------------------------
+
+def _csv(rows):
+    import io
+    head = "part_number,name_he,part_type\n"
+    return io.StringIO(head + "".join(f"{n},{h},{t}\n" for n, h, t in rows))
+
+
+def test_the_import_refuses_a_row_whose_prefix_is_another_part(app):
+    """הקובץ הוא הדלת השנייה לקטלוג, ועד כה היא לא נבדקה.
+
+    מק"ט של רפידות אחוריות שנרשם כקדמיות נחסם בשליפה החיה - ונכנס
+    בייבוא. מי שמזמין לפיו מגלה את הטעות במוסך.
+    """
+    from app import services
+    from app.models import Part
+
+    with app.app_context():
+        created, _, errors = services.import_csv(_csv([
+            ("58302-D3A00", "רפידות", "brake_pads_front"),
+            ("17801-0T030", "מסנן אוויר", "air_filter"),
+        ]))
+        assert created == 1
+        assert len(errors) == 1
+        assert "תחילית" in errors[0]
+        assert "שורה 2" in errors[0]
+        assert Part.query.filter_by(part_number="58302-D3A00").first() is None
+        assert Part.query.filter_by(part_number="17801-0T030").first() is not None
+
+
+def test_the_same_number_with_the_right_type_still_imports(app):
+    """המספר תקין - הסיווג היה שגוי. פסילה של המספר עצמו הייתה טעות."""
+    from app import services
+    from app.models import Part
+
+    with app.app_context():
+        created, _, errors = services.import_csv(_csv([
+            ("58302-D3A00", "רפידות אחוריות", "brake_pads_rear"),
+        ]))
+        assert created == 1
+        assert errors == []
+        assert Part.query.filter_by(part_number="58302-D3A00").first() is not None
+
+
+def test_a_supplier_price_list_without_part_types_imports_untouched(app):
+    """‏explain שותק על תחילית לא מוכרת ועל סוג ריק, ולכן מחירון רגיל
+    אינו נפגע מהשער הזה."""
+    from app import services
+
+    with app.app_context():
+        created, _, errors = services.import_csv(_csv([
+            ("KBP-3053", "רפידות KAVO", ""),
+            ("B6YS-33-28Z", "רפידות מאזדה", "brake_pads_front"),
+        ]))
+        assert created == 2
+        assert errors == []
