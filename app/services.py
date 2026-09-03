@@ -38,6 +38,10 @@ CSV_COLUMNS = [
     "side",
     "part_type",
     "image_url",
+    # תרשים הפיצוץ. הוא היה בשדות שהייבוא *קורא* אבל לא באלה שהייצוא
+    # *כותב*, ולכן מסלול הלוך-ושוב - להוריד את הקטלוג, לערוך, ולהחזיר -
+    # מחק את הקישור מכל מק"ט. אבידה שקטה: המסך פשוט הפסיק להציג תרשים.
+    "diagram_url",
     "notes",
     "is_active",
     "cross_refs",
@@ -820,6 +824,11 @@ def import_csv(stream, organization_id=None, start_line=2):
     text = stream.read()
     if isinstance(text, bytes):
         text = text.decode("utf-8-sig")
+    # ‏BOM גם בטקסט, ולא רק בבתים. הייצוא כותב אותו כדי שאקסל יציג
+    # עברית נכון, וקובץ שנקרא כמחרוזת - כמו מנה מהמסך - הגיע לכאן
+    # איתו. אז שם העמודה הראשונה היה "\ufeffpart_number", ``part_number``
+    # נקרא ריק, וכל שורה בקובץ נדחתה ב'חסר מק"ט'.
+    text = text.lstrip("\ufeff")
     reader = csv.DictReader(io.StringIO(text))
     created = updated = 0
     errors = []
@@ -893,6 +902,7 @@ def export_csv(parts, organization_id=None):
                 "side": part.side or "",
                 "part_type": part.part_type or "",
                 "image_url": part.image_url or "",
+                "diagram_url": part.diagram_url or "",
                 "notes": part.notes or "",
                 "is_active": int(bool(part.is_active)),
                 "cross_refs": format_cross_refs(part),
