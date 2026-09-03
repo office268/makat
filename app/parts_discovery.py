@@ -14,6 +14,7 @@ import json
 import os
 import re
 
+from . import oem_prefixes
 from .taxonomy import PART_TYPES, type_name
 
 DISCOVERY_MODEL = os.environ.get("DISCOVERY_MODEL", "claude-opus-5")
@@ -213,6 +214,14 @@ def validate(candidates, make, model, part_type):
             if other:
                 rejected.append((number, f"מספר OE של יצרן אחר: {other}"))
                 continue
+            # המק"ט של היצרן הנכון, בביטחון גבוה - ופשוט של חלק אחר.
+            # עד כאן שום שער לא בדק את זה, וזו הטעות היקרה מכולן:
+            # רפידות אחוריות שנמכרו כקדמיות מתגלות רק במוסך.
+            clash = (oem_prefixes.explain(number, part_type)
+                     or oem_prefixes.explain(raw.get("oe_number"), part_type))
+            if clash:
+                rejected.append((number, clash))
+                continue
             seen.add(number.lower())
             trace.note(f"    ✓ {number} · {maker}")
             accepted.append({
@@ -251,6 +260,10 @@ def validate(candidates, make, model, part_type):
 # בלי סקירה אנושית היא ההגנה היחידה - אבל מק"ט שנמצא ונפסל נראה על
 # המסך בדיוק כמו מק"ט שלא נמצא, וזה מה שהרמז הזה בא לפרק.
 _REJECTION_HINTS = (
+    ("תחילית",
+     "המק\"ט שייך ליצרן הנכון אבל התחילית שלו היא של חלק אחר. זה קורה "
+     "כשהמסע נעצר בעמוד קבוצה שמכיל כמה תרשימים, והמודל לקח מק\"ט "
+     "מהתרשים הסמוך. בדוק את קישור התרשים ביומן."),
     ("המודל לא היה בטוח",
      "המודל החזיר confidence=low. העמוד כנראה לא קשר את המק\"ט לרכב "
      "הזה במפורש - ייתכן שזה עמוד קבוצה ולא עמוד התרשים."),
