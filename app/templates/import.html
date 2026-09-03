@@ -4,12 +4,25 @@
 <h1 class="h4 mb-3">ייבוא מק"טים מקובץ CSV</h1>
 <div class="row g-3">
   <div class="col-lg-5">
-    <form class="card" method="post" enctype="multipart/form-data"><div class="card-body">
+    <form class="card" id="import-form" method="post" enctype="multipart/form-data"
+          data-chunk="{{ url_for('web.import_csv_chunk') }}"
+          data-finish="{{ url_for('web.import_csv_finish') }}"><div class="card-body">
       {{ csrf_field() }}
       <label class="form-label">קובץ CSV (UTF-8)</label>
-      <input class="form-control mb-3" type="file" name="file" accept=".csv" required>
-      <button class="btn btn-primary">ייבוא</button>
+      <input class="form-control mb-3" type="file" name="file" id="import-file"
+             accept=".csv" required>
+      <button class="btn btn-primary" id="import-go">ייבוא</button>
+
+      <div class="mt-3 d-none" id="import-progress">
+        <div class="progress" style="height:8px">
+          <div class="progress-bar progress-bar-striped progress-bar-animated"
+               id="import-bar" style="width:0%"></div>
+        </div>
+        <p class="small text-muted mt-2 mb-0" id="import-status"></p>
+      </div>
     </div></form>
+
+    <div class="card mt-3 d-none" id="import-result"><div class="card-body"></div></div>
 
     {% if result %}
     <div class="card mt-3"><div class="card-body">
@@ -50,4 +63,132 @@
   {% endif %}
   </div>
 </div>
+
+<script>
+(function () {
+  // ייבוא במנות, ולא בבקשה אחת. שתי סיבות, ושתיהן אמיתיות:
+  //
+  // ‏4,389 שורות מול Postgres הן עשרות שניות, ו-gunicorn הורג בקשה
+  // אחרי WEB_TIMEOUT. קובץ גדול לא רק *נראה* תקוע - הוא נהרג באמצע,
+  // והמסך מקבל 502 בלי לומר מה נכנס ומה לא.
+  //
+  // ובלי מנות אין גם התקדמות אמיתית להראות: אפשר למדוד את ההעלאה,
+  // אבל לא את מה שקורה בשרת אחריה, וזה החלק הארוך. מספר המנות
+  // שהסתיימו הוא ההתקדמות עצמה.
+  const form = document.getElementById("import-form");
+  if (!form || !window.FileReader || !window.fetch) return;  // בלי JS הטופס הרגיל עובד
+
+  const CHUNK = 300;                          // שורות למנה
+  const file = document.getElementById("import-file");
+  const go = document.getElementById("import-go");
+  const box = document.getElementById("import-progress");
+  const bar = document.getElementById("import-bar");
+  const status = document.getElementById("import-status");
+  const result = document.getElementById("import-result");
+  const token = form.querySelector("input[name=csrf_token]");
+
+  // חלוקה לשורות שמכבדת מרכאות. שדה יכול להכיל ירידת שורה, וחיתוך
+  // תמים היה שובר אותו לשתי שורות פגומות.
+  function splitRows(text) {
+    const rows = [];
+    let start = 0, quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"') quoted = !quoted;
+      else if (ch === "\n" && !quoted) {
+        rows.push(text.slice(start, i).replace(/\r$/, ""));
+        start = i + 1;
+      }
+    }
+    if (start < text.length) rows.push(text.slice(start).replace(/\r$/, ""));
+    return rows;
+  }
+
+  async function send(url, body) {
+    const response = await fetch(url, {
+      method: "POST", body: body,
+      headers: {"X-CSRFToken": token ? token.value : ""},
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("שגיאה " + response.status));
+    return data;
+  }
+
+  function draw(done, total) {
+    const pct = total ? Math.round(done * 100 / total) : 0;
+    bar.style.width = pct + "%";
+    status.textContent = done + " מתוך " + total + ' מק"טים · ' + pct + "%";
+  }
+
+  form.addEventListener("submit", function (event) {
+    if (!file.files || !file.files.length) return;   // אין קובץ - התנהגות רגילה
+    event.preventDefault();
+    const chosen = file.files[0];
+    const reader = new FileReader();
+    reader.onload = async function () {
+      const rows = splitRows(String(reader.result || "")).filter((r) => r.trim());
+      box.classList.remove("d-none");
+      if (rows.length < 2) {
+        status.textContent = "הקובץ ריק.";
+        return;
+      }
+      const header = rows[0], body = rows.slice(1);
+      let created = 0, updated = 0, errors = [], errorCount = 0;
+
+      go.disabled = true;
+      file.disabled = true;
+      result.classList.add("d-none");
+      bar.classList.remove("bg-danger", "bg-success");
+      bar.classList.add("progress-bar-striped", "progress-bar-animated");
+      draw(0, body.length);
+
+      try {
+        for (let at = 0; at < body.length; at += CHUNK) {
+          const payload = new FormData();
+          payload.append("rows", header + "\n" + body.slice(at, at + CHUNK).join("\n"));
+          // מספר השורה האמיתי בקובץ, כדי ששגיאה תצביע למקום הנכון
+          payload.append("start_line", String(at + 2));
+          const data = await send(form.dataset.chunk, payload);
+          created += data.created || 0;
+          updated += data.updated || 0;
+          errorCount += data.error_count || 0;
+          errors = errors.concat(data.errors || []);
+          draw(Math.min(at + CHUNK, body.length), body.length);
+        }
+        const done = new FormData();
+        done.append("filename", chosen.name);
+        done.append("created", created);
+        done.append("updated", updated);
+        done.append("errors", errorCount);
+        await send(form.dataset.finish, done);
+      } catch (err) {
+        status.textContent = "נעצר אחרי " + (created + updated) + ' מק"טים: ' + err.message;
+        bar.classList.add("bg-danger");
+        go.disabled = false;
+        file.disabled = false;
+        return;
+      }
+
+      bar.classList.remove("progress-bar-animated", "progress-bar-striped");
+      bar.classList.add("bg-success");
+      status.textContent = "הסתיים.";
+      go.disabled = false;
+      file.disabled = false;
+
+      const parts = ["<p class='mb-1'>נוספו: <strong>" + created +
+                     "</strong> · עודכנו: <strong>" + updated + "</strong></p>"];
+      if (errorCount) {
+        const shown = errors.slice(0, 20)
+          .map((e) => "<li>" + String(e).replace(/</g, "&lt;") + "</li>").join("");
+        parts.push("<div class='alert alert-warning mt-2 mb-0 small'><strong>" +
+                   errorCount + " שגיאות:</strong><ul class='mb-0'>" + shown +
+                   "</ul></div>");
+      }
+      result.querySelector(".card-body").innerHTML = parts.join("");
+      result.classList.remove("d-none");
+    };
+    reader.readAsText(chosen, "utf-8");
+  });
+})();
+</script>
 {% endblock %}

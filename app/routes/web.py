@@ -1,10 +1,13 @@
 """מסכי ה-HTML של האפליקציה."""
+import io
+
 from flask import (
     Blueprint,
     Response,
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -573,6 +576,66 @@ def import_csv():
             )
             flash(f"יובאו {created} מק\"טים חדשים, עודכנו {updated}", "success")
     return render_template("import.html", result=result, columns=services.CSV_COLUMNS)
+
+
+@web_bp.post("/import/chunk")
+@role_required("manager")
+def import_csv_chunk():
+    """מנה אחת מתוך קובץ, מהמסך. מחזיר את מה שקרה בה.
+
+    הייבוא הרגיל שולח את כל הקובץ בבקשה אחת, ושם שתי בעיות נפגשות:
+    ‏4,389 שורות מול Postgres הן עשרות שניות, ו-gunicorn הורג בקשה
+    אחרי ``WEB_TIMEOUT`` שניות. כלומר קובץ גדול לא רק נראה תקוע - הוא
+    באמת נהרג באמצע, והמשתמש מקבל 502 בלי לדעת מה נכנס ומה לא.
+
+    מנה קטנה נגמרת הרבה לפני התקרה, ומספר המנות שהסתיימו הוא גם
+    ההתקדמות האמיתית שמוצגת על המסך. אין כאן שמירת מצב בין בקשות:
+    הדפדפן מחזיק את הקובץ וכל מנה עומדת בפני עצמה.
+    """
+    text = request.form.get("rows") or ""
+    if not text.strip():
+        return jsonify({"error": "אין שורות במנה."}), 400
+    try:
+        start_line = max(2, int(request.form.get("start_line") or 2))
+    except ValueError:
+        start_line = 2
+    created, updated, errors = services.import_csv(
+        io.StringIO(text),
+        organization_id=services.current_org_id(),
+        start_line=start_line,
+    )
+    return jsonify({
+        "created": created,
+        "updated": updated,
+        # תקרה להודעות: קובץ שכולו פגום היה מחזיר עשרות אלפי מחרוזות
+        # לדפדפן של מכונאי בטלפון.
+        "errors": errors[:50],
+        "error_count": len(errors),
+    })
+
+
+@web_bp.post("/import/finish")
+@role_required("manager")
+def import_csv_finish():
+    """שורת יומן אחת לייבוא שלם, אחרי שכל המנות עברו.
+
+    המונים מגיעים מהמסך כי רק הוא ראה את כל המנות. זו שורת תיעוד ולא
+    מקור אמת - מה שנכנס לקטלוג נכתב במנות עצמן.
+    """
+    def _count(name):
+        try:
+            return max(0, int(request.form.get(name) or 0))
+        except ValueError:
+            return 0
+
+    filename = (request.form.get("filename") or "").strip()[:200]
+    created, updated, errors = _count("created"), _count("updated"), _count("errors")
+    activity.note(
+        summary=(f"{filename}: {created} חדשים, {updated} עודכנו"
+                 + (f", {errors} שגיאות" if errors else "")),
+        filename=filename, created=created, updated=updated, errors=errors,
+    )
+    return jsonify({"ok": True})
 
 
 @web_bp.app_errorhandler(404)

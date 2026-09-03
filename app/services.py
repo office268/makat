@@ -807,10 +807,15 @@ def set_org_part(part, organization_id, row):
     return link
 
 
-def import_csv(stream, organization_id=None):
+def import_csv(stream, organization_id=None, start_line=2):
     """מייבא CSV. מחזיר (נוספו, עודכנו, שגיאות).
 
     המחירים והמלאי שבקובץ נכתבים לשכבה הפרטית של הארגון המייבא.
+
+    ``start_line`` הוא מספר השורה של הרשומה הראשונה בזרם. ברירת המחדל
+    היא 2 - כותרת ואז נתונים - והיא נכונה לקובץ שלם. כשהמסך שולח את
+    הקובץ במנות, כל מנה מתחילה במקום אחר, ובלי הפרמטר הזה כל הודעת
+    שגיאה הייתה מצביעה על שורה 2 ומי שמתקן היה מחפש במקום הלא נכון.
     """
     text = stream.read()
     if isinstance(text, bytes):
@@ -818,7 +823,7 @@ def import_csv(stream, organization_id=None):
     reader = csv.DictReader(io.StringIO(text))
     created = updated = 0
     errors = []
-    for line_no, row in enumerate(reader, start=2):
+    for line_no, row in enumerate(reader, start=start_line):
         row = {(k or "").strip(): (v or "") for k, v in row.items()}
         number = (row.get("part_number") or "").strip()
         if not number:
