@@ -122,3 +122,44 @@ def test_the_rejection_hint_points_at_the_diagram(app):
     hint = parts_discovery._rejection_hint(
         [("43512-02250", "תחילית 43512 היא של דיסק בלם קדמי, לא מסנן אוויר")])
     assert "תרשים" in hint
+
+
+# --------------------------------------------------------------------------
+# כשחמישה תווים לא מפרידים
+# --------------------------------------------------------------------------
+
+def test_seven_characters_separate_a_plug_from_a_coil():
+    """‏90919 לבדו מכסה את שניהם. התו השישי-שביעי הוא ההבדל."""
+    assert oem_prefixes.conflict("90919-01253", "spark_plug") is None
+    assert oem_prefixes.conflict("90919-01253", "ignition_coil") == "spark_plug"
+    assert oem_prefixes.conflict("90919-02258", "ignition_coil") is None
+    assert oem_prefixes.conflict("90919-02258", "spark_plug") == "ignition_coil"
+
+
+def test_an_unlisted_ninety_thousand_number_falls_back_to_the_short_prefix():
+    """תת-סדרה שאינה בטבלה עדיין מוכרת כהצתה, ולכן שניהם עוברים."""
+    assert oem_prefixes.matched_prefix("90919-77777") == "90919"
+    assert oem_prefixes.conflict("90919-77777", "spark_plug") is None
+    assert oem_prefixes.conflict("90919-77777", "ignition_coil") is None
+    assert oem_prefixes.conflict("90919-77777", "oil_filter") == "spark_plug"
+
+
+def test_the_matched_prefix_is_the_longest_one_in_the_table():
+    assert oem_prefixes.matched_prefix("90919-01253") == "9091901"
+    assert oem_prefixes.matched_prefix("43512-02250") == "43512"
+    assert oem_prefixes.matched_prefix("KBP-3053") == ""
+
+
+def test_a_rear_shock_number_asked_for_as_a_front_one_is_caught():
+    """‏48510/48520 קדמי, 48530/48531 אחורי - ומי שמזמין הפוך מגלה במוסך."""
+    assert oem_prefixes.conflict("48520-80507", "shock_absorber_rear") \
+        == "shock_absorber_front"
+    assert oem_prefixes.conflict("48531-80507", "shock_absorber_front") \
+        == "shock_absorber_rear"
+
+
+def test_a_rear_disc_prefix_also_covers_the_drum_on_a_pickup():
+    """‏42431 הוא דיסק אחורי ברכב פרטי ותוף בטנדר. ערך יחיד היה פוסל."""
+    assert oem_prefixes.conflict("42431-42050", "brake_disc_rear") is None
+    assert oem_prefixes.conflict("42431-42050", "brake_caliper") is None
+    assert oem_prefixes.conflict("42431-42050", "air_filter") == "brake_disc_rear"

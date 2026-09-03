@@ -23,61 +23,106 @@
 המתכלים שנשאלים הכי הרבה, ורק תחיליות שיש להן ראיה בנתונים. תחילית
 לא מוכרת אינה סתירה, והחמרה כאן הייתה פוסלת מק"טים תקינים.
 
-**תחילית יכולה לשרת כמה סוגים.** ‏``90919`` הוא גם מצת וגם סליל הצתה
-בטויוטה, ולכן הערך הוא קבוצה ולא ערך יחיד. פסילה קורית רק כשהתחילית
-מוכרת *והסוג המבוקש אינו בקבוצה שלה*.
+**תחילית יכולה לשרת כמה סוגים.** ‏``42431`` הוא דיסק אחורי ברכב פרטי
+ותוף בלם בטנדר, ולכן הערך הוא קבוצה ולא ערך יחיד. פסילה קורית רק
+כשהתחילית מוכרת *והסוג המבוקש אינו בקבוצה שלה*.
+
+**ולפעמים חמישה תווים לא מספיקים.** ‏``90919`` לבדו הוא גם מצת וגם
+סליל הצתה, ורק התו השישי-שביעי מבדיל: ‏``9091901`` מצת, ``9091902``
+סליל. לכן הבדיקה מנסה קודם את התחילית הארוכה, ורק אם היא לא מוכרת
+נופלת לקצרה. כך ההבחנה נשמרת בלי לוותר על השאר.
 """
 import re
 
 from .taxonomy import PART_TYPES, type_name
 
-# אורך התחילית. חמישה תווים הוא המבנה של טויוטה, יונדאי/קיה וניסאן
-# (‏``43512-02250``). מק"טי מאזדה בנויים אחרת ואינם נכנסים לטבלה, ולכן
-# הם פשוט לא מוכרים ועוברים.
-PREFIX_LEN = 5
+# אורכי התחילית שנבדקים, מהארוך לקצר. חמישה תווים הם המבנה של טויוטה,
+# יונדאי/קיה וניסאן (‏``43512-02250``); שבעה נחוצים כשחמישה אינם
+# מפרידים, כמו במצת מול סליל הצתה. מק"טי מאזדה בנויים אחרת ואינם
+# נכנסים לטבלה, ולכן הם פשוט לא מוכרים ועוברים.
+PREFIX_LENS = (7, 5)
+PREFIX_LEN = PREFIX_LENS[-1]
 
 # ‏תחילית -> סוגי החלק שהיא משרתת. נבנתה מ-2,689 מק"טים שנשלפו בפועל,
 # והתחיליות כאן הן אלה שחזרו בעקביות בשורות שהגיעו *מקטלוג היצרן לפי
 # מספר שלדה* - כלומר מתוך תרשים פיצוץ אמיתי, ולא מהצלבה.
 PREFIXES = {
-    # בלמים - כאן ההבחנה קדמי/אחורי היא כל העניין
+    # ── בלמים ── כאן ההבחנה קדמי/אחורי היא כל העניין
     "04465": ("brake_pads_front",),
     "04466": ("brake_pads_rear",),
     "58101": ("brake_pads_front",),
     "58302": ("brake_pads_rear",),
     "43512": ("brake_disc_front",),
-    "42431": ("brake_disc_rear",),
     "51712": ("brake_disc_front",),
     "58411": ("brake_disc_front",),
-    # מסנני שמן
+    # דיסק אחורי ברכב פרטי, תוף בלם בטנדר - ולכן גם ``brake_caliper``
+    # אינו סתירה כאן.
+    "42431": ("brake_disc_rear", "brake_caliper"),
+    # ── סינון ──
     "90915": ("oil_filter",),
     "04152": ("oil_filter",),
     "26300": ("oil_filter",),
     "15208": ("oil_filter",),
     "15400": ("oil_filter",),
-    # מסנני אוויר
     "17801": ("air_filter",),
     "28113": ("air_filter",),
     "16546": ("air_filter",),
-    # מסנני מזגן
     "87139": ("cabin_filter",),
     "97133": ("cabin_filter",),
     "27277": ("cabin_filter",),
-    # הצתה - תחילית אחת לשני סוגים, וזו הסיבה שהערך הוא קבוצה
+    # ── הצתה ── חמישה תווים אינם מפרידים כאן, שבעה כן
+    "9091901": ("spark_plug",),
+    "9091902": ("ignition_coil",),
     "90919": ("spark_plug", "ignition_coil"),
+    "18855": ("spark_plug",),
+    # ── מתלים ──
+    "48510": ("shock_absorber_front",),
+    "48520": ("shock_absorber_front",),
+    "48530": ("shock_absorber_rear",),
+    "48531": ("shock_absorber_rear",),
+    # ── חשמל ומנוע ──
+    "27060": ("alternator",),
+    "37300": ("alternator",),
+    "28100": ("starter",),
+    "28800": ("battery",),
+    "25100": ("water_pump",),
+    "88310": ("ac_compressor",),
+    "88320": ("ac_compressor",),
+    # ── מגבים ──
+    "85212": ("wiper_blade",),
+    "85222": ("wiper_blade",),
 }
+
 
 _CLEAN = re.compile(r"[^0-9A-Za-z]")
 
 
-def prefix_of(part_number):
+def _flat(part_number):
+    return _CLEAN.sub("", str(part_number or "")).upper()
+
+
+def prefix_of(part_number, length=PREFIX_LEN):
     """התחילית המנורמלת, בלי מקפים ורווחים."""
-    return _CLEAN.sub("", str(part_number or "")).upper()[:PREFIX_LEN]
+    return _flat(part_number)[:length]
+
+
+def matched_prefix(part_number):
+    """התחילית שנמצאה בטבלה, מהארוכה לקצרה. ``""`` כשאין."""
+    flat = _flat(part_number)
+    for length in PREFIX_LENS:
+        candidate = flat[:length]
+        if candidate in PREFIXES:
+            return candidate
+    return ""
 
 
 def types_for(part_number):
-    """סוגי החלק שהתחילית משרתת, או ``()`` כשהיא לא מוכרת."""
-    return PREFIXES.get(prefix_of(part_number), ())
+    """סוגי החלק שהתחילית משרתת, או ``()`` כשהיא לא מוכרת.
+
+    התחילית הארוכה קודמת: ‏``9091901`` הוא מצת בלבד, ורק כשאין התאמה
+    ל-7 תווים נופלים ל-``90919`` שמכסה גם מצת וגם סליל.
+    """
+    return PREFIXES.get(matched_prefix(part_number), ())
 
 
 def conflict(part_number, part_type):
@@ -99,5 +144,5 @@ def explain(part_number, part_type):
     clash = conflict(part_number, part_type)
     if not clash:
         return None
-    return (f'תחילית {prefix_of(part_number)} היא של '
+    return (f'תחילית {matched_prefix(part_number)} היא של '
             f'{type_name(clash)}, לא {type_name(part_type)}')
