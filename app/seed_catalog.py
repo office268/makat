@@ -267,19 +267,35 @@ def propose(limit=DEFAULT_VEHICLES, part_types=None, lookup=None):
     return propose_detailed(limit, part_types, lookup)[:2]
 
 
-def propose_detailed(limit=DEFAULT_VEHICLES, part_types=None, lookup=None):
-    """כמו ``propose``, ובנוסף אם הרשימה קבועה. מחזיר (מטרות, דילוגים, קבוע)."""
+def propose_detailed(limit=DEFAULT_VEHICLES, part_types=None, lookup=None,
+                     gaps_only=True):
+    """כמו ``propose``, ובנוסף מה נסגר ומה כבר היה.
+
+    מחזיר (מטרות, דילוגים, קבוע, מכוסים).
+
+    ``gaps_only`` משמיט צמד (רכב, סוג חלק) שכבר יש לו מק"ט בקטלוג.
+    ‏``run_step`` ידע לסגור אותו בלי רשת ובלי מודל, ולכן זה מעולם לא
+    עלה כסף - אבל זה כן עלה בתשומת לב: רשימה של מאה מטרות שבה חמישים
+    כבר מכוסות היא רשימה שצריך לגלול, ומי שלוחץ "התחל" לא יודע כמה
+    חורים באמת נסגרים. עכשיו כל מטרה ברשימה היא חור.
+
+    מדידה על הקטלוג הנוכחי: מתוך 620 הצמדים האפשריים בעשרת חלקי
+    הליבה, 284 כבר מכוסים - כלומר קרוב למחצית מהרשימה הייתה רעש.
+    """
     types = [t for t in (part_types or DEFAULT_PART_TYPES) if t in PART_TYPES]
     rows, skipped, fixed = _fleet_rows(limit, lookup=lookup)
-    targets = []
+    targets, covered = [], 0
     for vehicle in rows:
         for part_type in types:
+            if gaps_only and services.parts_for_vehicle(vehicle, part_type):
+                covered += 1
+                continue
             targets.append({
                 **vehicle,
                 "part_type": part_type,
                 "part_type_name": type_name(part_type),
             })
-    return targets, skipped, fixed
+    return targets, skipped, fixed, covered
 
 
 # --------------------------------------------------------------------------

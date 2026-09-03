@@ -410,13 +410,19 @@ def seed_propose():
         # בנייה מחדש מהנתונים, במפורש. הצי הקבוע נמחק כאן ולא בשקט:
         # מי שלחץ "בנה מחדש" ביקש רשימה אחרת, וזו הפעולה.
         seed_catalog.clear_fleet()
-    targets, skipped, fixed = seed_catalog.propose_detailed(limit, part_types=chosen)
+    # ‏gaps=0 מחזיר גם את מה שכבר בקטלוג - שימושי כשרוצים לרענן מק"ט
+    # קיים ולא רק לסגור חורים.
+    gaps_only = request.args.get("gaps") != "0"
+    targets, skipped, fixed, covered = seed_catalog.propose_detailed(
+        limit, part_types=chosen, gaps_only=gaps_only)
     return jsonify({
         "targets": targets,
         "skipped": skipped,
         "count": len(targets),
         "vehicles": len({t["vin"] for t in targets}),
         "fixed": fixed,
+        "covered": covered,
+        "gaps_only": gaps_only,
     })
 
 
