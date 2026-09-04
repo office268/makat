@@ -1,8 +1,10 @@
 """לוגיקה עסקית - חיפוש, ייבוא/ייצוא CSV וסטטיסטיקות."""
 import csv
 import io
+import re
 
 from sqlalchemy import and_, func, literal_column, or_
+from sqlalchemy.orm import selectinload
 
 from . import oem_prefixes, part_columns
 from .models import (
@@ -941,21 +943,27 @@ def vehicle_engine_terms(vehicle):
     return terms
 
 
+def _vehicle_query(vehicle, part_type=None):
+    """השאילתה של ההצטלבות רכב × סוג חלק, בלי להריץ אותה.
+
+    מופרדת כדי ש-``catalog_coverage`` תוכל להוסיף טעינה מראש של
+    המקבילים - היא צריכה אותם כדי לדעת מה מקורי, ובלי זה כל מק"ט
+    בדף היה שאילתה נוספת.
+    """
+    make = (vehicle.get("make") or "").strip().split() if vehicle else []
+    return search_parts(
+        part_type=part_type,
+        make=make[0] if make else None,
+        model=vehicle.get("model") if vehicle else None,
+        year=vehicle.get("year") if vehicle else None,
+    )
+
+
 def parts_for_vehicle(vehicle, part_type=None):
     """ההצטלבות: רכב מזוהה × סוג חלק -> המק"טים המתאימים בלבד."""
-    if not vehicle:
+    if not vehicle or not (vehicle.get("make") or "").strip():
         return []
-    make = (vehicle.get("make") or "").strip().split()
-    return (
-        search_parts(
-            part_type=part_type,
-            make=make[0] if make else None,
-            model=vehicle.get("model"),
-            year=vehicle.get("year"),
-        ).all()
-        if make
-        else []
-    )
+    return _vehicle_query(vehicle, part_type).all()
 
 
 def engine_matched_parts(parts, terms):
@@ -977,13 +985,52 @@ def engine_matched_parts(parts, terms):
     return {row[0] for row in rows}
 
 
+_NOT_ALNUM = re.compile(r"[^0-9A-Za-z]")
+
+
+def is_original(part):
+    """האם המק"ט הוא של יצרן הרכב, ולא חלף.
+
+    הסימן הוא שהמק"ט מופיע כמקביל *של עצמו*: הצנרת שומרת לכל מק"ט את
+    ה-OE שלו, וכשהמק"ט עצמו הוא המקורי השניים זהים. זו הסכמה של הקוד
+    שכותב, ולא היוריסטיקה - ``parts_discovery.save`` מוסיף
+    ``OEM:<oe_number>`` לכל שורה, וב-tier="oem" הוא המק"ט עצמו.
+
+    ההשוואה מנורמלת כי אותו מספר נכתב גם ``04152-YZZA1`` וגם
+    ``04152YZZA1`` וגם עם רווח, ושלושתם אותו חלק.
+    """
+    me = _NOT_ALNUM.sub("", part.part_number or "").upper()
+    if not me:
+        return False
+    return any(
+        _NOT_ALNUM.sub("", ref.ref_number or "").upper() == me
+        for ref in part.cross_refs
+    )
+
+
 def catalog_coverage(vehicle):
-    """אילו סוגי חלקים קיימים בקטלוג עבור הרכב הזה - לשקיפות במסך הזיהוי."""
-    parts = parts_for_vehicle(vehicle)
+    """סוגי החלקים שיש לרכב הזה בקטלוג, וכמה **מקוריים** לכל אחד.
+
+    הספירה הייתה של כל שורה בקטלוג - מקורי וחלף יחד - ולכן שבב
+    שאמר "מגב (3)" יכול היה להיות שלושה חלפים ואפס מקוריים, כלומר
+    "יש לנו" שאי אפשר להזמין לפיו את המקורי. המספר הוא עכשיו מקוריים
+    בלבד.
+
+    הסוג נשאר ברשימה גם כשהספירה אפס, כי השבב הוא גם קישור: מי שילחץ
+    עליו עדיין יראה את החלפים. מה שהשתנה הוא מה שהמספר *מבטיח*.
+    """
+    parts = (
+        _vehicle_query(vehicle)
+        .options(selectinload(Part.cross_refs))
+        .all()
+        if vehicle and (vehicle.get("make") or "").strip()
+        else []
+    )
     seen = {}
     for part in parts:
         seen.setdefault(part.part_type, 0)
-        seen[part.part_type] += 1
+        if is_original(part):
+            seen[part.part_type] += 1
     return seen
 
 

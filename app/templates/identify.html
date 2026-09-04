@@ -95,14 +95,25 @@
          JS - כדי שהתוצאה תהיה ניתנת לשיתוף ו"אחורי" יחזיר לרשימה. #}
       {% if coverage %}
       <hr>
-      <div class="small fw-bold mb-2">מה קיים בקטלוג לרכב הזה:</div>
+      <div class="small fw-bold mb-2">
+        מה קיים בקטלוג לרכב הזה
+        <span class="fw-normal text-muted">· המספר הוא מק"טים מקוריים</span>
+      </div>
+      {# הספירה הייתה של כל שורה בקטלוג, מקורי וחלף יחד, ולכן "מגב (3)"
+         יכול היה להיות שלושה חלפים ואפס מקוריים - "יש לנו" שאי אפשר
+         להזמין לפיו את המקורי. סוג בלי מקורי נשאר ברשימה, כי השבב הוא
+         גם קישור והחלפים עדיין שם, אבל הוא מסומן ולא מתחזה. #}
       <div class="d-flex flex-wrap gap-1">
         {% for key, count in coverage.items() %}
         <a class="badge text-decoration-none
-                  {% if key == selected_type %}bg-primary{% else %}bg-light text-dark border{% endif %}"
+                  {% if key == selected_type %}bg-primary
+                  {% elif not count %}bg-white text-secondary border border-warning
+                  {% else %}bg-light text-dark border{% endif %}"
            data-busy-link
+           {% if not count %}title='יש חלפים לסוג הזה, אבל אין מק"ט מקורי'{% endif %}
            href="{{ url_for('identify.index', plate=plate, part_type=key, _anchor='results') }}">
-          {{ key | part_type_name }} ({{ count }})
+          {{ key | part_type_name }}
+          {%- if count %} ({{ count }}){% else %} · אין מקורי{% endif %}
         </a>
         {% endfor %}
       </div>
