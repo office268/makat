@@ -114,7 +114,86 @@ def test_corolla_answers_more_than_one_question(app):
         corolla = {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016}
         coverage = services.catalog_coverage(corolla)
         assert len(coverage) >= 5, coverage
-        assert sum(coverage.values()) >= 15
+
+
+def test_the_coverage_number_counts_originals_and_this_file_has_none(app):
+    """‏parts_catalog.csv הוא קטלוג חלפים (AUTODOC) במלואו.
+
+    לכן הספירה כאן היא אפס לכל סוג - וזו בדיוק הנקודה: קודם השבב
+    הראה "מגב (3)" והתכוון לשלושה חלפים. המספר מבטיח עכשיו מקוריים,
+    והסוג נשאר ברשימה כדי שהקישור אליו יישמר.
+    """
+    _load(app)
+    with app.app_context():
+        coverage = services.catalog_coverage(
+            {"make": "טויוטה יפן", "model": "COROLLA", "year": 2016})
+        assert coverage, "הסוגים עצמם צריכים להישאר"
+        assert set(coverage.values()) == {0}
+
+
+def test_an_original_is_counted_and_an_aftermarket_part_is_not(app):
+    """שני מק"טים לאותו רכב ואותו סוג: אחד מקורי, אחד חלף."""
+    from app.models import CrossReference, Fitment, Part, db
+
+    with app.app_context():
+        original = Part(part_number="TEST-OEM-1", name_he="מסנן שמן מקורי",
+                        part_type="oil_filter")
+        original.cross_refs.append(
+            CrossReference(ref_type="OEM", ref_number="TEST-OEM-1",
+                           ref_brand="Toyota"))
+        original.fitments.append(Fitment(make="טויוטה", model="COROLLA",
+                                         year_from=2010, year_to=2018))
+        alt = Part(part_number="TEST-ALT-1", name_he="מסנן שמן חלופי",
+                   part_type="oil_filter")
+        alt.cross_refs.append(
+            CrossReference(ref_type="OEM", ref_number="TEST-OEM-1",
+                           ref_brand="Toyota"))
+        alt.fitments.append(Fitment(make="טויוטה", model="COROLLA",
+                                    year_from=2010, year_to=2018))
+        db.session.add_all([original, alt])
+        db.session.commit()
+        try:
+            coverage = services.catalog_coverage(
+                {"make": "טויוטה יפן", "model": "COROLLA", "year": 2015})
+            assert coverage["oil_filter"] == 1
+        finally:
+            # האפליקציה משותפת לכל הקובץ, ו-``_load`` מייבא פעם אחת -
+            # שורה שנשארת כאן מזהמת כל בדיקה שאחריה.
+            for part in (original, alt):
+                db.session.delete(part)
+            db.session.commit()
+
+
+def test_the_same_number_written_differently_is_still_original(app):
+    """‏04152-YZZA1 ו-04152YZZA1 הם אותו חלק, ולכן ההשוואה מנורמלת."""
+    from app.models import CrossReference, Part, db
+
+    with app.app_context():
+        part = Part(part_number="TEST-04152-YZZA1", name_he="מסנן", part_type="oil_filter")
+        part.cross_refs.append(
+            CrossReference(ref_type="OEM", ref_number="TEST 04152 YZZA1"))
+        db.session.add(part)
+        db.session.commit()
+        try:
+            assert services.is_original(part) is True
+        finally:
+            db.session.delete(part)
+            db.session.commit()
+
+
+def test_a_part_without_cross_refs_is_not_called_original(app):
+    from app.models import Part, db
+
+    with app.app_context():
+        part = Part(part_number="NO-REFS", name_he="בלי מקבילים",
+                    part_type="oil_filter")
+        db.session.add(part)
+        db.session.commit()
+        try:
+            assert services.is_original(part) is False
+        finally:
+            db.session.delete(part)
+            db.session.commit()
 
 
 def test_oe_cross_references_came_through(app):
