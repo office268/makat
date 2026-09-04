@@ -223,3 +223,34 @@ def test_a_supplier_price_list_without_part_types_imports_untouched(app):
         ]))
         assert created == 2
         assert errors == []
+
+
+def test_58411_is_the_rear_disc_of_hyundai_and_kia():
+    """‏הטבלה טענה שזו תחילית של דיסק קדמי, וחסמה 62 שורות תקינות.
+
+    ‏מה שהכריע אינו שם החלף אלא המקבילים שלו: בקטלוג יש 62 מק"טים
+    ‏שמספרם מתחיל ב-58411, ו-54 מהם נקראים במפורש "דיסק בלם אחורי".
+    ‏שמונת הנותרים נקראים "קדמי" - וגם הם מצליבים אל 58411, לא אל
+    ‏51712 שהוא הקדמי. השם ירש את מה שנשאל, המספר אומר מה נמצא.
+    """
+    from app import oem_prefixes
+
+    assert oem_prefixes.PREFIXES["58411"] == ("brake_disc_rear",)
+    assert oem_prefixes.conflict("58411-0U300", "brake_disc_rear") is None
+    assert oem_prefixes.conflict("58411-0U300", "brake_disc_front") == "brake_disc_rear"
+    # ‏והקדמי נשאר הקדמי - זה לא היפוך של כל המשפחה
+    assert oem_prefixes.conflict("51712-1F300", "brake_disc_front") is None
+
+
+def test_a_rear_hyundai_disc_now_reaches_the_catalog(app):
+    """‏מה שהבאג עלה בפועל: שורה נכונה לחלוטין נדחתה בייבוא."""
+    from app import services
+    from app.models import Part
+
+    with app.app_context():
+        created, _, errors = services.import_csv(_csv([
+            ("58411-0U300", "דיסק בלם אחורי — יונדאי i20", "brake_disc_rear"),
+        ]))
+        assert created == 1
+        assert errors == []
+        assert Part.query.filter_by(part_number="58411-0U300").first() is not None
