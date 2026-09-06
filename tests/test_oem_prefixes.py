@@ -170,9 +170,15 @@ def test_a_rear_disc_prefix_also_covers_the_drum_on_a_pickup():
 # --------------------------------------------------------------------------
 
 def _csv(rows):
+    """‏שורה היא ``(מק"ט, שם, סוג)`` ואפשר לצרף לה התאמה רביעית,
+    כי שער משפחת היצרן קורא את יצרן הרכב דווקא מ-``fitments``."""
     import io
-    head = "part_number,name_he,part_type\n"
-    return io.StringIO(head + "".join(f"{n},{h},{t}\n" for n, h, t in rows))
+    head = "part_number,name_he,part_type,fitments\n"
+    body = "".join(
+        f"{row[0]},{row[1]},{row[2]},{row[3] if len(row) > 3 else ''}\n"
+        for row in rows
+    )
+    return io.StringIO(head + body)
 
 
 def test_the_import_refuses_a_row_whose_prefix_is_another_part(app):
@@ -254,3 +260,97 @@ def test_a_rear_hyundai_disc_now_reaches_the_catalog(app):
         assert created == 1
         assert errors == []
         assert Part.query.filter_by(part_number="58411-0U300").first() is not None
+
+
+def test_a_colliding_prefix_only_rules_inside_its_own_family():
+    """‏26300 הוא מסנן שמן אצל יונדאי - ודיסק קדמי אצל סובארו.
+
+    ‏חוק תחילית עיוור ליצרן היה פוסל את הדיסק של סובארו כאילו הוא
+    ‏מסנן שמן. זו אותה משפחת שגיאות שתחילית 58411 השתייכה אליה: דחייה
+    ‏שגויה שחוסמת נתון תקין בשקט.
+    """
+    from app import oem_prefixes
+
+    assert oem_prefixes.conflict("26300-35503", "brake_disc_front", "יונדאי")
+    assert oem_prefixes.conflict("26300AG000", "brake_disc_front", "סובארו") is None
+    # ‏אבל ההיפך: ‏58302 *לא* נכנסה לרשימה. ‏58302-KK010 של טויוטה הוא
+    # ‏פאנל רצפה, שאינו בטקסונומיה ולכן כבר שותק ממילא - וגיוסה לשם היה
+    # ‏מוותר על חסימת הרפידה האחורית שנרשמה כקדמית.
+    assert "58302" not in oem_prefixes.COLLISIONS
+    assert oem_prefixes.conflict("58302-D3A00", "brake_pads_front")
+
+
+def test_without_a_make_a_colliding_prefix_stays_quiet():
+    """‏בלי לדעת את הרכב אין הכרעה, ולכן אין פסילה. השתיקה מכוונת."""
+    from app import oem_prefixes
+
+    assert oem_prefixes.conflict("26300-35503", "brake_disc_front") is None
+    assert oem_prefixes.conflict("26300-35503", "brake_disc_front", "מאזדה") is None
+
+
+def test_a_prefix_with_no_measured_collision_stays_blind_to_the_make():
+    """‏השער צר בכוונה. ‏43512 הוא דיסק קדמי בכל מקום שבו הוא מופיע,
+    ‏וקטלוגים מציגים מק"טים מקבילים בין יצרנים - לכן הוא ממשיך לפסול
+    ‏גם בלי לדעת את הרכב, וגם כשהרכב זר."""
+    from app import oem_prefixes
+
+    assert oem_prefixes.conflict("43512-02250", "air_filter")
+    assert oem_prefixes.conflict("43512-02250", "air_filter", "מאזדה")
+
+
+def test_the_import_reads_the_vehicle_make_from_the_fitments(app):
+    """‏עמודת ``manufacturer`` היא יצרן החלף (בוש), לא יצרן הרכב.
+
+    ‏שורה של סובארו שמגיעה מספק חלפים תיפסל אם השער יסתכל בעמודה
+    ‏הלא נכונה."""
+    from app import services
+
+    assert services._row_make({"fitments": "סובארו:FORESTER:2014:2018:"}) == "סובארו"
+    assert services._row_make({"fitments": ""}) == ""
+
+
+def test_a_subaru_front_disc_survives_an_import_that_a_blind_rule_would_reject(app):
+    from app import services
+    from app.models import Part
+
+    with app.app_context():
+        created, _, errors = services.import_csv(_csv([
+            ("26300AG000", "דיסק בלם קדמי — סובארו FORESTER", "brake_disc_front",
+             "סובארו:FORESTER:2014:2018:"),
+        ]))
+        assert errors == []
+        assert created == 1
+        assert Part.query.filter_by(part_number="26300AG000").first() is not None
+
+
+def test_every_prefix_in_the_table_agrees_with_the_catalog_we_shipped():
+    """‏הטבלה גדלה מ-36 ל-63 תחיליות, וכל אחת נוספה על סמך הקטלוג.
+
+    ‏הבדיקה קוראת את הקטלוג עצמו ומוודאת שאף תחילית אינה סותרת את
+    ‏הסיווג שהשורות בפועל נושאות. תחילית חדשה שנוספת מהזיכרון ולא
+    ‏מהנתונים תיפול כאן.
+    """
+    import csv
+    import pathlib
+    from collections import Counter, defaultdict
+
+    from app import oem_prefixes
+
+    seen = defaultdict(Counter)
+    for path in sorted(pathlib.Path("data").glob("*.csv")):
+        with path.open(encoding="utf-8-sig") as handle:
+            for row in csv.DictReader(handle):
+                part_type = (row.get("part_type") or "").strip()
+                if not part_type:
+                    continue
+                prefix = oem_prefixes.matched_prefix(row.get("part_number"))
+                if prefix:
+                    seen[prefix][part_type] += 1
+
+    disagreed = {
+        prefix: dict(counts)
+        for prefix, counts in seen.items()
+        if sum(counts.values()) >= 5
+        and not set(counts) <= set(oem_prefixes.PREFIXES[prefix])
+    }
+    assert disagreed == {}

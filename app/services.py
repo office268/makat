@@ -584,6 +584,16 @@ def format_cross_refs(part):
     )
 
 
+def _row_make(row):
+    """יצרן ה*רכב* של שורת ייבוא, מההתאמה הראשונה שנוקבת בו.
+
+    ‏``manufacturer`` הוא יצרן ה*חלף* - בוש, ואלאו - ולכן אינו מסייע
+    לשער משפחת היצרן. מי שאומר לאיזה רכב המק"ט שייך הוא ``fitments``.
+    """
+    first = (row.get("fitments") or "").split(";")[0]
+    return first.split(":")[0].strip()
+
+
 def parse_fitments(raw):
     """'Toyota:Corolla:2013:2018:1ZR-FE; Mazda:3:2014:2019' -> רשימת Fitment."""
     fitments = []
@@ -848,7 +858,8 @@ def import_csv(stream, organization_id=None, start_line=2):
         # שנרשם כקדמיות נחסם בשליפה ונכנס בייבוא, ומי שמזמין לפיו מגלה
         # את הטעות במוסך. ‏``explain`` שותק על תחילית לא מוכרת, ולכן
         # מחירון ספק רגיל עובר כרגיל.
-        clash = oem_prefixes.explain(number, (row.get("part_type") or "").strip())
+        clash = oem_prefixes.explain(
+            number, (row.get("part_type") or "").strip(), _row_make(row))
         if clash:
             errors.append(f"שורה {line_no}: {clash}")
             continue

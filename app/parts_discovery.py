@@ -217,8 +217,9 @@ def validate(candidates, make, model, part_type):
             # המק"ט של היצרן הנכון, בביטחון גבוה - ופשוט של חלק אחר.
             # עד כאן שום שער לא בדק את זה, וזו הטעות היקרה מכולן:
             # רפידות אחוריות שנמכרו כקדמיות מתגלות רק במוסך.
-            clash = (oem_prefixes.explain(number, part_type)
-                     or oem_prefixes.explain(raw.get("oe_number"), part_type))
+            clash = (oem_prefixes.explain(number, part_type, make)
+                     or oem_prefixes.explain(
+                         raw.get("oe_number"), part_type, make))
             if clash:
                 rejected.append((number, clash))
                 continue

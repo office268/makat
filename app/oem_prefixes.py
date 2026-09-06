@@ -14,10 +14,18 @@
 שמתגלה בהזמנה; רפידות אחוריות שנמכרו כקדמיות מתגלות במוסך, אחרי שמישהו
 שילם והרכיב.
 
-**הטבלה היא לפי תחילית, לא לפי יצרן, ובכוונה.** אותה נתונים מראים
+**הטבלה היא לפי תחילית, לא לפי יצרן, ובכוונה.** אותם נתונים מראים
 ש-``15208`` (נִיסאן) ו-``26300`` (יונדאי/קיה) מופיעים גם תחת מאזדה,
 כי קטלוגים מציגים מק"טים מקבילים בין יצרנים. מה שקבוע הוא *סוג החלק*:
 ‏15208 הוא מסנן שמן בכל מקום שבו הוא מופיע. ולכן הבדיקה מתעלמת מהיצרן.
+
+**חוץ מכשהיא לא יכולה.** ההיגיון למעלה תקף למק"ט *מקביל* - אותו חלק
+שקטלוג הציג תחת יצרן אחר. הוא אינו תקף להתנגשות אמיתית, שבה שני
+יצרנים בחרו במקרה את אותן ספרות לשני חלקים שונים: ‏``26300`` הוא מסנן
+שמן אצל יונדאי ו*דיסק בלם קדמי* אצל סובארו, ולכן חוק עיוור ליצרן פוסל
+את הדיסק של סובארו כאילו הוא מסנן. ‏``COLLISIONS`` מחזיקה את התחיליות
+האלה, והחוק שלהן פועל רק כשידוע שהרכב במשפחה הנכונה. כל היתר ממשיכות
+להיות עיוורות ליצרן, כי שם ההיגיון הראשון עדיין נכון.
 
 **תחילית שאינה בטבלה עוברת.** הטבלה קטנה בכוונה - היא מכסה את החלקים
 המתכלים שנשאלים הכי הרבה, ורק תחיליות שיש להן ראיה בנתונים. תחילית
@@ -62,6 +70,15 @@ PREFIXES = {
     # דיסק אחורי ברכב פרטי, תוף בלם בטנדר - ולכן גם ``brake_caliper``
     # אינו סתירה כאן.
     "42431": ("brake_disc_rear", "brake_caliper"),
+    "45251": ("brake_disc_front",),      # הונדה
+    "42510": ("brake_disc_rear",),       # הונדה
+    "45022": ("brake_pads_front",),      # הונדה
+    "43022": ("brake_pads_rear",),       # הונדה
+    "40206": ("brake_disc_front",),      # ניסאן
+    "43206": ("brake_disc_rear",),       # ניסאן
+    "D1060": ("brake_pads_front",),      # ניסאן
+    "D4060": ("brake_pads_rear",),       # ניסאן
+    "58115": ("brake_pads_front",),
     # ── סינון ──
     "90915": ("oil_filter",),
     "04152": ("oil_filter",),
@@ -84,12 +101,30 @@ PREFIXES = {
     "48520": ("shock_absorber_front",),
     "48530": ("shock_absorber_rear",),
     "48531": ("shock_absorber_rear",),
+    "48540": ("shock_absorber_rear",),
+    "54650": ("shock_absorber_front",),  # יונדאי/קיה
+    "54660": ("shock_absorber_front",),
+    "55300": ("shock_absorber_rear",),
+    "55310": ("shock_absorber_rear",),
+    "55311": ("shock_absorber_rear",),
+    "51611": ("shock_absorber_front",),  # הונדה
+    "51621": ("shock_absorber_front",),
+    "52611": ("shock_absorber_rear",),
+    "52621": ("shock_absorber_rear",),
     # ── חשמל ומנוע ──
     "27060": ("alternator",),
     "37300": ("alternator",),
+    "31100": ("alternator",),            # הונדה
     "28100": ("starter",),
     "28800": ("battery",),
     "25100": ("water_pump",),
+    "16100": ("water_pump",),            # טויוטה
+    "19200": ("water_pump",),            # הונדה
+    "17220": ("air_filter",),            # הונדה
+    "22401": ("spark_plug",),            # ניסאן
+    "12290": ("spark_plug",),            # הונדה
+    "27300": ("ignition_coil",),         # יונדאי/קיה
+    "30520": ("ignition_coil",),         # הונדה
     "88310": ("ac_compressor",),
     "88320": ("ac_compressor",),
     # ── מגבים ──
@@ -98,11 +133,48 @@ PREFIXES = {
 }
 
 
+# ‏משפחת יצרן -> השמות שמזוהים איתה, בעברית ובלועזית. לא רשימת היצרנים
+# ‏של המערכת אלא רק אלה שיש להם תחילית מתנגשת, כי זה כל מה שנחוץ כאן.
+FAMILIES = {
+    "toyota": {"toyota", "lexus", "טויוטה", "לקסוס"},
+    "hyundai_kia": {"hyundai", "kia", "genesis", "יונדאי", "קיה", "ג'נסיס"},
+    "subaru": {"subaru", "סובארו"},
+    "honda": {"honda", "acura", "הונדה", "אקורה"},
+    "nissan": {"nissan", "infiniti", "ניסאן", "אינפיניטי"},
+}
+
+# ‏תחילית -> המשפחה שהחוק שלה תקף בה. רק תחיליות שנמדדה בהן התנגשות
+# ‏אמיתית בין יצרנים. עבורן החוק פועל רק בהתאמה חיובית של המשפחה;
+# ‏בלי לדעת את יצרן הרכב הן שותקות, כי דחייה שגויה חוסמת נתון תקין
+# ‏בשקט - וזה בדיוק המחיר ששילמנו על תחילית 58411.
+# ‏התנגשות נכנסת לכאן רק אם *שני* הצדדים הם סוגי חלק שהמערכת מכירה.
+# ‏‏58302-KK010 של טויוטה הוא פאנל רצפה אחורית, וזו התנגשות אמיתית -
+# ‏אבל פאנל רצפה אינו בטקסונומיה, ולכן ``conflict`` כבר שותק עליו.
+# ‏להוסיף אותה כאן היה מוותר על החסימה של רפידה אחורית שנרשמה כקדמית,
+# ‏השגיאה היקרה ביותר בבדיקה הזאת, בתמורה להגנה מפני מקרה שלא יכול
+# ‏לקרות.
+COLLISIONS = {
+    # ‏מסנן שמן אצל יונדאי/קיה, דיסק בלם *קדמי* אצל סובארו. שני הצדדים
+    # ‏בטקסונומיה, ולכן החוק העיוור באמת פוסל כאן שורה תקינה.
+    "26300": "hyundai_kia",
+}
+
 _CLEAN = re.compile(r"[^0-9A-Za-z]")
 
 
 def _flat(part_number):
     return _CLEAN.sub("", str(part_number or "")).upper()
+
+
+def family_of(make):
+    """משפחת היצרן של שם רכב, או ``None`` כשאינו מוכר."""
+    key = str(make or "").strip().lower()
+    if not key:
+        return None
+    for family, names in FAMILIES.items():
+        if key in names:
+            return family
+    return None
 
 
 def prefix_of(part_number, length=PREFIX_LEN):
@@ -129,23 +201,31 @@ def types_for(part_number):
     return PREFIXES.get(matched_prefix(part_number), ())
 
 
-def conflict(part_number, part_type):
+def conflict(part_number, part_type, make=None):
     """סוג החלק שהתחילית באמת שייכת לו, כשהיא סותרת את המבוקש.
 
     ‏``None`` בכל מקרה אחר: תחילית לא מוכרת, סוג חלק לא מוכר, או
     התאמה. הבדיקה שותקת יותר משהיא מדברת, וזה מכוון.
+
+    ‏``make`` הוא יצרן ה*רכב*, לא יצרן החלף, ורק תחילית שב-``COLLISIONS``
+    מסתכלת עליו: שם החוק פועל רק בהתאמה חיובית למשפחה שלה, ובלעדיה
+    שותק.
     """
-    known = types_for(part_number)
+    prefix = matched_prefix(part_number)
+    known = PREFIXES.get(prefix, ())
     if not known or part_type not in PART_TYPES:
         return None
     if part_type in known:
         return None
+    family = COLLISIONS.get(prefix)
+    if family and family_of(make) != family:
+        return None
     return known[0]
 
 
-def explain(part_number, part_type):
+def explain(part_number, part_type, make=None):
     """סיבת הפסילה בעברית, או ``None`` כשאין סתירה."""
-    clash = conflict(part_number, part_type)
+    clash = conflict(part_number, part_type, make)
     if not clash:
         return None
     return (f'תחילית {matched_prefix(part_number)} היא של '
