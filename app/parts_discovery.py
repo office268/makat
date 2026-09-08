@@ -543,24 +543,28 @@ def _merge_fitment(part, row):
     make = fitment_make(row["make"])
     model = row["model"]
     engine = row.get("engine_code") or None
+    # שליפה חיה יודעת שנה אחת; קציר מעמוד קטגוריה יודע טווח. שניהם
+    # נכנסים כטווח, וכשיש רק שנה אחת הטווח הוא היא עצמה.
     year = row.get("year")
+    year_from = row.get("year_from") or year
+    year_to = row.get("year_to") or year
 
     for fit in part.fitments:
         if (fit.make or "") != make or (fit.model or "") != model:
             continue
         if (fit.engine_code or None) != engine:
             continue
-        if year and (fit.year_from or fit.year_to):
-            fit.year_from = min(fit.year_from or year, year)
-            fit.year_to = max(fit.year_to or year, year)
+        if year_from and (fit.year_from or fit.year_to):
+            fit.year_from = min(fit.year_from or year_from, year_from)
+            fit.year_to = max(fit.year_to or year_to, year_to)
         return fit
 
     fit = Fitment(
         make=make,
         model=model,
         engine_code=engine,
-        year_from=year,
-        year_to=year,
+        year_from=year_from,
+        year_to=year_to,
         variant_key=row.get("variant_key") or None,
     )
     part.fitments.append(fit)
