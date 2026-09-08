@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}קציר מק"טים{% endblock %}
+{% block content %}
+
+<h4 class="mb-1">קציר מק"טים</h4>
+<p class="text-muted small">
+  שליפה מעמוד קטגוריה ברמת יצרן — הערוץ שנמדד כיעיל ביותר בסקיל
+  <code>oem-part-numbers</code>. עמוד אחד מחזיר את החלק לכל דגמי היצרן,
+  ובממוצע כ-{{ yield_per_fetch }} מק"טים חדשים לשליפה.
+</p>
+
+{% if not available %}
+<div class="alert alert-warning">
+  הקציר כבוי. הוא דורש <code>ANTHROPIC_API_KEY</code> ודרך להביא דפים —
+  <code>SCRAPERAPI_KEY</code> או דפדפן מותקן.
+</div>
+{% endif %}
+
+<form id="harvest-form" class="card mb-3">
+  {{ csrf_field() }}
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-6">
+        <label class="form-label fw-bold" for="wanted">
+          כמה מק"טים חדשים בכל סבב
+        </label>
+        <input class="form-control form-control-lg text-center" id="wanted"
+               name="wanted" type="number" inputmode="numeric"
+               min="1" max="{{ max_per_round }}" value="100" required>
+        <div class="form-text">הסבב נעצר כשהגיע למספר הזה, או כשהגיע לתקרת
+          השליפות שנגזרת ממנו — ואז הוא אומר את זה במפורש.</div>
+      </div>
+      <div class="col-6">
+        <label class="form-label fw-bold" for="rounds">כמה סבבים</label>
+        <input class="form-control form-control-lg text-center" id="rounds"
+               name="rounds" type="number" inputmode="numeric"
+               min="1" max="{{ max_rounds }}" value="1" required>
+        <div class="form-text">כל סבב מתחיל מהמטרות שטרם נשלפו.</div>
+      </div>
+    </div>
+
+    <div class="alert alert-secondary small mt-3 mb-0" id="plan-note">
+      מחשב את התוכנית…
+    </div>
+    <ul class="small text-muted mt-2 mb-0" id="plan-sample"></ul>
+
+    <div class="d-grid mt-3">
+      <button class="btn btn-primary btn-lg" id="go" {% if not available %}disabled{% endif %}>
+        התחל קציר
+      </button>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm mt-2 d-none" id="stop" type="button">
+      עצור
+    </button>
+  </div>
+</form>
+
+{% if gaps %}
+<div class="card mb-3">
+  <div class="card-header">הפערים הגדולים — מכאן הסבב יתחיל</div>
+  <ul class="list-group list-group-flush">
+    {% for gap in gaps %}
+    <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+      <span>
+        <code>{{ gap.prefix }}</code>
+        <span class="text-muted small">· {{ gap.types | join(" / ") }}</span>
+      </span>
+      <span class="badge {% if gap.have %}bg-light text-dark border{% else %}bg-success{% endif %}">
+        {% if gap.have %}{{ gap.have }} בקטלוג{% else %}בתולי{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>מצב</span>
+    <span class="badge bg-secondary" id="status">—</span>
+  </div>
+  <div class="card-body">
+    <div class="progress mb-2" style="height: 8px">
+      <div class="progress-bar" id="bar" style="width: 0%"></div>
+    </div>
+    <div class="small text-muted" id="counters">
+      בקטלוג כרגע: <span id="size">{{ catalog_size }}</span> מק"טים
+    </div>
+    <div class="alert alert-warning small mt-3 d-none" id="error"></div>
+    <pre class="small bg-light p-2 mt-3 mb-0 d-none" id="log"
+         style="max-height: 18rem; overflow: auto"></pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  const token = document.querySelector('meta[name="csrf-token"]');
+  const form = document.getElementById("harvest-form");
+  const wanted = document.getElementById("wanted");
+  const rounds = document.getElementById("rounds");
+  const goBtn = document.getElementById("go");
+  const stopBtn = document.getElementById("stop");
+  const bar = document.getElementById("bar");
+  const status = document.getElementById("status");
+  const counters = document.getElementById("counters");
+  const sizeBox = document.getElementById("size");
+  const errorBox = document.getElementById("error");
+  const logBox = document.getElementById("log");
+  const planNote = document.getElementById("plan-note");
+  const planList = document.getElementById("plan-sample");
+  const URLS = {
+    plan: "{{ url_for('admin.harvest_plan') }}",
+    start: "{{ url_for('admin.harvest_start') }}",
+    step: "{{ url_for('admin.harvest_step') }}",
+    cancel: "{{ url_for('admin.harvest_cancel') }}",
+  };
+  let stopRequested = false;
+
+  async function post(url, body) {
+    const headers = {"X-Requested-With": "XMLHttpRequest"};
+    if (token) headers["X-CSRFToken"] = token.content;
+    const response = await fetch(url, {method: "POST", headers: headers, body: body});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "הבקשה נכשלה (" + response.status + ")");
+    return data;
+  }
+
+  // התוכנית מחושבת בשרת, כי רק הוא יודע מה כבר בקטלוג ולכן אילו
+  // קטגוריות בתוליות - וזה מה שקובע מאיפה הסבב מתחיל.
+  let planTimer = null;
+  function refreshPlan() {
+    clearTimeout(planTimer);
+    planTimer = setTimeout(async function () {
+      const params = new URLSearchParams({
+        wanted: wanted.value || 1, rounds: rounds.value || 1,
+      });
+      try {
+        const response = await fetch(URLS.plan + "?" + params);
+        if (!response.ok) return;
+        const plan = await response.json();
+        planNote.textContent =
+          `צפויות ~${plan.fetches} שליפות בסבב (${plan.total_fetches} בסך הכול), ` +
+          `ולכל היותר ${plan.max_fetches} בסבב. כל שליפה היא בקשה לאתר וקריאה ` +
+          `למודל, ובממוצע ~${plan.yield} מק"טים חדשים — הסבב נעצר על המספר ` +
+          `שביקשת, לא על מספר השליפות.`;
+        planNote.className = plan.max_total_fetches > 60
+          ? "alert alert-warning small mt-3 mb-0"
+          : "alert alert-secondary small mt-3 mb-0";
+        planList.innerHTML = "";
+        plan.sample.forEach(function (line) {
+          const item = document.createElement("li");
+          item.textContent = line;
+          planList.appendChild(item);
+        });
+      } catch (error) { /* התצוגה המקדימה היא נוחות בלבד */ }
+    }, 150);
+  }
+
+  function render(data) {
+    if (data.catalog_size !== undefined) sizeBox.textContent = data.catalog_size;
+    const job = data.job;
+    if (!job) return;
+    bar.style.width = job.progress_pct + "%";
+    status.textContent = job.status_label + " · סבב " + job.round + "/" + job.rounds;
+    status.className = "badge " + (job.status === "done" ? "bg-success"
+      : job.status === "running" ? "bg-primary" : "bg-secondary");
+    counters.innerHTML =
+      `סבב ${job.round}/${job.rounds} · ${job.added_round}/${job.wanted_per_round} ` +
+      `בסבב הזה · ${job.added_total} נוספו בסך הכול · ${job.updated_total} עודכנו · ` +
+      `${job.rejected_total} נפסלו · ${job.fetches} שליפות`;
+    errorBox.classList.toggle("d-none", !job.error);
+    if (job.error) errorBox.textContent = job.error;
+    if (job.log && job.log.length) {
+      logBox.classList.remove("d-none");
+      logBox.textContent = job.log.join("\n");
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  }
+
+  function busy(on) {
+    goBtn.disabled = on;
+    goBtn.textContent = on ? "קוצר…" : "התחל קציר";
+    stopBtn.classList.toggle("d-none", !on);
+  }
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    stopRequested = false;
+    busy(true);
+    errorBox.classList.add("d-none");
+    try {
+      render(await post(URLS.start, new FormData(form)));
+      let last = -1;
+      let guard = 0;
+      while (!stopRequested) {
+        const data = await post(URLS.step);
+        render(data);
+        if (!data.job || !data.job.is_running) break;
+        // רשת ביטחון: שליפה שלא מתקדמת לא תיתקע בלולאה
+        const seen = data.job.fetches;
+        if (seen === last) { guard += 1; } else { guard = 0; last = seen; }
+        if (guard > 2) throw new Error("הקציר לא מתקדם.");
+      }
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove("d-none");
+    } finally {
+      busy(false);
+    }
+  });
+
+  stopBtn.addEventListener("click", async function () {
+    stopRequested = true;
+    try { render(await post(URLS.cancel)); } catch (e) { /* העצירה כבר בתוקף */ }
+  });
+
+  wanted.addEventListener("input", refreshPlan);
+  rounds.addEventListener("input", refreshPlan);
+  refreshPlan();
+  {% if job %}render({{ {"job": job.to_dict(), "catalog_size": catalog_size} | tojson }});{% endif %}
+})();
+</script>
+{% endblock %}

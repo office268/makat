@@ -17,7 +17,7 @@ from flask import (
 from flask_login import current_user
 
 from .. import (activity, fleet_stats, live_lookup, part_columns,
-                parts_discovery, seed_catalog, services)
+                harvest, parts_discovery, seed_catalog, services)
 from ..auth import superadmin_required
 from ..models import Part, db
 from ..taxonomy import all_types, type_name
@@ -230,6 +230,114 @@ def discovery_cancel():
     return jsonify(
         _discovery_payload(parts_discovery.cancel_job(parts_discovery.active_job()))
     )
+
+
+# ---------------------------------------------------------------------------
+# קציר מק"טים לפי סבבים
+# ---------------------------------------------------------------------------
+
+def _harvest_payload(job):
+    return {
+        "job": job.to_dict() if job else None,
+        "catalog_size": Part.query.count(),
+    }
+
+
+@admin_bp.get("/harvest")
+@superadmin_required
+def harvest_screen():
+    counts = harvest.coverage()
+    return render_template(
+        "admin/harvest.html",
+        job=harvest.latest_job(),
+        available=harvest.available(),
+        catalog_size=Part.query.count(),
+        gaps=[
+            {
+                "prefix": prefix,
+                "types": [type_name(t) for t in harvest.prefix_types(prefix)],
+                "have": min(counts.get(t, 0) for t in harvest.prefix_types(prefix)),
+            }
+            for prefix in harvest.ranked_prefixes(counts)[:8]
+        ],
+        yield_per_fetch=harvest.YIELD_PER_FETCH,
+        max_per_round=harvest.MAX_PER_ROUND,
+        max_rounds=harvest.MAX_ROUNDS,
+    )
+
+
+@admin_bp.get("/harvest/status")
+@superadmin_required
+def harvest_status():
+    return jsonify(_harvest_payload(harvest.latest_job()))
+
+
+@admin_bp.get("/harvest/plan")
+@superadmin_required
+def harvest_plan():
+    """כמה שליפות יירוצו לסבב, ואילו - לפני שמתחייבים לתשלום."""
+    try:
+        wanted = max(1, int(request.args.get("wanted", 0) or 0))
+        rounds = max(1, int(request.args.get("rounds", 0) or 0))
+    except ValueError:
+        return jsonify({"error": "שני השדות חייבים להיות מספרים."}), 400
+    targets = harvest.plan_round(wanted)
+    expected = min(len(targets), harvest.estimate_fetches(wanted))
+    return jsonify({
+        "fetches": expected,
+        "max_fetches": len(targets),
+        "rounds": rounds,
+        "total_fetches": expected * rounds,
+        "max_total_fetches": len(targets) * rounds,
+        "yield": harvest.YIELD_PER_FETCH,
+        "sample": [
+            f"{harvest.site_label(site)} · {prefix}"
+            + (f" · עמוד {page}" if page > 1 else "")
+            for site, prefix, page in targets[:6]
+        ],
+    })
+
+
+@admin_bp.post("/harvest/start")
+@superadmin_required
+def harvest_start():
+    if not harvest.available():
+        return jsonify({
+            "error": "הקציר דורש ANTHROPIC_API_KEY ודרך להביא דפים "
+                     "(SCRAPERAPI_KEY או דפדפן מותקן)."
+        }), 400
+    try:
+        job = harvest.start_job(
+            request.form.get("wanted"), request.form.get("rounds"),
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    activity.note(
+        summary=f'קציר מק"טים הופעל · {job.wanted_per_round} בסבב × {job.rounds}',
+        entity_type="job",
+        entity_id=job.id,
+        wanted=job.wanted_per_round,
+        rounds=job.rounds,
+    )
+    return jsonify(_harvest_payload(job))
+
+
+@admin_bp.post("/harvest/step")
+@superadmin_required
+def harvest_step():
+    job = harvest.active_job()
+    if job is None:
+        return jsonify({"error": "אין קציר פעיל.",
+                        **_harvest_payload(harvest.latest_job())}), 409
+    return jsonify(_harvest_payload(harvest.run_step(job)))
+
+
+@admin_bp.post("/harvest/cancel")
+@superadmin_required
+def harvest_cancel():
+    activity.note(summary='קציר מק"טים בוטל')
+    return jsonify(_harvest_payload(harvest.cancel_job(harvest.active_job())))
 
 
 # ---------------------------------------------------------------------------
